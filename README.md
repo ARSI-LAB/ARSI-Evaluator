@@ -46,9 +46,33 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 - **Plugins**: Replace or add any of eight component types, including Benchmark, Verifier, Solver, and Environment. See [plugin development and loading](docs/development/plugins.en.md).
 - **Node.js SDK**: Execute evaluations with `Evaluator.run()`, including progress, cancellation, resume, and Ray Jobs. See the [SDK guide](docs/users/sdk.md).
 
+## 📦 Installation and Deployment
+
+Requires **Node.js 24.22.1 or later 24.x, pnpm 11 or 12, Git**, and read access to the private AgentBundle GitHub repository. If pnpm is missing, run `npm install --global pnpm` first.
+
+Run from the Evaluator repository root:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm add -g .
+ember-evaluator --help
+```
+
+The help output confirms installation. See the [installation guide](docs/users/installation.md) for details, or use the [management container](docs/users/deployment/container-toolbox.md) on Linux servers.
+
 ## 🚀 Quick Start
 
-Complete [installation](docs/users/installation.md), then choose a scenario. Start with two GSM8K questions if this is your first run.
+Run two GSM8K math questions locally with SimpleAgent; Docker is not required. Replace the model name, API URL, and key with your own values, then run from the repository root in Bash:
+
+```bash
+export MODEL_NAME="your-model-id"
+export MODEL_ENDPOINT="https://your-model-service.example/v1"
+export MODEL_API_KEY="your-api-key"
+
+ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
+```
+
+The model service must support OpenAI Chat Completions and tool calling. When the run finishes, open `report.md` in the result directory shown in the logs. See the [two-question quick start](docs/users/quick-start.md) for PowerShell commands and more details.
 
 | Goal | Benchmark / scenario | Environment | Additional requirements | Quick start |
 | --- | --- | --- | --- | --- |
@@ -56,29 +80,7 @@ Complete [installation](docs/users/installation.md), then choose a scenario. Sta
 | Evaluate terminal operations | Terminal-Bench 4.0 | Docker | amd64 images; QEMU/binfmt on ARM64 | [Terminal-Bench 4.0](docs/users/quick-start/terminalbench.md) |
 | Standard model service performance evaluation | AgentX standard | local, optionally in the management container | Python 3.11–3.13, venv, tokenizer, streaming model service with long context; management image includes Python | [AgentX performance](docs/users/quick-start/agentx.md) |
 
-After installation and global CLI registration, run outside the Evaluator source directory using an absolute YAML path:
-
-```bash
-ember-evaluator doctor '/path/to/config.yaml'
-ember-evaluator run '/path/to/config.yaml'
-```
-
-Results go to the configured output directory, with a separate directory for each run. Open `report.md` there. To resume an interrupted run or rebuild a report offline:
-
-```bash
-ember-evaluator run '/path/to/config.yaml' --resume
-ember-evaluator report '/path/to/run-directory'
-```
-
-See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for complete instructions.
-
-## 📦 Installation
-
-Requires **Node.js 24.22.1 or later 24.x, and pnpm 11.22.0**. The source currently depends on a sibling `AgentBundle` repository. Install its dependencies and build `agent-bundle-core` before installing and building Evaluator. Use `corepack pnpm@11.22.0` in both repositories.
-
-- [Source installation and global CLI](docs/users/installation.md): repository layout, build order, CLI registration, and running from any directory.
-- [Linux management container](docs/users/deployment/container-toolbox.md): deployment, GitCode authentication, and mounts.
-- [Ray and execution nodes](docs/users/config.md#ray-and-execution-nodes): local clusters, remote scheduling, and Ray Jobs deployment.
+See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for resume, reports, and daily operations.
 
 ## 📖 Guides
 

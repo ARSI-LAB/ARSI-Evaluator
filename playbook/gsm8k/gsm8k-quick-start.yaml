@@ -1,0 +1,12 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark: gsm8k
+environment: local
+scheduler:
+  concurrency: 1
+run:
+  maxTasks: 2
+  timeoutSeconds: 300

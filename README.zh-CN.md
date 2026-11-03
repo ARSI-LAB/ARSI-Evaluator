@@ -46,9 +46,33 @@ ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 - **插件扩展**：可替换或新增 Benchmark、Verifier、Solver、Environment 等八类组件，见[插件开发与加载](docs/development/plugins.md)。
 - **Node.js SDK**：在业务项目中通过 `Evaluator.run()` 执行评测，支持进度、取消、续跑和 Ray Jobs，见[SDK 指南](docs/users/sdk.zh-CN.md)。
 
+## 📦 安装部署
+
+需要 **Node.js 24.22.1 或更新的 24.x、pnpm 11 或 12、Git**，以及 AgentBundle GitHub 私仓的读取权限。没有 pnpm 时，先执行 `npm install --global pnpm`。
+
+在 Evaluator 仓库根目录执行：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm add -g .
+ember-evaluator --help
+```
+
+看到帮助信息即安装成功。详细步骤见[安装指南](docs/users/installation.zh-CN.md)，Linux 服务器也可使用[管理容器](docs/users/deployment/container-toolbox.zh-CN.md)。
+
 ## 🚀 快速入门
 
-先完成[安装指南](docs/users/installation.zh-CN.md)，再按场景选择入门路径。第一次使用建议从两道 GSM8K 题目开始。
+下面使用 SimpleAgent 在本机运行两道 GSM8K 数学题，无需 Docker。将模型名、API 地址和密钥替换为自己的值，在仓库根目录执行（Bash）：
+
+```bash
+export MODEL_NAME="your-model-id"
+export MODEL_ENDPOINT="https://your-model-service.example/v1"
+export MODEL_API_KEY="your-api-key"
+
+ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
+```
+
+模型服务需支持 OpenAI Chat Completions 和工具调用。运行结束后，打开日志所示结果目录中的 `report.md`。PowerShell 用法及更多说明见[两题快速上手](docs/users/quick-start.zh-CN.md)。
 
 | 评测目标 | Benchmark / 场景 | 执行环境 | 额外条件 | 快速入门 |
 | --- | --- | --- | --- | --- |
@@ -56,29 +80,7 @@ ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 | 评测终端操作能力 | Terminal-Bench 4.0 | Docker | amd64 镜像；ARM64 需 QEMU/binfmt | [Terminal-Bench 4.0 入门](docs/users/quick-start/terminalbench.zh-CN.md) |
 | 模型服务标准性能测评 | AgentX standard | local，可选管理容器 | Python 3.11–3.13、venv、tokenizer、长上下文流式模型服务；管理镜像已提供 Python | [AgentX 性能入门](docs/users/quick-start/agentx.zh-CN.md) |
 
-完成安装并注册全局命令后，可以离开 Evaluator 源码目录，使用 YAML 的绝对路径运行：
-
-```bash
-ember-evaluator doctor '/path/to/config.yaml'
-ember-evaluator run '/path/to/config.yaml'
-```
-
-结果写入配置指定的输出目录，每次运行生成独立目录；打开其中的 `report.md` 查看结果。中断续跑和离线重建报告：
-
-```bash
-ember-evaluator run '/path/to/config.yaml' --resume
-ember-evaluator report '/path/to/run-directory'
-```
-
-其他题库和运行组合见 [Playbook 示例](playbook/README.md)，完整操作见[用户文档](docs/users/README.zh-CN.md)。
-
-## 📦 安装指南
-
-需要 **Node.js 24.22.1 或更新的 24.x、pnpm 11.22.0**。当前源码依赖同级的 `AgentBundle` 仓库，先安装其依赖并构建 `agent-bundle-core`，再安装、构建 Evaluator；两个仓库都使用 `corepack pnpm@11.22.0` 执行命令。
-
-- [源码安装与全局命令](docs/users/installation.zh-CN.md)：仓库放置、完整构建顺序、注册 CLI 和任意目录运行。
-- [Linux 管理容器](docs/users/deployment/container-toolbox.zh-CN.md)：容器部署、GitCode 认证和挂载条件。
-- [Ray 与执行节点](docs/users/config.zh-CN.md#ray-与执行节点)：本机集群、远端调度和 Ray Jobs 部署。
+其他题库和运行组合见 [Playbook 示例](playbook/README.md)，续跑、报告和日常操作见[用户文档](docs/users/README.zh-CN.md)。
 
 ## 📖 使用指南
 
