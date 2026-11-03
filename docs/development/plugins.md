@@ -99,7 +99,9 @@ export function apply(ctx) {
 
 `register(role, name, validate, factory)` 的四个参数分别是组件种类、注册名、配置校验函数和实例工厂。工厂可以接收 `(config, runtime)`，其中 runtime 提供模型配置、运行时认证和 `resolvePath()` 等上下文；认证只用于调用模型，不写入日志或结果。
 
-使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
+执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，bootstrap 和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
+
+使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
 
 ## 用 `--patch` 引用外部插件
 

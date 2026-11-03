@@ -8,6 +8,12 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 
 两种并发分别计数：外层 Scheduler 一次执行一个测量点，负载并发表示该点内的活动会话树数。子 Agent 可能增加实际请求并发，因此会话树数不等于同时发出的请求数。测量摘要进入性能报告，不产生质量分数。
 
+## 硬件选择
+
+实验顶层 `hardware: npu`（缺省值）使用现有 NPU 路径。设置 `hardware: gpu` 后，API 回放和 `telemetry.vllm` 仍可用；不要求回放机器安装 GPU。`telemetry.ascend` 与 GPU 选择冲突，`doctor`、`--dry-run` 和正式运行都会在启动采样前报错。GPU 硬件指标采集当前不支持。字段含义和续跑规则见[配置指南](../config.zh-CN.md#npu-与-gpu-选择)。
+
+可使用 [GPU 服务 API 示例](../../../playbook/agentx/agentx-gpu-api.yaml)；该示例只回放请求，不采集设备指标。
+
 ## 准备与运行
 
 推荐使用 `environment: local`。AgentX 在 Evaluator 所在环境通过模型 API 回放 Trace，不执行 Trace 中记录的真实工具操作，也不创建任务镜像或任务容器。可以在管理容器内运行，也可以直接在裸机运行；推理服务由用户提前手动启动，Evaluator 不启动或停止推理服务。

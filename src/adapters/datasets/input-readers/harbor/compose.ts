@@ -1,3 +1,5 @@
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
+import { gpuRequirementMessage } from "../../../../core/hardware.js";
 import type { ErrorCode } from "../../../../core/errors/registry.js";
 import { readFile, lstat } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute } from "node:path";
@@ -25,7 +27,8 @@ function inside(root: string, requested: string): string {
     throw new ComposeCapabilityError("Compose build path escapes the public environment");
   return path;
 }
-export async function readComposeServices(context: string, visibility: "public" | "verifier", mainImage?: string):
+export async function readComposeServices(context: string, visibility: "public" | "verifier", mainImage?: string,
+  hardware: HardwareKind = "npu", requirement = "Compose environment"):
 Promise<Record<string, ContainerService> | undefined> {
   const files: string[] = [];
   for (const name of ["docker-compose.yaml", "docker-compose.yml", "compose.yaml", "compose.yml"])
@@ -41,6 +44,16 @@ Promise<Record<string, ContainerService> | undefined> {
   for (const [name, raw] of Object.entries(rawServices)) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(name)) throw new ComposeCapabilityError("Invalid Compose service name");
     const service = record(raw, `compose.services.${name}`);
+    const deployment = service.deploy;
+    const resources = deployment && typeof deployment === "object" && "resources" in deployment
+      ? deployment.resources : undefined;
+    const reservations = resources && typeof resources === "object" && "reservations" in resources
+      ? resources.reservations : undefined;
+    const devices = reservations && typeof reservations === "object" && "devices" in reservations ? reservations.devices : undefined;
+    const reservedGpu = Array.isArray(devices) && devices.some((device: unknown) => device && typeof device === "object" &&
+      ("driver" in device && device.driver === "nvidia" || "capabilities" in device && Array.isArray(device.capabilities) && device.capabilities.includes("gpu")));
+    if (service.gpus !== undefined || service.runtime === "nvidia" || reservedGpu)
+      throw new ComposeCapabilityError(gpuRequirementMessage(hardware, `${requirement} compose.services.${name}`));
     keys(service, ["build", "image", "command", "entrypoint", "environment", "depends_on", "healthcheck", "expose",
       "network_mode", "extra_hosts", "cpus", "mem_limit", "shm_size", "cap_add", "pull_policy", "working_dir", "user", "init"], `compose.services.${name}`);
     if (service.network_mode !== undefined && (typeof service.network_mode !== "string" || !/^service:[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(service.network_mode)))

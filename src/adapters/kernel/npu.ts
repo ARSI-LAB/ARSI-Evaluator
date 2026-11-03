@@ -1,0 +1,84 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { EnvironmentSession } from "../../core/contracts/environment.js";
+import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
+import { expectRecord } from "../../config/schema.js";
+import { VerificationError } from "../../core/errors/verification-error.js";
+import { readProcess } from "../verifiers/process.js";
+import { kernelProfile } from "./profile.js";
+
+/** NPU-only execution. Benchmark owns task identity and verdict validation. */
+export class NpuKernelBackend implements KernelBackend {
+  constructor(private readonly config: KernelExecutionOptions) {}
+
+  environment(): Record<string, string> {
+    return { ASCEND_RT_VISIBLE_DEVICES: String(this.config.device), KERNEL_NPU_DEVICE: String(this.config.device) };
+  }
+
+  runtimeFiles(): { path: string; origin: string }[] {
+    const asset = (name: string) => fileURLToPath(new URL(name, import.meta.url));
+    return [
+      { path: "runtime/precision.py", origin: asset("precision.py") },
+      { path: "runtime/timing.py", origin: this.config.kernelRoot === undefined ? asset("timing.py")
+        : join(this.config.kernelRoot, "src/kernel_agent/kernel_agent/triton_kernel_agent/opt_worker_component/benchmarking/bench_kernel_util.py") },
+      { path: "runtime/msprof_replay.py", origin: asset("msprof_replay.py") },
+    ];
+  }
+
+  async execute(request: Record<string, unknown>, session: EnvironmentSession, signal: AbortSignal): Promise<unknown> {
+    const handle = await session.start({ executable: this.config.python,
+      args: ["runtime/precision.py", "--output", join(session.verifierOutputDir, "kernel-result.json")], cwd: session.workdir,
+      env: {}, input: Buffer.from(JSON.stringify(request)) }, signal);
+    const process = await readProcess(handle, signal);
+    if (process.code !== 0) throw new VerificationError("Kernel worker did not return a result", { exitCode: process.code, stderr: process.stderr.slice(-4000) });
+    let value: unknown;
+    try { value = JSON.parse(process.stdout); }
+    catch { throw new VerificationError("Kernel worker returned invalid JSON", { stderr: process.stderr.slice(-4000) }); }
+    const record = expectRecord(value, "kernel result");
+    if (this.config.profiling.enabled && record.status === "passed")
+      await this.collectProfiling(request, session, signal, record);
+    return value;
+  }
+
+  /** profiling.enabled 时接线 TS 编排（kernelProfile）采集详细硬件指标；失败降级为明确 failed 记录，不影响验收计时与评分。 */
+  private async collectProfiling(request: Record<string, unknown>, session: EnvironmentSession,
+    signal: AbortSignal, value: Record<string, unknown>): Promise<void> {
+    const fail = (error: string): void => {
+      value.profiling = { schemaVersion: 1, status: "failed", error: error.slice(0, 4000), kernels: [], metadata: {}, artifacts: [] };
+    };
+    try {
+      const stem = "kernel-profile";
+      const result = await kernelProfile({
+        problem: join(session.workdir, String(request.problem)),
+        kernel: join(session.workdir, String(request.candidate)),
+        out: join(session.verifierOutputDir, `${stem}.json`), round: this.config.profiling.roundNum,
+        ...(this.config.profiling.msprofBin === undefined ? {} : { msprofBin: this.config.profiling.msprofBin }),
+        ...(this.config.profiling.deviceName === undefined ? {} : { deviceName: this.config.profiling.deviceName }),
+      }, { python: this.config.python, signal,
+        env: this.environment() });
+      if (result.error !== "") return fail(`msprof profiling failed: ${result.error}`);
+      const raw = JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8"));
+      value.profiling = prefixProfilingPaths(raw, `${stem}_profiling_root`);
+    } catch (error) {
+      fail(`profiling orchestration failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+/** 把 profile 原子产物中的相对路径统一前缀化为 verifier-relative（供报告证据链接可见）。 */
+export function prefixProfilingPaths<T>(raw: T, prefix: string): T {
+  const prefixed = (v: unknown): unknown => typeof v === "string" && v !== "" && !v.startsWith("/") ? `${prefix}/${v}` : v;
+  const out = structuredClone(raw) as Record<string, unknown>;
+  if (Array.isArray(out.artifacts)) out.artifacts = out.artifacts.map(prefixed);
+  const metadata = out.metadata;
+  if (metadata !== null && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).profileDir === "string")
+    (metadata as Record<string, unknown>).profileDir = prefixed((metadata as Record<string, unknown>).profileDir);
+  if (Array.isArray(out.kernels)) for (const kernel of out.kernels as Record<string, unknown>[]) {
+    if (Array.isArray(kernel.artifacts)) kernel.artifacts = kernel.artifacts.map(prefixed);
+    const km = kernel.metadata;
+    if (km !== null && typeof km === "object" && typeof (km as Record<string, unknown>).profileDir === "string")
+      (km as Record<string, unknown>).profileDir = prefixed((km as Record<string, unknown>).profileDir);
+  }
+  return out as T;
+}

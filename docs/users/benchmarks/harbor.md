@@ -4,6 +4,12 @@
 
 Harbor evaluates task directories containing instructions, environment declarations, and verification entry points. This guide covers custom sources, image selection, networking, and file delivery. See [WorkBuddy](workbuddy.md) for scenarios and judge requirements.
 
+## Task Hardware Requirements
+
+Top-level `hardware` selects `npu` (default) or `gpu`. Task declarations `gpu`, `gpus`, and `gpu_types` are preserved: GPU tasks report a hardware mismatch under NPU selection, or GPU execution not implemented under GPU selection. Diagnostics identify the task and declaration, use `BENCHMARK_UNSUPPORTED`, and follow `run.onError`.
+
+Checks cover solve environments, separate verifiers, multi-step tasks, and recognized Compose GPU declarations before image builds or task container creation. Tasks without GPU requirements retain existing behavior. NPU selection neither mounts devices nor ports CUDA code.
+
 ## Add a Dataset with YAML Only
 
 For datasets containing `tasks/<directory>/task.toml`, `instruction.md`, `environment/`, and `tests/`, configure a pinned archive:

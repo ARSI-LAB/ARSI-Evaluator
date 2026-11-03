@@ -8,6 +8,12 @@ AgentX reconstructs request lengths, prefix reuse, session turns, subagent depen
 
 Concurrency has two meanings: outer Scheduler executes one point at a time; load concurrency counts active session trees inside it. Subagents may increase request concurrency, so tree count differs from simultaneous requests. Summaries feed performance reports without quality scores.
 
+## Hardware Selection
+
+Top-level `hardware: npu` (the default) selects existing NPU behavior. With `hardware: gpu`, API replay and `telemetry.vllm` remain available without a GPU on the replay host. `telemetry.ascend` conflicts with GPU selection and is rejected before sampling by `doctor`, dry runs, and execution. GPU hardware metrics are not supported. See [configuration](../config.md#npu-and-gpu-selection) for defaults and resume behavior.
+
+The [GPU service API example](../../../playbook/agentx/agentx-gpu-api.yaml) replays requests without collecting device metrics.
+
 ## Preparation and Execution
 
 Prefer `environment: local`. Replay calls APIs from Evaluator's environment without executing real trace tools or creating task images/containers. Run inside toolbox or directly on the host. Users start inference services manually; Evaluator neither starts nor stops them.

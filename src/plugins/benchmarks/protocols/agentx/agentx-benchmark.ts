@@ -67,7 +67,7 @@ export class AgentXBenchmark implements Benchmark {
     if (!["local", "docker"].includes(config.environment.name) || config.scheduler.name !== "local" ||
       config.scheduler.config.concurrency !== 1) throw new TypeError("AgentX supports local/Docker with local scheduler concurrency=1");
     if (config.solver.config.telemetry !== undefined) {
-      const ascend = parseTelemetryConfig(config.solver.config.telemetry).ascend;
+      const ascend = parseTelemetryConfig(config.solver.config.telemetry, config.hardware).ascend;
       if (ascend && "mode" in ascend && !["local", "docker"].includes(config.environment.name))
         throw new TypeError("Local Ascend telemetry requires a local Docker host or local environment");
     }

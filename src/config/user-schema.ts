@@ -1,3 +1,5 @@
+import type { HardwareKind } from "../core/contracts/hardware.js";
+import { parseHardware } from "./hardware.js";
 import { parseDeployment, type Deployment } from "./deployment.js";
 import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown, type EffectiveConfig } from "./schema.js";
 
@@ -22,6 +24,8 @@ export type ServiceInput = {
   retry?: { maxAttempts: number };
 };
 export type UserConfig = {
+  /** Defaults to NPU for existing callers and saved configurations. */
+  hardware?: HardwareKind;
   deployment?: Deployment;
   services: Record<string, ServiceInput>;
   benchmark: string | BenchmarkSelection;
@@ -62,7 +66,7 @@ export function normalizeComponentSelection(value: unknown, role: "environment" 
 
 export function parseUserConfig(value: unknown): UserConfig {
   const record = expectRecord(value, "configuration");
-  rejectUnknown(record, ["services", "benchmark", "environment", "scheduler", "store", "reporter", "metrics", "run", "output", "deployment"], "configuration");
+  rejectUnknown(record, ["hardware", "services", "benchmark", "environment", "scheduler", "store", "reporter", "metrics", "run", "output", "deployment"], "configuration");
   const services = expectRecord(record.services, "services");
   if (!Object.keys(services).length) throw new TypeError("services must declare at least one service");
   const parsedServices: UserConfig["services"] = {};
@@ -93,6 +97,7 @@ export function parseUserConfig(value: unknown): UserConfig {
     ...(rawBenchmark.verifier === undefined ? {} : { verifier: normalizeSelection(rawBenchmark.verifier, "benchmark.verifier", [], true) }),
   };
   const result: UserConfig = { services: parsedServices, benchmark,
+    ...(record.hardware === undefined ? {} : { hardware: parseHardware(record.hardware) }),
     ...(record.deployment === undefined ? {} : { deployment: parseDeployment(record.deployment) }) };
   for (const role of ["environment", "scheduler", "store", "reporter"] as const) {
     if (record[role] !== undefined) result[role] = normalizeComponentSelection(record[role], role);

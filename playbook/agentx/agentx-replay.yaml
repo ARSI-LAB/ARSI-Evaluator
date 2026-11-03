@@ -5,6 +5,8 @@
 # MODEL_API_KEY 填有效密钥；使用 agentx-model-api.yaml，不启用 telemetry。
 # 在线 API 不能采集服务端推理引擎或 GPU/NPU 硬件指标，只测客户端请求与回放性能。
 # tokenizer 必须与实际模型匹配；模型 ID/别名不是 tokenizer 仓库时，直接修改下方 tokenizer。
+hardware: npu
+
 services:
   default:
     model: ${MODEL_NAME}

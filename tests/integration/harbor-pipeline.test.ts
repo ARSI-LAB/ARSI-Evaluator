@@ -138,9 +138,13 @@ test("separate verification uses a private build context and declared artifact c
     transfer: { kind: "artifacts", paths: ["/logs/artifacts/model.patch"], optionalPaths: ["/logs/artifacts/model.patch"] }, collect: [{ timeoutSeconds: 20 }], preparationTimeoutSeconds: { solve: 600, verify: 1800 }, phaseTimeoutSeconds: {} });
 });
 
-test.each(['gpus = 1', 'os = "windows"', 'network_mode = "private"'])("rejects unsupported capabilities: %s", async capability => {
+test.each([
+  ['gpus = 1', /requires GPU.*hardware=npu.*mismatch/],
+  ['os = "windows"', /Only Linux/],
+  ['network_mode = "private"', /Unsupported network_mode/],
+] as const)("rejects unsupported capabilities: %s", async (capability, message) => {
   const root = await fixture(`schema_version = "1.3"\n[environment]\n${capability}\n`);
-  await expect(loadGenericHarborTask(join(root, "tasks/example"), root, "example", parseHarborConfig({}), new HarborShellVerifier(), signal())).rejects.toThrow(/unsupported|Only Linux/i);
+  await expect(loadGenericHarborTask(join(root, "tasks/example"), root, "example", parseHarborConfig({}), new HarborShellVerifier(), signal())).rejects.toThrow(message);
 });
 test("rejects malformed MCP declarations instead of silently ignoring them", async () => {
   const root = await fixture('schema_version = "1.3"\n[environment]\nmcp_servers = ["server"]\n');
