@@ -8,25 +8,25 @@
 
 ## Install in Your Application
 
-Follow the [source installation order](installation.md#install-from-source): prepare sibling AgentBundle, build `agent-bundle-core`, then Evaluator. Use ESM in the application and run:
+Follow [source installation](installation.md#install-from-source) to install and build Evaluator. pnpm downloads and builds the AgentBundle SDK automatically. Use ESM and pnpm in the application, then run these commands from its directory. Here, `pnpm` reads the application’s own `packageManager` configuration rather than Evaluator’s:
 
 ```bash
-corepack pnpm@11.22.0 add 'ember-evaluator@link:../ember-evaluator'
+pnpm add 'ember-evaluator@link:../ember-evaluator'
 ```
 
-Adjust the path for your layout. `link:` does not compile source automatically; rebuild after updating Evaluator. Keep Evaluator, AgentBundle, and their dependencies accessible.
+Adjust the path for your layout. `link:` does not compile source automatically; rebuild after updating Evaluator. Keep the Evaluator directory and its installed dependencies accessible.
 
 To install a fixed build, package from the Evaluator root and install it in the application:
 
 ```bash
-corepack pnpm@11.22.0 pack --pack-destination .scratch/packages
+pnpm pack --pack-destination .scratch/packages
 ```
 
 ```bash
-corepack pnpm@11.22.0 add '/path/to/ember-evaluator-0.1.0.tgz'
+pnpm add '/path/to/ember-evaluator-0.1.0.tgz'
 ```
 
-The package still depends on AgentBundle through Git. Installation requires repository read access or verified dependency packages supplied by deployment. Evaluator remains `private: true`; this guide does not imply public npm availability.
+The package still depends on AgentBundle through GitHub. Install with pnpm and retain read access to that repository. Evaluator remains `private: true`; this guide does not imply public npm availability.
 
 ## Run a YAML Experiment
 

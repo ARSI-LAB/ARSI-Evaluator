@@ -8,9 +8,9 @@ Choose the entry matching your issue. Dedicated guides define full configuration
 
 ## Installation and Configuration
 
-### Why does SimpleAgent still require AgentBundle?
+### Why does installing SimpleAgent also install AgentBundle?
 
-Current source loads the sibling AgentBundle SDK through local `link:` dependencies during plugin import. Build `agent-bundle-core` before installing/building Evaluator. This differs from evaluated `AGENT_BUNDLE_PATH`. See [installation](../installation.md#install-from-source).
+Evaluator needs the AgentBundle SDK when importing built-in plugins, so pnpm downloads and builds it even when you select SimpleAgent. No manual clone is required, but the installation machine needs read access to the private GitHub repository. This differs from evaluated `AGENT_BUNDLE_PATH`. See [installation](../installation.md#install-from-source).
 
 ### Why is the command or configuration missing after changing directories?
 

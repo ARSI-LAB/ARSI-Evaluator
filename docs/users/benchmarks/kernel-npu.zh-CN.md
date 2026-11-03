@@ -6,9 +6,7 @@
 
 ## 环境与运行
 
-先按[安装指南](../installation.zh-CN.md)准备 Evaluator 依赖。当前仓库的工作区配置要求相邻目录存在 AgentBundle 源码及其构建产物；即使不使用 AgentBundle Solver，内置插件的静态导入仍依赖它。
-
-兼容性验证使用 AgentBundle 提交 `5ac62b4eeabec3d479a0365004966838b0c8023e`（core `0.5.0`）。依赖声明中的 `0.0.7` 标签对应 core `0.4.0`，不支持 Evaluator 既有的 Jiuwenswarm 用例；本地工作区链接构建应使用上述兼容提交。更新依赖后先重建 core，再重建 Evaluator。
+先按[安装指南](../installation.zh-CN.md)准备 Evaluator 依赖。AgentBundle SDK 由 pnpm 从 GitHub 自动下载并构建，不需要同级源码仓库；即使不使用 AgentBundle Solver，内置插件的静态导入仍需要该依赖。
 
 需要 Linux、可用 NPU、CANN、torch、torch_npu、triton-ascend；详细采集模块还依赖 pandas、NumPy 和 Jinja2。Python 应使用已验证可运行算子的解释器；启动前加载其 CANN 环境。仅支持 `local` 环境与 `local` 调度器，并发固定为 1；确保指定设备没有其他计时任务。验证由本 Benchmark 内置 worker 执行，不能另配 `benchmark.verifier`。local 工作区不隔离恶意 Python 代码，只评测可信代码。
 

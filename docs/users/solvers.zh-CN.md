@@ -87,7 +87,7 @@ benchmark:
 
 ## 使用 AgentBundle
 
-先区分安装依赖和待评测的 Bundle：相邻的 `AgentBundle` **源码仓库**提供 Evaluator 当前本地链接的 SDK，需要先构建 `agent-bundle-core`，步骤见[源码安装](installation.zh-CN.md#直接安装)；下面的 `AGENT_BUNDLE_PATH` 则指向已制作好的 **Agent Bundle 目录**。即使选择 SimpleAgent，前者仍是当前源码安装的前置条件。
+先按[源码安装](installation.zh-CN.md#直接安装)准备 Evaluator；pnpm 会自动安装 AgentBundle SDK，无需同级源码仓库。下面的 `AGENT_BUNDLE_PATH` 指向已制作好的 **Agent Bundle 目录**，需要另行准备，不是 SDK 安装路径。
 
 ```yaml
 services:

@@ -6,9 +6,7 @@
 
 ## Environment and Execution
 
-Prepare dependencies through [installation](../installation.md). Current workspace requires sibling AgentBundle source/builds because static built-in imports depend on it even without that Solver.
-
-Compatibility used AgentBundle 5ac62b4eeabec3d479a0365004966838b0c8023e (core 0.5.0). Declared tag 0.0.7 contains core 0.4.0 and lacks existing Jiuwenswarm support. Use the compatible commit for local linked builds, rebuilding core before Evaluator after updates.
+Prepare dependencies through [installation](../installation.md). pnpm downloads and builds the AgentBundle SDK from GitHub automatically; no sibling source repository is required. Built-in plugin imports need this dependency even when that Solver is not selected.
 
 Requires Linux, NPU, CANN, torch, torch_npu, triton-ascend; detailed collection also pandas/NumPy/Jinja2. Use a verified operator-capable Python and load CANN first. Only `local` environment/scheduler, concurrency 1; no competing timing workloads on the device. Built-in workers verify, so no benchmark.verifier. Local workspaces do not isolate malicious Python; evaluate trusted code only.
 

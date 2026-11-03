@@ -5,8 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  agent-bundle-core: link:../AgentBundle/packages/core
-  agentbundle-workspace: link:../AgentBundle/packages/cli
   undici: 8.12.2
 
 importers:
@@ -47,8 +45,8 @@ importers:
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.7)
       agent-bundle-core:
-        specifier: link:../AgentBundle/packages/core
-        version: link:../AgentBundle/packages/core
+        specifier: git+https://github.com/evolving-foundry/agentbundle.git#0.0.1&path:/packages/core
+        version: git+https://github.com/evolving-foundry/agentbundle.git#3034a3ba6292e9b01f1b28799aec90d8e11e106f&path:/packages/core
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
@@ -751,6 +749,11 @@ packages:
   agent-base@9.0.0:
     resolution: {integrity: sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==}
     engines: {node: '>= 20'}
+
+  agent-bundle-core@git+https://github.com/evolving-foundry/agentbundle.git#3034a3ba6292e9b01f1b28799aec90d8e11e106f&path:/packages/core:
+    resolution: {commit: 3034a3ba6292e9b01f1b28799aec90d8e11e106f, path: /packages/core, repo: https://github.com/evolving-foundry/agentbundle.git, type: git}
+    version: 0.5.0
+    engines: {node: '>=22'}
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -2288,6 +2291,10 @@ snapshots:
   agent-base@7.1.4: {}
 
   agent-base@9.0.0: {}
+
+  agent-bundle-core@git+https://github.com/evolving-foundry/agentbundle.git#3034a3ba6292e9b01f1b28799aec90d8e11e106f&path:/packages/core:
+    dependencies:
+      yaml: 2.9.1
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:

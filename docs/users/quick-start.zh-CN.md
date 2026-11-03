@@ -6,19 +6,9 @@
 
 ## 1. 安装和构建
 
-先完成 [源码安装步骤](installation.zh-CN.md#直接安装)：将 `AgentBundle` 与 `ember-evaluator` 放在同级目录，使用 `corepack pnpm@11.22.0` 先安装 AgentBundle 依赖并构建 `agent-bundle-core`，再安装和构建 Evaluator。当前仓库使用本地 `link:` 依赖，即使用 SimpleAgent 也不能跳过 SDK 的准备。不要只在 Evaluator 中执行 `pnpm install` 和 `pnpm build`。
+先完成[安装指南](installation.zh-CN.md#直接安装)。下面的 local 示例不需要 Docker 或 Ray，Agent 会在本机执行工具。
 
-需要 Node.js **24.x**、pnpm **11.22.0**、Git，以及能访问模型和数据源的网络。下面的 local 示例不需要 Docker 或 Ray；Agent 会在本机执行工具，代码和容器任务请按对应指南选环境。完成两仓构建后，在 Evaluator 根目录检查入口：
-
-```bash
-node --version
-corepack pnpm@11.22.0 --version
-node dist/cli.js --help
-```
-
-后文使用 `node dist/cli.js`。需要离开源码目录运行时，按[安装指南](installation.zh-CN.md#安装全局命令)注册全局命令，再执行 `ember-evaluator run /path/to/config.yaml`；[任意目录运行说明](installation.zh-CN.md#在任意目录运行)解释配置路径和模型变量的处理。
-
-准备 AgentBundle 源码需要相应 GitCode 仓库的读取权限。克隆时若报 `Permission denied (publickey)` 或仓库访问失败，先处理 Git/SSH 权限；HTTPS 认证方法见[容器指南](deployment/container-toolbox.zh-CN.md#在管理容器通过-https-登录-gitcode)，该节命令在管理容器内执行。这与模型 API key、HF_TOKEN 是不同的认证。
+后文的 `node dist/cli.js` 命令在 Evaluator 仓库根目录执行；也可以换成已注册的 `ember-evaluator` 命令。
 
 ## 2. 选择题库并生成配置
 

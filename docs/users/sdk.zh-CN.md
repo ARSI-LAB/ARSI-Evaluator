@@ -8,25 +8,25 @@ Evaluator 同时提供 CLI 和 ESM SDK，要求 Node.js 24.22.1 或更新的 24.
 
 ## 在业务项目中安装
 
-先按[源码安装顺序](installation.zh-CN.md#直接安装)，准备同级 AgentBundle 并构建 `agent-bundle-core` 和 Evaluator。业务项目使用 ESM，在其目录执行：
+先按[源码安装](installation.zh-CN.md#直接安装)安装并构建 Evaluator，AgentBundle SDK 由 pnpm 自动下载和构建。业务项目使用 ESM 和 pnpm，在其目录执行以下命令。这里的 `pnpm` 读取业务项目自己的 `packageManager` 配置，不会自动沿用 Evaluator 的配置：
 
 ```bash
-corepack pnpm@11.22.0 add 'ember-evaluator@link:../ember-evaluator'
+pnpm add 'ember-evaluator@link:../ember-evaluator'
 ```
 
-根据实际目录修改路径。`link:` 不会自动编译源码，更新 Evaluator 后重新构建。业务项目需要保留可访问的 Evaluator、AgentBundle 及其依赖。
+根据实际目录修改路径。`link:` 不会自动编译源码，更新 Evaluator 后重新构建。业务项目需要保留可访问的 Evaluator 目录及其已安装依赖。
 
 固定构建产物可以在 Evaluator 根目录打包，再在业务项目安装：
 
 ```bash
-corepack pnpm@11.22.0 pack --pack-destination .scratch/packages
+pnpm pack --pack-destination .scratch/packages
 ```
 
 ```bash
-corepack pnpm@11.22.0 add '/path/to/ember-evaluator-0.1.0.tgz'
+pnpm add '/path/to/ember-evaluator-0.1.0.tgz'
 ```
 
-发行包仍有 AgentBundle Git 依赖，安装机器需要相应读取权限或由部署方提供已验证的依赖包。Evaluator 保持 `private: true`，本指南不表示已发布到公共 npm。
+发行包仍有 AgentBundle GitHub 依赖，使用 pnpm 安装并保留相应仓库的读取权限。Evaluator 保持 `private: true`，本指南不表示已发布到公共 npm。
 
 ## 执行 YAML 实验
 

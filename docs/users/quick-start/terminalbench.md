@@ -8,7 +8,7 @@ Run terminal tasks in Docker with the default SimpleAgent and inspect results fr
 
 ## 1. Install and Prepare Docker
 
-Complete [source installation](../installation.md#install-from-source): place `AgentBundle` beside `ember-evaluator`, use `corepack pnpm@11.22.0` to build `agent-bundle-core`, then install and build Evaluator. The installation guide maintains full commands and build order.
+Follow [source installation](../installation.md#install-from-source) to configure GitHub read access, then install and build Evaluator. The AgentBundle SDK downloads and builds automatically; no manual clone is required.
 
 Run these commands from the Evaluator root with `node dist/cli.js`; global registration is unnecessary. The machine needs Docker Engine and access to the model API, task data, and images.
 
