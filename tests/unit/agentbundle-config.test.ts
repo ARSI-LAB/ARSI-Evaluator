@@ -61,3 +61,22 @@ test("parses the Pi coding directory from the AgentBundle CLI wire field", () =>
     "coding-agent-dir": "/runtime/home/agent",
   }).codingAgentDir).toBe("/runtime/home/agent");
 });
+
+test("parses Dify options under agentbundle and rejects old solver fields", () => {
+  expect(parseAgentBundleConfig({ path: "bundle", dify: { baseUrl: "https://dify.example///", registryPath: "registry.json" } })).toEqual({
+    path: "bundle", dify: { baseUrl: "https://dify.example", registryPath: "registry.json" },
+  });
+  for (const field of ["bundlePath", "baseUrl", "apiKeyEnv", "appId", "registryPath"]) {
+    expect(() => parseAgentBundleConfig({ path: "bundle", [field]: "old" })).toThrow(/unknown field/);
+  }
+  for (const dify of [null, {}, { baseUrl: "" }, { baseUrl: "https://dify.example", apiKeyEnv: "OLD" }]) {
+    expect(() => parseAgentBundleConfig({ path: "bundle", dify })).toThrow();
+  }
+});
+
+test.each(["not-a-url", "file:///tmp/dify", "https://user:password@dify.example", "https://dify.example?token=secret",
+  "https://dify.example#secret", "https://dify.example/v1", "https://dify.example/v1/workflows/run"])(
+  "rejects an invalid Dify service address: %s", baseUrl => {
+    expect(() => parseAgentBundleConfig({ path: "bundle", dify: { baseUrl } })).toThrow(/agentbundle.dify.baseUrl/);
+  },
+);

@@ -82,7 +82,7 @@ test("default service chooses default, then unique, and errors for ambiguity or 
 test("profile inheritance, implementation changes and CLI precedence are isolated across resolutions", () => {
   const extra: ConfigProfile = { id: "custom", role: "benchmark", extends: "deepswe", plugin: { name: "fixture", config: { flag: true } },
     defaults: { scheduler: { name: "local", config: { concurrency: 2 } } } };
-  const result = resolveConfig("experiment.yaml", user({ name: "custom", solver: { name: "dify", config: { authKeyEnv: "DIFY_KEY" } } }, { scheduler: { concurrency: 4 } }), [...profiles, extra], { model: "override" });
+  const result = resolveConfig("experiment.yaml", user({ name: "custom", solver: { name: "agentbundle", config: { path: "./bundle" } } }, { scheduler: { concurrency: 4 } }), [...profiles, extra], { model: "override" });
   expect(result.benchmark).toEqual({ name: "fixture", config: { flag: true } });
   expect(result.scheduler.config.concurrency).toBe(4);
   expect(result.services.default?.name).toBe("override");

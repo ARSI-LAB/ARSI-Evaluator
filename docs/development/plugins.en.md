@@ -34,7 +34,7 @@ Record definitions live in `src/plugins/benchmarks/definitions/`: task files con
 | `benchmark` | Sources/enumeration/preparation/verification; [Benchmark](../../src/core/contracts/benchmark.ts) | Record definitions and Harbor |
 | `verifier` | Private execution/raw reward evidence; [Verifier](../../src/core/contracts/verifier.ts) | `harbor-shell`,`harbor-python` |
 | `environment` | Processes/transfers/lifetimes; [Environment](../../src/core/contracts/environment.ts) | `local`,`docker` |
-| `solver` | Model/agent execution/results; [Solver](../../src/core/contracts/solver.ts) | `simpleagent`,`agentbundle`,`dify`,`agentx-replay`,`choice-logprobs` |
+| `solver` | Model/agent execution/results; [Solver](../../src/core/contracts/solver.ts) | `simpleagent`,`agentbundle`,`agentx-replay`,`choice-logprobs` |
 | `metrics` | Snapshot `metrics`; [Metrics](../../src/core/contracts/metrics.ts) | `success-rate`,`duration`,`usage`,`harbor-score`,`quality-score`,`agentx-performance` |
 | `reporter` | Report rendering; [Reporter](../../src/core/contracts/reporter.ts) | `markdown` |
 | `store` | Runs/attempts/manifests/snapshots; [RunStore](../../src/core/contracts/run-store.ts) | `local` |

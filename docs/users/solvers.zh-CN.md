@@ -9,16 +9,13 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | Solver | 用途 | 额外准备 |
 | --- | --- | --- |
 | `simpleagent` | 内置 Pi Agent，普通质量题与需要工具/文件操作的任务 | 支持工具调用的模型 API；可选 Pi Bundle |
-| `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm 或 pi Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
-| `dify` | 调用 Dify 应用，或从 Bundle 安装 Dify 应用 | Dify 地址和 Service API key；当前主要返回文本 |
+| `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm、pi 或 Dify Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
 `simpleagent` 是框架通用默认值。AgentX Profile 自动选择 `agentx-replay`；MMLU Profile 自动选择 `choice-logprobs`。MMLU 不能仅靠 Agent 最后输出的字母评分，服务要求、候选缺失处理及 Chat 适配差异见[评分规则](reference/scoring.zh-CN.md#mmlu-概率评分与服务要求)。
 
-![simpleagent 经 Pi 执行，agentbundle 选择 Harness，dify 调用远程应用，最终返回 SolveResult](imgs/05-framework-solver-harness.png)
-
-每次选择一条求解路径。图中的 EnvironmentSession 表示运行接口和进程执行边界，不表示 Solver 插件代码被整体移动进容器；Harness 适配器负责读取输出并构造 `SolveResult`。评分仍由 Benchmark 执行，AgentX 的性能回放见[专项指南](benchmarks/agentx.zh-CN.md)。
+每次选择一条求解路径。EnvironmentSession 表示运行接口和进程执行边界，不表示 Solver 插件代码被整体移动进容器；Harness 适配器负责读取输出并构造 `SolveResult`。评分仍由 Benchmark 执行，AgentX 的性能回放见[专项指南](benchmarks/agentx.zh-CN.md)。
 
 ## 模型服务与独立裁判
 
@@ -109,7 +106,7 @@ output:
   directory: ./results/gsm8k-agentbundle
 ```
 
-`AGENT_BUNDLE_PATH` 建议使用绝对路径。Evaluator 会读取 Bundle 声明的 Harness，检查内容身份及版本范围，再选择适配器，不通过目录名猜测。Bundle 修改后应开始新 run。
+`AGENT_BUNDLE_PATH` 建议使用绝对路径。Evaluator 会读取 Bundle 声明的 Harness，检查内容身份，再选择适配器，不通过目录名猜测。本地 Harness 还会检查固定版本是否满足声明范围；远程 Dify 的版本限制见下文。Bundle 修改后应开始新 run。
 
 | Harness 声明 | 对应使用方式 |
 | --- | --- |
@@ -118,6 +115,7 @@ output:
 | `hermes` | 使用 Hermes 适配器 |
 | `jiuwenswarm` | 使用 Jiuwenswarm 适配器 |
 | `pi` | 使用 pi，检查发布产物与设置摘要 |
+| `dify` | 通过 SDK 安装远程应用，再运行 Workflow，见下文 |
 
 某些 Harness 需要本机预装运行时，或在 Docker 准备阶段安装依赖；本机目录不会自动变成容器/远端可用路径。先确认 Bundle 和 Harness 的部署条件，再按 [Playbook](../../playbook/README.md) 选对应环境。
 
@@ -127,21 +125,23 @@ output:
 
 ## 使用 Dify
 
-对已经发布、能接收当前任务输入的 Dify 应用，可用下面的文本题示例：
+Dify 是 AgentBundle 的 Harness。准备声明 `harness.name: dify` 的 Bundle，使用下面的文本题示例：
 
 ```yaml
 services:
   default:
-    model: dify-app
-    base_url: ${DIFY_BASE_URL}
-    api_key: ${DIFY_SERVICE_API_KEY}
+    model: dify-internal-binding
+    base_url: http://127.0.0.1:9/v1
+    api_key: ${MODEL_API_KEY}
 benchmark:
   name: gsm8k
   solver:
-    name: dify
+    name: agentbundle
     config:
-      baseUrl: ${DIFY_BASE_URL}
-      apiKeyEnv: DIFY_SERVICE_API_KEY
+      path: ${DIFY_BUNDLE_PATH}
+      dify:
+        baseUrl: ${DIFY_BASE_URL}
+        registryPath: ${DIFY_REGISTRY_PATH}  # 可选
 environment: local
 run:
   maxTasks: 2
@@ -150,13 +150,17 @@ output:
   directory: ./results/gsm8k-dify
 ```
 
-`DIFY_BASE_URL` 填 Dify 服务地址，例如 `https://dify.example`，不要带 `/v1` 或 `/workflows/run`；当前适配器会追加 `/v1/workflows/run`。应用需是已发布的 Workflow，接收名为 `task` 的文本输入，返回文本字段 `report` 或 `answer`；其他输出对象会作为 JSON 文本保存。`apiKeyEnv` 写环境变量名称，不写密钥值。
+`path` 指向 Dify Bundle；`dify.baseUrl` 填服务地址，例如 `https://dify.example`，不要带 `/v1`、`/workflows/run`、认证信息、查询参数或片段。安装与执行都使用这个地址，不受 SDK 环境变量 `DIFY_BASE` 覆盖。Workflow 接收名为 `task` 的文本输入，返回文本字段 `report` 或 `answer`；其他输出对象保存为 JSON 文本。
 
-services 保留框架所需的服务元数据；实际求解由 Dify 应用执行，并非 Evaluator 用 `dify-app` 向模型服务发请求。
+在运行 Evaluator 的进程所在机器上配置 Console 凭证：`DIFY_ADMIN_API_KEY`，或 `DIFY_EMAIL` 与 `DIFY_PASSWORD`，也可使用 SDK 已保存的登录凭证。未配置时直接报错，不等待交互登录。SDK 安装并发布应用后返回 `appId` 和 Service API key，不需要额外配置应用 key。Ray 部署中这些 Console 凭证需在执行安装的节点预先配置，本机环境变量不会自动分发。
 
-若使用 Dify Bundle，可另设 `bundlePath` 和可选的 `registryPath`，由 SDK 校验和安装，并取得应用的 Service API key。`appId` 可用于明确应用身份。
+services 保留框架要求的服务元数据，上例中的 `MODEL_API_KEY` 仅用于满足服务绑定要求，不会发往占位地址；实际模型由 Dify 应用内部绑定。`services.<名称>.maxTokens` 和 Solver 的 `maxTokens` 不会修改 Dify 工作流里的模型参数。
 
-**当前 Dify Solver 没有把工作流生成的文件同步回任务环境。** 它不适合作为 Office、代码仓库修改等文件交付任务已经可用的证明；这些任务优先选择能写入 EnvironmentSession 的 SimpleAgent 或 AgentBundle。已有 [Office Dify YAML](../../playbook/workbuddy/workbuddy-office-dify.yaml) 是配置组合示例，文件中也标明了该限制。
+`dify.registryPath` 是安装记录文件，相对路径按 YAML 所在目录解析。省略时放在 SDK 默认记录目录下的 `dify/<服务地址摘要>/installations.json`。同一台机器上共享记录文件的并发 attempt 使用文件锁，只创建一个应用；远端节点使用各自的记录文件，不保证跨节点只安装一次。显式记录文件包含其他服务的同一 Bundle 时会报错，需换用另一文件。记录文件含 Service API key，不要提交；评测结果中的 `installation.json` 只保存不含密钥的安装证据。应用按 persistent 模式保留，评测结束不删除远程应用。
+
+来源记录保存 Bundle 摘要、Runner 摘要及版本、Bundle 声明的平台版本范围。目前不探测远程 Dify 平台实际版本，也不保证服务端工作流未被外部修改。旧 `solver.name: dify`、`bundlePath`、`apiKeyEnv` 和 `appId` 配置不再接受；请改用上面的 Bundle 写法并开始新 run，已有结果仍可离线生成报告。
+
+**Dify Harness 当前不把工作流生成的文件同步回任务环境。** Office、代码仓库修改等文件交付任务应使用能写入 EnvironmentSession 的 SimpleAgent 或其他 AgentBundle Harness。[Office Dify YAML](../../playbook/workbuddy/workbuddy-office-dify.yaml) 仅展示配置组合。
 
 ## 用 AgentX 测服务性能
 

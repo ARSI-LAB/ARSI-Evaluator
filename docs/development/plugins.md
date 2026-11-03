@@ -34,7 +34,7 @@ Cordis 负责加载插件模块，模块通过 `ctx.evaluator.register()` 注册
 | `benchmark`   | 数据来源、任务枚举与准备、验证；[Benchmark](../../src/core/contracts/benchmark.ts)         | GSM8K 等定义型 Benchmark、Harbor 协议执行 |
 | `verifier` | 私有验证执行与原始奖励证据；[Verifier](../../src/core/contracts/verifier.ts) | `harbor-shell`、`harbor-python` |
 | `environment` | 进程执行、文件传输和环境生命周期；[Environment](../../src/core/contracts/environment.ts)    | `local`、`docker`                                                       |
-| `solver`      | 执行模型或 Agent 请求并返回结果；[Solver](../../src/core/contracts/solver.ts)          | `simpleagent`、`agentbundle`、`dify`、`agentx-replay`、`choice-logprobs`          |
+| `solver`      | 执行模型或 Agent 请求并返回结果；[Solver](../../src/core/contracts/solver.ts)          | `simpleagent`、`agentbundle`、`agentx-replay`、`choice-logprobs`          |
 | `metrics`     | 从结果快照计算指标；[Metrics](../../src/core/contracts/metrics.ts)                   | `success-rate`、`duration`、`usage`、`harbor-score`、`quality-score`、`agentx-performance`    |
 | `reporter`    | 将结果和指标渲染为报告；[Reporter](../../src/core/contracts/reporter.ts)               | `markdown`                                                             |
 | `store`       | 保存 run、attempt、文件清单和结果快照；[RunStore](../../src/core/contracts/run-store.ts) | `local`                                                                |
