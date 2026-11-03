@@ -6,6 +6,7 @@ These guides are for developers modifying Evaluator or writing plugins. For inst
 
 | Goal | Guide |
 | --- | --- |
+| Build an independent plugin, load it by file or package name, and validate CLI, SDK, and Ray integration | [Integrating external plugins](external-plugins.en.md) |
 | Learn the eight component types, register metrics, and explicitly load patches | [Plugin development and loading](plugins.en.md) |
 | Integrate datasets: check official requirements, configure images, platforms, resources, and timeouts, and verify acceptance | [Benchmark requirements and acceptance](benchmark-evaluation-requirements.en.md) |
 | Write plugins: implement contracts, register profiles, manage resources, and run regression tests | [Benchmark development](benchmarks.en.md) |
