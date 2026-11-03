@@ -60,7 +60,7 @@
 | 自有 Harbor 任务包 | `harbor` | 配置本地目录、固定归档、GitHub 或 Harbor registry 来源；按任务协议执行 |
 | 服务性能 | `agentx` | Trace 驱动流式模型 API，支持 `standard`、`replay`；无正确率或质量分数 |
 | 远程服务性能 | `aisbench`（外部插件） | [SSH 部署与压测](../../plugins/aisbench/README.md)；通过 patch 加载，支持公共前缀负载与预热 |
-| 算子 | `kernel` | [已有 kernel 的正确性与 NPU 性能评测](benchmarks/kernel.zh-CN.md)；本地串行，不调用模型 |
+| 算子 | `kernel` | [已有 kernel 的正确性与 NPU 性能评测](benchmarks/kernel-npu.zh-CN.md)；本地串行，不调用模型 |
 
 ```bash
 node dist/cli.js benchmark list

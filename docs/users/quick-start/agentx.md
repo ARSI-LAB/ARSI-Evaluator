@@ -44,7 +44,7 @@ Select YAML by service type. Standard defaults to one hour per point. `benchmark
 | `MODEL_NAME` | ID from `/v1/models`, or configured alias | Provider's documented/listed model ID |
 | `MODEL_ENDPOINT` | OpenAI-compatible base, e.g. `http://127.0.0.1:8000/v1` | Provider base, e.g. `https://api.example.com/v1`; not web chat |
 | `MODEL_API_KEY` | Configured key; nonempty `EMPTY` if unauthenticated | Valid provider-issued key |
-| YAML | [agentx-ascend-local.yaml](../../../playbook/agentx/agentx-ascend-local.yaml) for host NPU/vLLM, [agentx-standard.yaml](../../../playbook/agentx/agentx-standard.yaml) for requests only | [agentx-model-api.yaml](../../../playbook/agentx/agentx-model-api.yaml), without `telemetry` |
+| YAML | [agentx-npu-local.yaml](../../../playbook/agentx/agentx-npu-local.yaml) for host NPU/vLLM, [agentx-standard.yaml](../../../playbook/agentx/agentx-standard.yaml) for requests only | [agentx-model-api.yaml](../../../playbook/agentx/agentx-model-api.yaml), without `telemetry` |
 | Available metrics | Requests/replay; engine metrics if endpoints accessible; selected host NPUs | Client latency/throughput/tokens/replay only; **no server engine or GPU/NPU metrics** |
 
 ### Self-Hosted Inference
@@ -55,7 +55,7 @@ Start inference first. For an unauthenticated service on local port8000 whose `/
 export MODEL_NAME='my-qwen'
 export MODEL_ENDPOINT='http://127.0.0.1:8000/v1'
 export MODEL_API_KEY='EMPTY'
-export EVALUATOR_CONFIG="$EVALUATOR_DIR/playbook/agentx/agentx-ascend-local.yaml"
+export EVALUATOR_CONFIG="$EVALUATOR_DIR/playbook/agentx/agentx-npu-local.yaml"
 ```
 
 `127.0.0.1` applies only on the same host; replace for remote services. Automatic NPU sampling reads only Evaluator's host, not remote hardware through local card IDs. `vllm.endpoint` is a metrics URL such as `http://127.0.0.1:8000/metrics`, without /v1. Remove `telemetry.vllm` if unavailable.
@@ -118,7 +118,7 @@ To retain raw and network-adjusted latency, add `networkLatency: { mode: automat
 
 Local replay runs in Evaluator's environment without AgentX images/containers. Toolbox maps no NPU and uses no privileged mode. Sampling always runs on the host using existing `npu-smi info`, without installs, driver changes, or device-share. Toolbox startup prepares an idle control channel without device queries; `run` starts sampling selected cards. Direct-host runs start a local sampler automatically without toolbox. Completion, failure, cancellation, or disconnect stops it.
 
-Toolbox sampling requires host Python 3.9+/driver npu-smi; direct-host replay needs Python 3.11–3.13/venv/npu-smi. Inside containers without a host channel, `doctor` fails rather than sampling container devices. For separate task containers, use [Docker](../../../playbook/agentx/agentx-ascend-docker.yaml), still sampling only on the host.
+Toolbox sampling requires host Python 3.9+/driver npu-smi; direct-host replay needs Python 3.11–3.13/venv/npu-smi. Inside containers without a host channel, `doctor` fails rather than sampling container devices. For separate task containers, use [Docker](../../../playbook/agentx/agentx-npu-docker.yaml), still sampling only on the host.
 
 ## 3. Check and Run
 
@@ -134,7 +134,7 @@ Run in order and fix failures before proceeding. `doctor` downloads/infers/sampl
 
 ## 4. Read Reports and Resume
 
-Open `<RUN_ID>/report.md` under selected output.directory. Local NPU defaults to `results/agentx-ascend-local`; online API to results/agentx-model-api. Details are `points/c1/report.md`, `points/c4/report.md`, `points/c8/report.md`, each with metrics.json. Check harness validity, request errors, and enabled-source completeness; `completed` alone does not establish comparability.
+Open `<RUN_ID>/report.md` under selected output.directory. Local NPU defaults to `results/agentx-npu-local`; online API to results/agentx-model-api. Details are `points/c1/report.md`, `points/c4/report.md`, `points/c8/report.md`, each with metrics.json. Check harness validity, request errors, and enabled-source completeness; `completed` alone does not establish comparability.
 
 ```bash
 ember-evaluator run "$EVALUATOR_CONFIG" --resume

@@ -1,6 +1,6 @@
-# 已有 kernel 评测
+# 已有 kernel 的 NPU 评测（kernel-npu）
 
-> [English](./kernel.md) | 中文
+> [English](./kernel-npu.md) | 中文
 
 `kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI 的 `kernel` 评测器启动优化流程生成新候选，再调用同一 Evaluator CLI；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
 

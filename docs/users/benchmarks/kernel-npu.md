@@ -1,6 +1,6 @@
-# Evaluating Existing Kernels
+# Evaluating Existing Kernels on NPU (kernel-npu)
 
-> English | [中文](./kernel.zh-CN.md)
+> English | [中文](./kernel-npu.zh-CN.md)
 
 `kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. With RSI, its `kernel` evaluator generates candidates then calls the same CLI. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
 

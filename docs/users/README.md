@@ -60,7 +60,7 @@ These names are used by `benchmark info`, `init --benchmark`, and YAML. External
 | Custom Harbor task packages | `harbor` | Local directories, pinned archives, GitHub, or Harbor registry sources; executes the task protocol |
 | Service performance | `agentx` | Trace-driven streaming model API; `standard` and `replay`; no accuracy or quality score |
 | Remote service performance | `aisbench` (external plugin) | [SSH deployment and load testing](../../plugins/aisbench/README.md); loaded through a patch, with shared-prefix workloads and warmup |
-| Operators | `kernel` | [Correctness and NPU performance of existing kernels](benchmarks/kernel.md); local serial execution without model calls |
+| Operators | `kernel` | [Correctness and NPU performance of existing kernels](benchmarks/kernel-npu.md); local serial execution without model calls |
 
 ```bash
 node dist/cli.js benchmark list

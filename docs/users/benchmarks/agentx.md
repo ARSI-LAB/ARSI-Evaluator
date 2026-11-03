@@ -24,10 +24,10 @@ Choose a configuration for your goal; running all in sequence is unnecessary:
 | --- | --- |
 | Standard windows/concurrency sweep | [agentx-standard.yaml](../../../playbook/agentx/agentx-standard.yaml) |
 | Online API, request/replay metrics only | [agentx-model-api.yaml](../../../playbook/agentx/agentx-model-api.yaml), no telemetry |
-| Docker standard with automatic host NPU sampling | [agentx-ascend-docker.yaml](../../../playbook/agentx/agentx-ascend-docker.yaml) |
+| Docker standard with automatic host NPU sampling | [agentx-npu-docker.yaml](../../../playbook/agentx/agentx-npu-docker.yaml) |
 | Full first 50 traces, potentially long | [agentx-replay.yaml](../../../playbook/agentx/agentx-replay.yaml) |
-| Two traces plus vLLM/NPU4 metrics | [agentx-ascend-replay.yaml](../../../playbook/agentx/agentx-ascend-replay.yaml), two endpoints required |
-| local standard with selected host NPUs | [agentx-ascend-local.yaml](../../../playbook/agentx/agentx-ascend-local.yaml), toolbox/direct host, explicitly list each card |
+| Two traces plus vLLM/NPU4 metrics | [agentx-npu-replay.yaml](../../../playbook/agentx/agentx-npu-replay.yaml), two endpoints required |
+| local standard with selected host NPUs | [agentx-npu-local.yaml](../../../playbook/agentx/agentx-npu-local.yaml), toolbox/direct host, explicitly list each card |
 
 ### Model Variables for Local Services and Online APIs
 
@@ -177,9 +177,9 @@ toolbox/run.sh prepares token-authenticated host control, querying only when `ru
 
 With `environment: docker`, the harness uses task containers while sampling remains on Docker hosts. Explicit host networking reaches model/loopback metrics. Task containers also map no NPUs. Samplers expose no model startup/arbitrary shell interface.
 
-Host sampling allows only `npu-smi info -m` and selected device/chip info -t usages|memory|power|temp. It never runs set, changes device-share, installs packages, edits system files, or maps devices. Control/diagnostics stay in the workspace. See [Docker example](../../../playbook/agentx/agentx-ascend-docker.yaml); no manual sampler, extra container, or SSH worker is needed.
+Host sampling allows only `npu-smi info -m` and selected device/chip info -t usages|memory|power|temp. It never runs set, changes device-share, installs packages, edits system files, or maps devices. Control/diagnostics stay in the workspace. See [Docker example](../../../playbook/agentx/agentx-npu-docker.yaml); no manual sampler, extra container, or SSH worker is needed.
 
-Use [local Ascend standard](../../../playbook/agentx/agentx-ascend-local.yaml). Start vLLM, set model variables, matching tokenizer, vllm.endpoint/device IDs, then doctor/dry-run/run. First two start no device sampling. InfraAgent can `run` the same CLI through existing SSH workers, adding sampling YAML without separate services/ports.
+Use [local Ascend standard](../../../playbook/agentx/agentx-npu-local.yaml). Start vLLM, set model variables, matching tokenizer, vllm.endpoint/device IDs, then doctor/dry-run/run. First two start no device sampling. InfraAgent can `run` the same CLI through existing SSH workers, adding sampling YAML without separate services/ports.
 
 Existing external samplers retain `endpoint` configuration, mutually exclusive with mode:local/devices. Evaluator scrapes without starting/stopping them:
 
@@ -203,7 +203,7 @@ benchmark:
           chipId: 0
 ```
 
-Use [two Ascend traces](../../../playbook/agentx/agentx-ascend-replay.yaml) with `VLLM_METRICS_ENDPOINT` and ASCEND_METRICS_ENDPOINT. Both must be full reachable HTTP(S) metrics URLs without username/password/query/authentication values. Docker localhost is container-local; arrange access explicitly.
+Use [two Ascend traces](../../../playbook/agentx/agentx-npu-replay.yaml) with `VLLM_METRICS_ENDPOINT` and ASCEND_METRICS_ENDPOINT. Both must be full reachable HTTP(S) metrics URLs without username/password/query/authentication values. Docker localhost is container-local; arrange access explicitly.
 
 Harness strips trailing slashes and appends `/metrics` when absent. Both sources may share an address while filtering metric/model/device labels separately.
 
