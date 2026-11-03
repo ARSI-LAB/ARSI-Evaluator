@@ -1,0 +1,7 @@
+kind: dify-agent-bundle
+schemaVersion: 1
+name: evaluator-dify-fixture
+harness:
+  name: dify
+  version: ">=1.17 <2"
+entry: ./workflow.yaml

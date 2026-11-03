@@ -116,7 +116,7 @@ shared 阶段切换先停止所有求解进程，再切换白名单或断开出�
 
 Shell verifier 执行数据集原有 `tests/test.sh`，优先读取 `reward.json`，其次读取 `reward.txt`。奖励映射中的值必须为有限数；非零退出码若同时产生有效奖励，保留退出码并采用奖励。没有奖励、格式错误和配置的错误哨兵按验证失败记录，不能当成普通零分。
 
-远程 Solver 也必须能向任务环境交付文件。当前 DifySolver 只返回文本，没有将工作流文件同步到 EnvironmentSession；Dify Office YAML 仅展示配置组合，完整 Office 文件评测应使用 simpleagent 或具备文件操作能力的 AgentBundle。
+远程 Solver 也必须能向任务环境交付文件。当前 AgentBundle 的 Dify Harness 只返回文本，没有将工作流文件同步到 EnvironmentSession；Dify Office YAML 仅展示配置组合，完整 Office 文件评测应使用 simpleagent 或具备文件操作能力的 AgentBundle。
 
 ## Ray、指标与扩展
 

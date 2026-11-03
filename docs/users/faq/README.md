@@ -56,7 +56,7 @@ Not necessarily. DSH saves large tool output in full files while events contain 
 
 ### Can Dify deliver Office or code files?
 
-The current Solver returns text without syncing workflow files to the environment. File tasks need SimpleAgent or a file-capable AgentBundle. See [Dify requirements](../solvers.md#dify).
+The AgentBundle Dify harness returns text without syncing workflow files to the environment. File tasks need SimpleAgent or a file-capable AgentBundle. See [Dify requirements](../solvers.md#dify).
 
 ## Benchmarks and Scoring
 

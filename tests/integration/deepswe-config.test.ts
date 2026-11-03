@@ -137,7 +137,7 @@ test.each([
 ])("%s preserves upstream programmatic grading without judge credentials", async file => {
   const loaded = await loadConfig(playbook(file), {}, {
     ...environment, JUDGE_MODEL_NAME: undefined, JUDGE_MODEL_ENDPOINT: undefined, JUDGE_MODEL_API_KEY: undefined,
-    DIFY_BASE_URL: "https://dify.invalid", DIFY_SERVICE_API_KEY: "dify-secret",
+    DIFY_BASE_URL: "https://dify.invalid",
     DIFY_BUNDLE_PATH: resolve(".scratch/dify-bundle"), DIFY_REGISTRY_PATH: resolve(".scratch/dify-registry.json"),
   });
   expect(loaded.experiment.verifier?.service).toBeUndefined();

@@ -33,7 +33,7 @@ Terminal-Bench 的版本、任务镜像与支持条件见 [Terminal-Bench 指南
 | 名称 | 你要决定什么 | 例子 |
 | --- | --- | --- |
 | Benchmark | 测什么题或什么负载 | `gsm8k`、`workbuddy`、`agentx` |
-| Solver | 由谁执行任务 | `simpleagent`、`agentbundle`、`dify`、`agentx-replay` |
+| Solver | 由谁执行任务 | `simpleagent`、`agentbundle`、`agentx-replay` |
 | services | 模型叫什么、请求发到哪里、用哪个认证变量 | `services.default`、`services.judge` |
 | environment | Agent 在哪里运行 | 当前机器的 `local`，或隔离的 `docker` |
 | scheduler | 同时跑多少任务、是否使用 Ray 节点 | `local`、`ray` |

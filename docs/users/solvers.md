@@ -9,14 +9,11 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 | Solver | Purpose | Prerequisites |
 | --- | --- | --- |
 | `simpleagent` | Built-in Pi Agent for quality tasks and tool/file operations | Model API with tool calling; optional Pi Bundle |
-| `agentbundle` | Packaged DSH, deepagents, Hermes, Jiuwenswarm, or pi agents | Readable, valid bundle and harness requirements |
-| `dify` | Call a Dify application or install one from a bundle | Dify address and Service API key; currently primarily returns text |
+| `agentbundle` | Packaged DSH, deepagents, Hermes, Jiuwenswarm, pi, or Dify agents | Readable, valid bundle and harness requirements |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
 
 `simpleagent` is the framework default. AgentX profiles select `agentx-replay`; MMLU profiles select `choice-logprobs`. MMLU cannot be scored solely from an agent's final letter. See [scoring](reference/scoring.md#mmlu-probability-scoring-and-service-requirements) for service requirements, missing candidates, and Chat adaptation differences.
-
-![simpleagent runs through Pi, agentbundle selects a harness, and dify calls a remote application, returning SolveResult](imgs/05-framework-solver-harness.png)
 
 Select one solving path per configuration. EnvironmentSession represents execution interfaces and process boundaries; it does not move all solver plugin code into containers. Harness adapters read output and construct `SolveResult`. Benchmarks still score tasks. See [AgentX](benchmarks/agentx.md) for performance replay.
 
@@ -109,7 +106,7 @@ output:
   directory: ./results/gsm8k-agentbundle
 ```
 
-Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and checks content identity and version ranges before selecting an adapter; directory names are not used to guess. Start a new run after bundle changes.
+Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and checks content identity before selecting an adapter; directory names are not used to guess. Local harnesses also check their pinned versions against the declared ranges; see below for remote Dify version limits. Start a new run after bundle changes.
 
 | Harness declaration | Behavior |
 | --- | --- |
@@ -118,6 +115,7 @@ Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and
 | `hermes` | Hermes adapter |
 | `jiuwenswarm` | Jiuwenswarm adapter |
 | `pi` | pi with release artifact and settings digest validation |
+| `dify` | Install a remote application with the SDK, then execute its Workflow; see below |
 
 Some harnesses require preinstalled local runtimes or dependency installation during Docker preparation. Local directories do not automatically become container/remote paths. Check bundle and harness deployment requirements before choosing a [Playbook](../../playbook/README.md) environment.
 
@@ -127,21 +125,23 @@ Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts S
 
 ## Dify
 
-For a published application accepting the task input, use this text-task example:
+Dify is an AgentBundle harness. Prepare a bundle declaring `harness.name: dify` and use this text-task configuration:
 
 ```yaml
 services:
   default:
-    model: dify-app
-    base_url: ${DIFY_BASE_URL}
-    api_key: ${DIFY_SERVICE_API_KEY}
+    model: dify-internal-binding
+    base_url: http://127.0.0.1:9/v1
+    api_key: ${MODEL_API_KEY}
 benchmark:
   name: gsm8k
   solver:
-    name: dify
+    name: agentbundle
     config:
-      baseUrl: ${DIFY_BASE_URL}
-      apiKeyEnv: DIFY_SERVICE_API_KEY
+      path: ${DIFY_BUNDLE_PATH}
+      dify:
+        baseUrl: ${DIFY_BASE_URL}
+        registryPath: ${DIFY_REGISTRY_PATH}  # optional
 environment: local
 run:
   maxTasks: 2
@@ -150,13 +150,17 @@ output:
   directory: ./results/gsm8k-dify
 ```
 
-Set `DIFY_BASE_URL` to the service address, such as `https://dify.example`, without `/v1` or `/workflows/run`; the adapter appends `/v1/workflows/run`. The published Workflow must accept text input `task` and return text `report` or `answer`; other output objects are saved as JSON text. `apiKeyEnv` is a variable name, not a key value.
+`path` selects the Dify bundle. `dify.baseUrl` is the service address, such as `https://dify.example`, without `/v1`, `/workflows/run`, credentials, query parameters, or fragments. Installation and execution both use this address, overriding the SDK's `DIFY_BASE`. The Workflow accepts text input `task` and returns text `report` or `answer`; other output objects are saved as JSON text.
 
-services retains required framework metadata. The Dify application solves the task; Evaluator does not send model requests using `dify-app`.
+Configure Console credentials on the machine running the Evaluator process: `DIFY_ADMIN_API_KEY`, `DIFY_EMAIL` plus `DIFY_PASSWORD`, or previously saved SDK credentials. Missing credentials fail without an interactive login. The SDK installs and publishes the application and returns its app ID and Service API key. For Ray, preconfigure Console credentials on installation nodes; local environment variables are not automatically distributed.
 
-For a Dify Bundle, set `bundlePath` and optional `registryPath`. The SDK validates, installs, and obtains its Service API key. Use `appId` to specify application identity.
+services retains required framework metadata. In this example `MODEL_API_KEY` only satisfies service binding and no request goes to the placeholder address; model binding belongs to the Dify application. Service or Solver `maxTokens` does not change Workflow model parameters.
 
-**The Dify Solver currently does not sync workflow-generated files back to task environments.** Its existence does not establish support for Office or repository-editing tasks requiring files. Prefer SimpleAgent or AgentBundle, which can write through EnvironmentSession. The [Office Dify YAML](../../playbook/workbuddy/workbuddy-office-dify.yaml) illustrates configuration and documents this limitation.
+`dify.registryPath` selects the installation record file, relative to the YAML directory. By default it uses `dify/<service-address-digest>/installations.json` below the SDK's default registry directory. Concurrent attempts sharing a file on one machine use a file lock and create one application. Remote nodes have separate records; installation is not deduplicated across nodes. An explicit registry containing the same bundle for another service is rejected; choose another file. Registry files contain Service API keys and must not be committed. Run artifacts only contain credential-free installation evidence. Applications remain installed in persistent mode after evaluation.
+
+Provenance records the bundle digest, Runner digest/version, and declared platform version range. The actual remote Dify version and external changes to the installed Workflow are not verified. The old `solver.name: dify`, `bundlePath`, `apiKeyEnv`, and `appId` settings are removed. Migrate to this bundle configuration and start a new run; existing results remain usable for offline reporting.
+
+**The Dify harness does not sync generated files back to task environments.** Office and repository-editing tasks need SimpleAgent or another AgentBundle harness that writes through EnvironmentSession. The [Office Dify YAML](../../playbook/workbuddy/workbuddy-office-dify.yaml) only demonstrates configuration.
 
 ## AgentX Service Performance
 
