@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=24.22.1 <25"
+    "node": ">=24.19.0"
   },
   "files": [
     "dist",
@@ -47,7 +47,7 @@
     "@earendil-works/pi-tui": "1.1.0",
     "@iarna/toml": "2.2.5",
     "@modelcontextprotocol/sdk": "1.32.1",
-    "agent-bundle-core": "git+ssh://git@gitcode.com/evanTang/AgentBundle.git#0.0.7&path:/packages/core",
+    "agent-bundle-core": "git+ssh://git@github.com:evolving-foundry/agentbundle.git#0.0.1&path:/packages/core",
     "cross-spawn": "7.0.6",
     "hyparquet": "1.31.1",
     "semver": "7.8.5",
