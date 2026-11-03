@@ -30,11 +30,11 @@ pnpm --dir plugins/aisbench test
 以下命令在仓库根目录运行：
 
 ```bash
-node dist/cli.js benchmark list --patch plugins/aisbench/cordis.patch.yaml
-node dist/cli.js benchmark info aisbench --patch plugins/aisbench/cordis.patch.yaml
-node dist/cli.js doctor plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
-node dist/cli.js run plugins/aisbench/playbook/01-ssh.yaml --dry-run --patch plugins/aisbench/cordis.patch.yaml
-node dist/cli.js run plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator benchmark list --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator benchmark info aisbench --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator doctor plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml --dry-run --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
 ```
 
 `doctor` 和 `--dry-run` 需要解析配置中的环境变量，但不连接 SSH、不调用模型；真正运行才检查远端依赖、版本和目录权限。默认组合是 `aisbench` benchmark、`aisbench-ssh` solver、`local` environment/scheduler（并发 1）、`aisbench-performance`/`duration`/`usage` metrics、`aisbench-markdown` reporter。
@@ -69,7 +69,7 @@ node dist/cli.js run plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbe
 下载 CSV、脱敏日志、原始输出和执行元数据时验证文件大小和 SHA-256。远端目录保留用于恢复。下载失败、证据缺失或校验不完整时，不记为完整测量。`aisbench-performance` 保留原始 CSV 字段、负载、版本和脚本摘要；性能结果没有质量分数，`passed` 为 null。
 
 ```bash
-node dist/cli.js report <run-directory>
+ember-evaluator report <run-directory>
 ```
 
 `report` 根据已保存的 provider 元数据加载插件，不接受 `--patch`，也不需要模型凭据、SSH 或重新压测。需保留原 patch 位置与匹配版本的插件资源；移动或修改插件后应先恢复原位置/版本。缺少 provider、入口版本变化或资源损坏会报错。报告器消费公开快照，不猜测宿主内部产物路径。
