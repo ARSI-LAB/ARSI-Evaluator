@@ -8,7 +8,7 @@
 
 ## 1. 准备安装与 Docker
 
-先完成[源码安装](../installation.zh-CN.md#直接安装)：同级放置 `AgentBundle` 和 `ember-evaluator`，使用 `corepack pnpm@11.22.0` 先构建 `agent-bundle-core`，再安装、构建 Evaluator。完整命令及更新后的构建顺序在安装指南中维护。
+先按[源码安装](../installation.zh-CN.md#直接安装)配置 GitHub 读取权限并安装、构建 Evaluator。AgentBundle SDK 会自动下载和构建，无需手动克隆。
 
 以下命令在 Evaluator 仓库根目录执行，使用 `node dist/cli.js`，无需注册全局命令。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
 

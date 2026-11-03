@@ -6,19 +6,9 @@ Use your model API to solve two GSM8K questions and produce an offline report. R
 
 ## 1. Install and Build
 
-Complete [source installation](installation.md#install-from-source): place `AgentBundle` beside `ember-evaluator`, use `corepack pnpm@11.22.0` to install `AgentBundle` dependencies and build `agent-bundle-core`, then install and build Evaluator. Current local `link:` dependencies require SDK preparation even for SimpleAgent. Running only Evaluator `pnpm install` and `pnpm build` is insufficient.
+Complete the [installation guide](installation.md#install-from-source). This local example requires neither Docker nor Ray; the agent executes tools on your machine.
 
-Requires Node.js **24.x**, pnpm **11.22.0**, Git, and access to model/data services. This local example needs neither Docker nor Ray; agent tools execute on your machine. Choose environments for code and container tasks using their guides. After both builds, check the entry point from the Evaluator root:
-
-```bash
-node --version
-corepack pnpm@11.22.0 --version
-node dist/cli.js --help
-```
-
-Examples use `node dist/cli.js`. To run elsewhere, [register the global CLI](installation.md#register-the-global-cli), then use `ember-evaluator run /path/to/config.yaml`. See [running from any directory](installation.md#run-from-any-directory) for paths and model variables.
-
-Preparing AgentBundle source requires GitCode read access. For `Permission denied (publickey)` or repository access failures, fix Git/SSH permissions first. See [HTTPS authentication in the management container](deployment/container-toolbox.md#gitcode-https-login-in-the-container); those commands run inside that container. This authentication is separate from model API keys and HF_TOKEN.
+Run the following `node dist/cli.js` commands from the Evaluator repository root, or replace the prefix with the registered `ember-evaluator` command.
 
 ## 2. Choose a Benchmark and Generate Configuration
 

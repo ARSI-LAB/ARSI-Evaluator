@@ -8,7 +8,7 @@ AgentX uses `doctor → run --dry-run → run` like other benchmarks. Start infe
 
 ## 1. Choose an Environment and Build
 
-Prepare sibling AgentBundle. For the optional management container, run this from Evaluator on a Linux Docker host; skip for direct host execution:
+Configure read access to the private AgentBundle GitHub repository as described in [installation](../installation.md#install-from-source). For the optional management container, run this from Evaluator on a Linux Docker host; skip for direct host execution:
 
 ```bash
 bash scripts/toolbox/run.sh
@@ -19,21 +19,13 @@ The container is optional. Otherwise prepare Node/pnpm through [source installat
 With toolbox, run commands inside it. PNPM_HOME/global PATH/directories are automatic, without pnpm setup/manual exports. Direct hosts configure global bins through installation instructions.
 
 ```bash
-export EVALUATOR_DIR="$(pwd -P)"
-export AGENTBUNDLE_DIR="$(dirname "$EVALUATOR_DIR")/AgentBundle"
-
-cd "$AGENTBUNDLE_DIR"
-pnpm install --frozen-lockfile
-pnpm --filter agent-bundle-core build
-
-cd "$EVALUATOR_DIR"
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add --global .
 ember-evaluator --help
 ```
 
-Toolbox shares sibling repositories and supplies Node/pnpm/Python/compilers. Dependencies live in containers/dedicated volumes. First AgentX run creates a cached venv and installs the harness, reused across concurrency points. No manual venv/task container/SSH worker is needed. Host installation of these container dependencies is unnecessary.
+Toolbox shares the Evaluator repository and supplies Node/pnpm/Python/compilers. AgentBundle installs automatically with project dependencies in the dedicated dependency volume. First AgentX run creates a cached venv and installs the harness, reused across concurrency points. No manual venv/task container/SSH worker is needed. Host installation of these container dependencies is unnecessary.
 
 ## 2. Configure YAML and Model Variables
 

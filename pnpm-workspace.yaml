@@ -2,8 +2,6 @@
 nodeLinker: hoisted
 
 overrides:
-  agent-bundle-core: link:../AgentBundle/packages/core
-  agentbundle-workspace: link:../AgentBundle/packages/cli
   undici: 8.12.2
 
 allowBuilds:
@@ -11,7 +9,7 @@ allowBuilds:
   esbuild: true
   fsevents: false
   protobufjs: true
-  agentbundle-workspace@git+ssh://git@github.com:evolving-foundry/agentbundle.git: true
-  agent-bundle-core@git+ssh://git@github.com:evolving-foundry/agentbundle.git: true
+  agentbundle-workspace@git+https://github.com/evolving-foundry/agentbundle.git: true
+  agent-bundle-core@git+https://github.com/evolving-foundry/agentbundle.git: true
 
 minimumReleaseAge: 0

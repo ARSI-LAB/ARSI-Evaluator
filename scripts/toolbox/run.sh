@@ -70,7 +70,6 @@ docker --host unix:///var/run/docker.sock run --rm -it --init \
   --mount "type=bind,source=$workspace_dir,target=$workspace_dir" \
   --mount "type=volume,source=ember-evaluator-toolbox-home,target=/toolbox-home" \
   --mount "type=volume,source=ember-evaluator-toolbox-node-modules,target=$repo_dir/node_modules" \
-  --mount "type=volume,source=ember-evaluator-toolbox-agentbundle-node-modules,target=$workspace_dir/AgentBundle/node_modules" \
   "${host_env[@]}" "${proxy_env[@]}" \
   --workdir "$repo_dir" \
   ember-evaluator-toolbox:local
