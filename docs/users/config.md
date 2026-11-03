@@ -28,6 +28,27 @@ See [Terminal-Bench](benchmarks/terminalbench.md) for versions, task images, and
 
 `loadConfig` fills configuration from registered profiles; `bootstrap` selects factories by component names. Authentication is service-bound; saved configuration retains references only. Registration/validation start no tasks.
 
+## NPU and GPU Selection
+
+Select hardware at the experiment YAML root:
+
+```yaml
+hardware: npu # npu or gpu; defaults to npu
+```
+
+User YAML overrides profile defaults; the framework default is NPU. `config explain`, `config resolve`, saved configurations, and Ray workers carry the effective choice. This setting does not detect devices, start or switch remote model servers, or port CUDA tasks to NPU. Tasks without accelerator requirements behave the same under either choice.
+
+| Scenario | `npu` | `gpu` |
+| --- | --- | --- |
+| AgentX API replay and vLLM metrics | Supported | Supported |
+| AgentX `telemetry.ascend` | Ascend collection | Configuration conflict before execution |
+| Kernel precision, timing, profiling | NPU implementation | GPU backend not implemented; rejected before execution |
+| Harbor task requiring GPU | Hardware mismatch | GPU task execution not implemented |
+
+Model API calls do not require accelerators on the Evaluator host. GPU hardware telemetry and task device mounting are not supported. Incompatible tasks fail according to `run.onError`; their requirements are neither silently skipped nor rewritten.
+
+Historical configurations without this field mean NPU. Omitted hardware and explicit `npu` retain the same resume configuration fingerprint; changing to `gpu` requires a new run. Existing source and plugin version checks still apply. Offline reports do not access hardware.
+
 ## Names and Defaults
 
 | Name | Decision | Examples |

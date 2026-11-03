@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -30,6 +31,7 @@ export function createHarborSource(
   transport: HarborTransport = transportDefault,
   verifier: Verifier = new HarborShellVerifier(),
   phaseTimeouts: PhaseTimeoutOverrides = {},
+  hardware: HardwareKind = "npu",
 ): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
   const root = resolve(config.cacheDir);
   const cache = new GitBlobCache(root);
@@ -180,7 +182,7 @@ export function createHarborSource(
           datasetActivity(`Preparing task files ${++completed}/${admitted.length}`);
         }
         signal.throwIfAborted();
-        return await loadGenericHarborTask(directory, directory, task.name, config, verifier, signal, phaseTimeouts);
+        return await loadGenericHarborTask(directory, directory, task.name, config, verifier, signal, phaseTimeouts, hardware);
       } catch (error) {
         await rm(directory, { recursive: true, force: true });
         throw error;

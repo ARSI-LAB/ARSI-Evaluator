@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
+import { prefixProfilingPaths } from "../../src/adapters/kernel/npu.js";
 import { parseKernelProfiling, kernelVerdict } from "../../src/plugins/benchmarks/protocols/kernel/result.js";
-import { parseKernelConfig, parseKernelManifest, prefixProfilingPaths } from "../../src/plugins/benchmarks/protocols/kernel/index.js";
+import { parseKernelConfig, parseKernelManifest } from "../../src/plugins/benchmarks/protocols/kernel/index.js";
 import { analyzeRoofline, DEFAULT_ROOFLINE_CONFIG } from "../../src/plugins/benchmarks/protocols/kernel/roofline.js";
 import { analyzeTraceEvents, getNpuSpecs, DEFAULT_NPU_DEVICE } from "../../src/plugins/benchmarks/protocols/kernel/msprof-analysis.js";
 import { renderKernelTables } from "../../src/plugins/reporters/kernel-tables.js";

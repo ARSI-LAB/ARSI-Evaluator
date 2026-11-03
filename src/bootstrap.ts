@@ -21,6 +21,7 @@ export function createPluginRuntime(config: LoadedConfig, experimentDir: string,
     }),
   );
   return {
+    hardware: config.experiment.hardware ?? "npu",
     phaseTimeouts: {
       ...(config.experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: config.experiment.run.solveTimeoutSeconds }),
       ...(config.experiment.run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: config.experiment.run.verifyTimeoutSeconds }),

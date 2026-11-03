@@ -111,6 +111,7 @@ async function executeRegisteredNode(input: unknown, node: NodeConfig, token: st
     const service = remote.safeConfig.solver.service;
     const config: LoadedConfig = {
       experiment: {
+        hardware: remote.safeConfig.hardware ?? "npu",
         services: Object.fromEntries(Object.entries(bindings).map(([name, binding]) => [name, binding.model])),
         benchmark,
         environment,

@@ -4,6 +4,10 @@
 
 `kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. With RSI, its `kernel` evaluator generates candidates then calls the same CLI. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
 
+## Hardware Selection
+
+Use top-level `hardware: npu` in experiment YAML; omission also means NPU. `hardware: gpu` fails with “Kernel GPU backend is not implemented” before reading candidates or starting Python. Built-in timing uses only the NPU profiler and fails without an NPU instead of falling back to CUDA or CPU. Existing `kernel precision/bench/profile` commands remain NPU entry points with unchanged arguments and result formats. See the [existing kernel example](../../../playbook/kernel/existing.yaml).
+
 ## Environment and Execution
 
 Prepare dependencies through [installation](../installation.md). pnpm downloads and builds the AgentBundle SDK from GitHub automatically; no sibling source repository is required. Built-in plugin imports need this dependency even when that Solver is not selected.

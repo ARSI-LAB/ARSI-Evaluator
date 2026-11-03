@@ -8,7 +8,8 @@
 
 | Benchmark | 目录 | 运行配置 |
 | --- | --- | --- |
-| AgentX | [agentx](agentx) | [正式并发扫描](agentx/agentx-standard.yaml)、[Docker 裸机 NPU 采样](agentx/agentx-npu-docker.yaml)、[在线模型 API](agentx/agentx-model-api.yaml)、[前 50 个会话完整回放](agentx/agentx-replay.yaml)、[两条 Trace 与 Ascend 指标](agentx/agentx-npu-replay.yaml)；[性能评测说明](../docs/users/benchmarks/agentx.zh-CN.md) |
+| AgentX | [agentx](agentx) | [正式并发扫描](agentx/agentx-standard.yaml)、[Docker 裸机 NPU 采样](agentx/agentx-npu-docker.yaml)、[在线模型 API](agentx/agentx-model-api.yaml)、[GPU 服务 API](agentx/agentx-gpu-api.yaml)、[前 50 个会话完整回放](agentx/agentx-replay.yaml)、[两条 Trace 与 Ascend 指标](agentx/agentx-npu-replay.yaml)；[性能评测说明](../docs/users/benchmarks/agentx.zh-CN.md) |
+| Kernel | [kernel](kernel) | [已有候选 NPU 评测](kernel/existing.yaml)；[精度、计时与 profiling](../docs/users/benchmarks/kernel-npu.zh-CN.md) |
 | DeepSWE | [deepswe](deepswe) | [最简配置](deepswe/deepswe.yaml)、[单机 SimpleAgent](deepswe/deepswe-simpleagent.yaml)、[Ray + AgentBundle](deepswe/deepswe-agentbundle-ray.yaml) |
 | WorkBuddy | [workbuddy](workbuddy) | [Office 最简配置](workbuddy/workbuddy-office.yaml)、[Code](workbuddy/workbuddy-code.yaml)、[Web](workbuddy/workbuddy-web.yaml)、[Security](workbuddy/workbuddy-security.yaml) |
 | Terminal-Bench | [terminalbench](terminalbench) | [4.0 全量](terminalbench/terminalbench-4.0.yaml)、[2.0 SimpleAgent](terminalbench/terminalbench-simpleagent.yaml)、[AgentBundle](terminalbench/terminalbench-agentbundle.yaml) |

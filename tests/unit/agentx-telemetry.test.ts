@@ -194,6 +194,7 @@ test("report separates per-chip availability and does not impose joint acceptanc
   expect(report).toContain("NPU partial");
   const vllmOnly = { ...summary, telemetry: normalizeTelemetry({ vllm: telemetryConfig.vllm }, "fixture-model", serverMetricsEvidence()) };
   const single = renderAgentXTables({ applicable: true, points: [{ taskId: "point", status: "completed", measurement: vllmOnly }] }).join("\n");
-  expect(single).toContain("NPU 未启用");
+  expect(single).toContain("硬件指标未启用");
+  expect(single).not.toContain("NPU");
   expect(single).not.toContain("联合验收");
 });
