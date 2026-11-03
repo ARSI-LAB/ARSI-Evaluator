@@ -1,0 +1,27 @@
+# 本地部署：MODEL_NAME 填推理服务 /v1/models 返回的模型 ID（含启动时设置的别名），
+# MODEL_ENDPOINT 填该服务的 OpenAI 兼容 base URL，例如 http://127.0.0.1:8000/v1；
+# MODEL_API_KEY 填服务配置的密钥，无鉴权时填非空占位值 EMPTY。推理服务需手动启动。
+# 在线 API：MODEL_NAME 填服务商模型 ID，MODEL_ENDPOINT 填服务商 base URL，
+# MODEL_API_KEY 填有效密钥；使用 agentx-model-api.yaml，不启用 telemetry。
+# 在线 API 不能采集服务端推理引擎或 GPU/NPU 硬件指标，只测客户端请求与回放性能。
+# tokenizer 必须与实际模型匹配；模型 ID/别名不是 tokenizer 仓库时，直接修改下方 tokenizer。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: agentx
+  config:
+    durationSeconds: 3600 # 每档测量窗口；改为 60 即测量 60 秒，准备、预热及收尾另计。
+    concurrency: [1, 4, 8]
+  solver:
+    config:
+      tokenizer: ${MODEL_NAME}
+      # 可选：增加 RTT 和扣除 RTT 后的延迟统计，原始指标仍保留。
+      # networkLatency:
+      #   mode: automatic
+      #   pingIntervalSeconds: 1
+# local 在 Evaluator 所在环境回放，不创建 AgentX 任务镜像或任务容器。
+# 可在管理容器内运行，也可直接在已有 Python 3.11–3.13 和 venv 的裸机运行。
+environment: local

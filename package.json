@@ -1,0 +1,65 @@
+{
+  "name": "ember-evaluator",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
+  "files": [
+    "dist",
+    "playbook"
+  ],
+  "bin": {
+    "ember-evaluator": "./dist/cli.js",
+    "ember": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prepare": "pnpm run build",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/package-runtime.mjs",
+    "ray:ensure": "pnpm install --frozen-lockfile && pnpm build && node scripts/ray-smoke/ensure.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.5",
+    "@types/semver": "7.8.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-agent-core": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-codemode": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
+    "@earendil-works/pi-telemetry": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
+    "@iarna/toml": "2.2.5",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "agent-bundle-core": "git+ssh://git@gitcode.com/evanTang/AgentBundle.git#0.0.7&path:/packages/core",
+    "cross-spawn": "7.0.6",
+    "hyparquet": "1.31.1",
+    "semver": "7.8.5",
+    "smol-toml": "1.9.1",
+    "tar": "7.5.22",
+    "undici": "8.12.2",
+    "yaml": "2.9.1"
+  },
+  "overrides": {
+    "undici": "$undici",
+    "@earendil-works/pi-coding-agent": {
+      "undici": "$undici"
+    }
+  }
+}

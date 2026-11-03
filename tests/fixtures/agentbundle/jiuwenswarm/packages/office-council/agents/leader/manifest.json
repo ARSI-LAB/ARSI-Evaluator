@@ -1,0 +1,8 @@
+{
+  "name": "leader",
+  "description": "Office council leader.",
+  "package_type": "agent_template",
+  "persona": {
+    "dir": "."
+  }
+}

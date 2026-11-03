@@ -1,0 +1,13 @@
+id: swebench
+role: benchmark
+extends: harbor
+defaultVersion: "1.0"
+versions:
+  "1.0":
+    plugin:
+      name: harbor
+      config:
+        dataset: swebench-verified@1.0
+defaults:
+  run:
+    timeoutSeconds: 9000

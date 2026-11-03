@@ -1,0 +1,5 @@
+kind: pi-agent-bundle
+extensions:
+  - ./extensions/demo
+settings: ./settings.json
+lockfile: ./dependencies.lock

@@ -1,0 +1,15 @@
+# 全量运行 SWE-bench Verified + AgentBundle。
+# MODEL_ENDPOINT 必须可从 Docker 容器访问；宿主本地网关使用 host.docker.internal。
+# AGENT_BUNDLE_PATH 指向已有的 AgentBundle 目录。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: swebench
+  version: "1.0"
+  solver:
+    name: agentbundle
+    config:
+      path: ${AGENT_BUNDLE_PATH}

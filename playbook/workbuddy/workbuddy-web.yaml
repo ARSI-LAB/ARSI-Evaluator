@@ -1,0 +1,10 @@
+# Web 默认使用 default 服务作为裁判；可通过 benchmark.verifier.service 指定独立服务。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+
+benchmark:
+  name: workbuddy
+  scenario: web

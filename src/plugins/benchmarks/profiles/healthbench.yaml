@@ -1,0 +1,9 @@
+id: healthbench
+role: benchmark
+plugin:
+  name: healthbench
+  config:
+    judgeService: judge
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface
+defaults:
+  metrics: [quality-score, success-rate, duration, usage]

@@ -1,0 +1,10 @@
+# 最简 DeepSWE v1.1；省略 run 时运行全部任务。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+
+benchmark:
+  name: deepswe
+  version: "1.1"

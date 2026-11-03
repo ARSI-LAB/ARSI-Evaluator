@@ -1,0 +1,57 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api: openai-completions
+    api_key: ${MODEL_API_KEY}
+  judge:
+    model: ${JUDGE_MODEL_NAME}
+    base_url: ${JUDGE_MODEL_ENDPOINT}
+    api: openai-completions
+    api_key: ${JUDGE_MODEL_API_KEY}
+environment:
+  name: docker
+scheduler:
+  name: ray
+  concurrency: 20
+metrics:
+  - name: harbor-score
+  - name: success-rate
+  - name: duration
+  - name: usage
+run:
+  maxTasks: 20
+  onError: continue
+  timeoutSeconds: 9000
+output:
+  directory: ../../../results/workbuddy-office-ray-20
+benchmark:
+  name: harbor
+  config:
+    dataset: wb-bench-office-v1.0
+    cacheDir: ../../../.cache/harbor
+    source:
+      kind: archive
+      url: https://huggingface.co/datasets/tencent/workbuddy-bench/resolve/3e8ad839685c589d83a1dd60fe2d15eabb75f27a/wb-bench-office-v1.0.tar.gz
+      sha256: 89d4480b483ca2e0555ba96cc7d73c16c78802b17cd822044d5f7f27ab0558bf
+      root: wb-bench-office-v1.0
+    tasks:
+      root: tasks
+      id: task.name
+      expectedCount: 50
+    scoring:
+      primary: reward
+      passThreshold: 1
+  solver:
+    name: simpleagent
+    service: default
+  verifier:
+    name: harbor-python
+    config:
+      importPath: workbuddy_bench.judge:CompositeVerifier
+      requireService: true
+    service: judge
+deployment:
+  kind: ray-jobs
+  managedLocal: false
+  caFile: ../../../.scratch/ray-smoke/security/cert.pem

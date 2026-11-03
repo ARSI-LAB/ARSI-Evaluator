@@ -1,0 +1,5 @@
+﻿invoice_id,customer,issued_at,description,quantity,unit_cents,subtotal_cents,tax_cents,credit_cents,line_total_cents,currency
+inv1,"Acme, Inc.",2026-06-01,Seats,3,1000,3000,300,,3300,USD
+inv1,"Acme, Inc.",2026-06-01,Extra storage,2,250,500,50,,550,USD
+inv1,"Acme, Inc.",2026-06-01,Credit,,,,,300,-300,USD
+inv2,Beta LLC,2026-06-02,Seats,1,1000,1000,0,,1000,USD

@@ -1,0 +1,5 @@
+# Keep this plugin independent of the host workspace and its local overrides.
+packages:
+  - .
+allowBuilds:
+  esbuild: true

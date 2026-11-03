@@ -1,0 +1,11 @@
+id: mmlu
+role: benchmark
+plugin:
+  name: mmlu
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface
+defaults:
+  benchmark:
+    solver:
+      name: choice-logprobs
+  environment: local

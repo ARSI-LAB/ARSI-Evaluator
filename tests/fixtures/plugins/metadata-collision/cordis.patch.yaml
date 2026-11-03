@@ -1,0 +1,3 @@
+- insert:
+    - id: cordis.patch.yaml
+      name: ../valid/plugin.mjs

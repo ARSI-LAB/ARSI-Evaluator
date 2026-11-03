@@ -1,0 +1,13 @@
+# 官方解析 JSON + simpleagent，运行全部 90 题；不是纯图片输入测评。
+# 使用完整的 1,435 份可搜索 JSON（约 794MB）。
+# 需要 Docker、模型环境变量和已获授权的 HF_TOKEN。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: officeqa-pro-v2
+  config:
+    hfToken: ${HF_TOKEN}
+    corpusFormat: parsed-json

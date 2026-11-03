@@ -1,0 +1,11 @@
+# Harbor 是任务协议；本例使用 Terminal-Bench 2.0，可将 dataset 改为其他 Harbor 注册数据集。
+# 需要 Docker，MODEL_ENDPOINT 必须可从容器访问。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: harbor
+  config:
+    dataset: terminal-bench@2.0

@@ -1,0 +1,12 @@
+# 原始 PDF + simpleagent；允许 pdftotext，不会强制去除文本层或只提供页面图片。
+# 全量运行 90 题，准备完整的 1,435 份 PDF（约 13.3GB），需要已获授权的 HF_TOKEN。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: officeqa-pro-v2
+  config:
+    hfToken: ${HF_TOKEN}
+    corpusFormat: pdf

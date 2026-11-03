@@ -1,0 +1,19 @@
+services:
+  default:
+    provider: openai
+    model: fixture-model
+    base_url: https://example.invalid/v1
+    api_key: ${FIXTURE_KEY}
+benchmark:
+  name: fixture-benchmark
+  solver:
+    name: simpleagent
+    service: default
+environment:
+  name: fixture-environment
+metrics:
+  - name: company-score
+    config:
+      threshold: 0.8
+output:
+  directory: ./results

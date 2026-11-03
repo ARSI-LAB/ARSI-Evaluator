@@ -1,0 +1,2 @@
+# Dependency-free fixture lock: the controlled composition entry uses no
+# third-party packages, so the fixture venv installs only the bundle itself.

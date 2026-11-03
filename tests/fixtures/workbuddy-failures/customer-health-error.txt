@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tests/verifier.py", line 37, in <module>
+    by={r['account_id']:r for r in rows}
+        ~^^^^^^^^^^^^^^
+KeyError: 'account_id'

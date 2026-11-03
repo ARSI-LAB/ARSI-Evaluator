@@ -1,0 +1,4 @@
+﻿account_id,name,owner,plan,active_users,projects,open_tickets,sev1,health,last_active
+a3,Core Co,Mia,enterprise,40,30,5,1,red,2026-06-13
+a2,Beta LLC,Noah,free,1,0,0,0,yellow,2026-06-01
+a1,Acme Inc,Mia,pro,12,5,2,0,green,2026-06-14

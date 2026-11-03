@@ -1,0 +1,10 @@
+kind: deepagents-agent-bundle
+schemaVersion: 1
+name: evaluator-fixture
+harness:
+  name: deepagents
+  version: ">=0.7,<0.8"
+entry: ./langgraph.json
+plugins:
+  - path: ./plugins/fixture_composition
+lockfile: ./dependencies.lock

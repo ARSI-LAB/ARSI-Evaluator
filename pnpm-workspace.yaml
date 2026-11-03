@@ -1,0 +1,17 @@
+# Keep the existing flat dependency layout for package/plugin compatibility.
+nodeLinker: hoisted
+
+overrides:
+  agent-bundle-core: link:../AgentBundle/packages/core
+  agentbundle-workspace: link:../AgentBundle/packages/cli
+  undici: 8.12.2
+
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  fsevents: false
+  protobufjs: true
+  agentbundle-workspace@git+ssh://git@gitcode.com/evanTang/AgentBundle.git: true
+  agent-bundle-core@git+ssh://git@gitcode.com/evanTang/AgentBundle.git: true
+
+minimumReleaseAge: 0

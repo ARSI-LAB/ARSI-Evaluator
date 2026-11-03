@@ -1,0 +1,11 @@
+# Merge with compose.yaml for a Windows-host coordinator and builtin-only workers.
+services:
+  head:
+    ports:
+      - "127.0.0.1:10001:10001"
+  worker-a:
+    environment:
+      EVALUATOR_WORKER_PROFILE: builtin
+  worker-b:
+    environment:
+      EVALUATOR_WORKER_PROFILE: builtin

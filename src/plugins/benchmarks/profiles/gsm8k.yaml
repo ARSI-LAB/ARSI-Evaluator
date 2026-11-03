@@ -1,0 +1,6 @@
+id: gsm8k
+role: benchmark
+plugin:
+  name: gsm8k
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface

@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tests/verifier.py", line 39, in <module>
+    seats=next((r for r in rows if r['invoice_id']=='inv1' and r['description']=='Seats'), {})
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tests/verifier.py", line 39, in <genexpr>
+    seats=next((r for r in rows if r['invoice_id']=='inv1' and r['description']=='Seats'), {})
+                                   ~^^^^^^^^^^^^^^
+KeyError: 'invoice_id'

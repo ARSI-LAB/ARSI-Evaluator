@@ -1,0 +1,33 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api: openai-completions
+    api_key: ${MODEL_API_KEY}
+    maxTokens: 32768
+benchmarks:
+  - name: docops
+    config:
+      repository: icip-cas/DocOps
+      revision: main
+      cacheDir: ../../.cache/docops
+    solver:
+      name: simpleagent
+      service: default
+environment:
+  name: docops-docker
+  config:
+    profile: amd
+    repository: icip-cas/DocOps
+    revision: main
+    cacheDir: ../../.cache/docops-images
+scheduler:
+  name: local
+  config:
+    concurrency: 1
+run:
+  taskIds:
+    - atomic__excel_001_budget_bucket_totals_seed
+  timeoutSeconds: 1800
+output:
+  directory: ../../results/docops

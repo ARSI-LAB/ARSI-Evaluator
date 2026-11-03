@@ -1,0 +1,9 @@
+id: simpleqa
+role: benchmark
+plugin:
+  name: simpleqa
+  config:
+    judgeService: judge
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface
+defaults:
+  metrics: [quality-score, success-rate, duration, usage]

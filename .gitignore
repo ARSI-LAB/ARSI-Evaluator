@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+dist/
+.scratch/
+.superpowers/
+.cache/
+results/
+coverage/
+*.tsbuildinfo
+.idea/
+.zcode/
+.zcodeignore
+__pycache__/
+.evaluator-build.lock/

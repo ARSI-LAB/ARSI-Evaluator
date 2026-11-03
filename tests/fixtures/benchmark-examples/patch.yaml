@@ -1,0 +1,7 @@
+- insert:
+    - id: example-definition
+      name: ./definition.mjs
+    - id: example-protocol
+      name: ./protocol.mjs
+    - id: example-harbor
+      name: ./harbor-profile.mjs

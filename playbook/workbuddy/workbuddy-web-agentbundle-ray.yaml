@@ -1,0 +1,21 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+  judge:
+    model: ${JUDGE_MODEL_NAME}
+    base_url: ${JUDGE_MODEL_ENDPOINT}
+    api_key: ${JUDGE_MODEL_API_KEY}
+benchmark:
+  name: workbuddy
+  scenario: web
+  solver:
+    name: agentbundle
+    config:
+      path: ./bundles/dsh-workbuddy-web
+  verifier:
+    service: judge
+scheduler:
+  name: ray
+  concurrency: 2

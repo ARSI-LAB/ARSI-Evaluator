@@ -1,0 +1,141 @@
+id: workbuddy
+role: benchmark
+extends: harbor
+defaultVersion: "1.0"
+versions:
+  "1.0": {}
+defaultScenario: code
+scenarios:
+  code:
+    plugin:
+      name: harbor
+      config:
+        dataset: wb-bench-code-v1.0
+        source:
+          kind: archive
+          url: https://huggingface.co/datasets/tencent/workbuddy-bench/resolve/3e8ad839685c589d83a1dd60fe2d15eabb75f27a/wb-bench-code-v1.0.tar.gz
+          sha256: f60394e44341f45f66af17ba69efc51ceadc61f17c08aa89e4af35b51f6f34e1
+          root: wb-bench-code-v1.0
+        tasks:
+          root: tasks
+          id: task.name
+          expectedCount: 80
+          metadataFields:
+            - v2_1_changes
+        scoring:
+          primary: reward
+          passThreshold: 1
+    defaults:
+      environment:
+        name: docker
+        config:
+          platform: linux/amd64
+          buildPipConstraints:
+            workbuddy/bug_fix-medium-incorrect_linenos_on_fstring:
+              - pytest<8
+            workbuddy/feature-medium-add_support_for_dependencies:
+              - pytest<8
+              - anyio<4.15
+      run:
+        timeoutSeconds: 4500
+      benchmark:
+        verifier:
+          name: harbor-python
+          config:
+            importPath: workbuddy_bench.judge:CompositeVerifier
+            requireService: false
+  office:
+    plugin:
+      name: harbor
+      config:
+        dataset: wb-bench-office-v1.0
+        source:
+          kind: archive
+          url: https://huggingface.co/datasets/tencent/workbuddy-bench/resolve/3e8ad839685c589d83a1dd60fe2d15eabb75f27a/wb-bench-office-v1.0.tar.gz
+          sha256: 89d4480b483ca2e0555ba96cc7d73c16c78802b17cd822044d5f7f27ab0558bf
+          root: wb-bench-office-v1.0
+        tasks:
+          root: tasks
+          id: task.name
+          expectedCount: 50
+        scoring:
+          primary: reward
+          passThreshold: 1
+    defaults:
+      environment:
+        name: docker
+        config:
+          platform: linux/amd64
+      run:
+        timeoutSeconds: 4500
+      benchmark:
+        verifier:
+          name: harbor-python
+          config:
+            importPath: workbuddy_bench.judge:CompositeVerifier
+            requireService: false
+  web:
+    plugin:
+      name: harbor
+      config:
+        dataset: wb-bench-web-v1.0
+        source:
+          kind: archive
+          url: https://huggingface.co/datasets/tencent/workbuddy-bench/resolve/3e8ad839685c589d83a1dd60fe2d15eabb75f27a/wb-bench-web-v1.0.tar.gz
+          sha256: bf4e0258501a7007d547eeb5f3e9cfb7dd648feaaa4f3dbc23dbae87758e0b66
+          root: wb-bench-web-v1.0
+        tasks:
+          root: tasks
+          id: task.name
+          expectedCount: 70
+        scoring:
+          primary: reward
+          passThreshold: 1
+    defaults:
+      environment:
+        name: docker
+        config:
+          platform: linux/amd64
+      run:
+        timeoutSeconds: 10000
+      benchmark:
+        verifier:
+          name: harbor-python
+          config:
+            importPath: workbuddy_bench.judge:CompositeVerifier
+            requireService: true
+          service: $default
+  security:
+    plugin:
+      name: harbor
+      config:
+        dataset: wb-bench-sec-v1.0
+        source:
+          kind: archive
+          url: https://huggingface.co/datasets/tencent/workbuddy-bench/resolve/3e8ad839685c589d83a1dd60fe2d15eabb75f27a/wb-bench-sec-v1.0.tar.gz
+          sha256: f615f55b2ce68294eca6bef658d3a135978ca1e7f00b8e712292a2738f79c3f3
+          root: wb-bench-sec-v1.0
+          hostPlatform: linux
+        tasks:
+          root: tasks
+          id: task.name
+          expectedCount: 60
+        defaults:
+          timeoutMultiplier: 2
+          agentUser: dev
+          verifierUser: root
+          scoreAfterSolveFailure: true
+        scoring:
+          primary: reward
+          passThreshold: 1
+    defaults:
+      environment:
+        name: docker
+        config:
+          platform: linux/amd64
+      run:
+        timeoutSeconds: 36000
+metricAliases:
+  workbuddy-score:
+    name: harbor-score
+    config: {}

@@ -1,0 +1,103 @@
+<h1 align="center">
+  <img src="imgs/ember-evaluator-logo.png" alt="Ember Evaluator" width="520">
+</h1>
+
+<h3 align="center">Many ways to evaluate. One framework to bring them together.</h3>
+
+<p align="center">
+  Bring benchmarks, agent evaluations, and performance testing into one workflow — across coding, terminal, office, web, and more.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-24.x-339933?logo=nodedotjs&amp;logoColor=white" alt="Node.js 24.x">
+  <img src="https://img.shields.io/badge/pnpm-11.22.0-F69220?logo=pnpm&amp;logoColor=white" alt="pnpm 11.22.0">
+  <img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0">
+</p>
+
+<p align="center">
+  English | <a href="./README.zh-CN.md">中文</a>
+</p>
+
+<p align="center">
+  <a href="docs/users/quick-start.md">Quick Start</a> ·
+  <a href="docs/users/README.md">Documentation</a> ·
+  <a href="playbook/README.md">Playbooks</a> ·
+  <a href="docs/development/plugins.en.md">Plugins</a>
+</p>
+
+## ℹ️ Introduction
+
+Ember Evaluator configures models, agents, benchmarks, and execution environments in one YAML file. It executes tasks, verifies answers, saves results, and generates reports so you can compare models and agents under the same experimental conditions.
+
+It supports math and knowledge questions, code changes, terminal operations, office, web, and security tasks. AgentX can also replay traces to measure model service throughput and latency.
+
+![Evaluator architecture from YAML configuration through execution, verification, result storage, and reporting](imgs/01-framework-project-overview-v2.png.png)
+
+Models and agents solve tasks, benchmarks verify them, and stores save results and evidence. See `src/` for module responsibilities, execution flows, and implementation entry points.
+
+## ⚙️ Features
+
+- **Multiple evaluation workloads**: GSM8K, MMLU, HumanEval, Terminal-Bench, SWE-bench, WorkBuddy, [OfficeQA Pro V2](docs/users/benchmarks/officeqa-pro-v2.md) (parsed JSON by default, with original PDF support), and custom Harbor tasks. See [supported benchmarks](docs/users/README.md#supported-benchmarks).
+- **Multiple agents and model services**: SimpleAgent, AgentBundle, and Dify, with optional independent judge models. See [solvers and model services](docs/users/solvers.md).
+- **Local, container, and distributed execution**: Run tasks in local or Docker environments, schedule them locally or through Ray, and control concurrency and environment preparation. See [execution modes](docs/users/usage.md#local-docker-and-ray) and [concurrency](docs/users/concurrency.md).
+- **Evidence and resume**: Save configuration, source versions, trajectories, verification logs, and artifacts. Resume unfinished tasks after interruption. See [resume and result files](docs/users/usage.md#resume-and-rebuild-reports).
+- **Metrics and offline reports**: Compute scores, accuracy, duration, and token usage, and rebuild Markdown reports from saved results. See [reading results](docs/users/usage.md#read-results) and [scoring](docs/users/reference/scoring.md).
+- **Model service performance**: Measure throughput, TTFT, ITL, and request latency with AgentX, optionally collecting vLLM and Ascend NPU metrics. See [AgentX](docs/users/benchmarks/agentx.md).
+- **Plugins**: Replace or add any of eight component types, including Benchmark, Verifier, Solver, and Environment. See [plugin development and loading](docs/development/plugins.en.md).
+- **Node.js SDK**: Execute evaluations with `Evaluator.run()`, including progress, cancellation, resume, and Ray Jobs. See the [SDK guide](docs/users/sdk.md).
+
+## 🚀 Quick Start
+
+Complete [installation](docs/users/installation.md), then choose a scenario. Start with two GSM8K questions if this is your first run.
+
+| Goal | Benchmark / scenario | Environment | Additional requirements | Quick start |
+| --- | --- | --- | --- | --- |
+| Check model execution and reporting | GSM8K, two questions | local | Model API with tool calling | [Two-question quick start](docs/users/quick-start.md) |
+| Evaluate terminal operations | Terminal-Bench 4.0 | Docker | amd64 images; QEMU/binfmt on ARM64 | [Terminal-Bench 4.0](docs/users/quick-start/terminalbench.md) |
+| Standard model service performance evaluation | AgentX standard | local, optionally in the management container | Python 3.11–3.13, venv, tokenizer, streaming model service with long context; management image includes Python | [AgentX performance](docs/users/quick-start/agentx.md) |
+
+After installation and global CLI registration, run outside the Evaluator source directory using an absolute YAML path:
+
+```bash
+ember-evaluator doctor '/path/to/config.yaml'
+ember-evaluator run '/path/to/config.yaml'
+```
+
+Results go to the configured output directory, with a separate directory for each run. Open `report.md` there. To resume an interrupted run or rebuild a report offline:
+
+```bash
+ember-evaluator run '/path/to/config.yaml' --resume
+ember-evaluator report '/path/to/run-directory'
+```
+
+See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for complete instructions.
+
+## 📦 Installation
+
+Requires **Node.js 24.22.1 or later 24.x, and pnpm 11.22.0**. The source currently depends on a sibling `AgentBundle` repository. Install its dependencies and build `agent-bundle-core` before installing and building Evaluator. Use `corepack pnpm@11.22.0` in both repositories.
+
+- [Source installation and global CLI](docs/users/installation.md): repository layout, build order, CLI registration, and running from any directory.
+- [Linux management container](docs/users/deployment/container-toolbox.md): deployment, GitCode authentication, and mounts.
+- [Ray and execution nodes](docs/users/config.md#ray-and-execution-nodes): local clusters, remote scheduling, and Ray Jobs deployment.
+
+## 📖 Guides
+
+Choose a guide for your task:
+
+- **Configure experiments**: [YAML, profiles, and environment variables](docs/users/config.md); [solvers, AgentBundle, and independent judges](docs/users/solvers.md).
+- **Run workloads**: [Benchmark guides](docs/users/benchmarks/README.md); [experiment configurations](playbook/README.md).
+- **Manage evaluation runs**: [Task selection, resume, and reports](docs/users/usage.md); [image warmup](docs/users/usage.md#warm-images-without-evaluation); [image cleanup](docs/users/usage.md#delete-evaluation-images); [concurrency, preparation pipelines, and timeouts](docs/users/concurrency.md).
+- **Measure service performance**: [AgentX concurrency sweeps, trace replay, and metrics](docs/users/benchmarks/agentx.md).
+- **Extend the project**: [Plugin development and loading](docs/development/plugins.en.md); [benchmark requirements and acceptance](docs/development/benchmark-evaluation-requirements.en.md) for dataset integration; [benchmark development](docs/development/benchmarks.en.md) for plugins.
+- **Troubleshoot**: [Downloads, logs, and truncated model output](docs/users/faq/README.md); [error codes](docs/users/reference/errors.md); [retrying network failures](docs/users/network-retry.md).
+
+See the [user documentation index](docs/users/README.md) for all guides, benchmarks, and execution limitations.
+
+## 📊 Evaluation Results
+
+Results are recorded for each model and agent harness combination. Empty cells mean no results have been published. Compare document inputs, task ranges, and scoring conditions along with the scores.
+
+| Model + Agent Harness | GSM8K | MMLU | WorkBuddy | Terminal-Bench 4.0 | SWE-bench Verified | OfficeQA Pro V2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
+| DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |

@@ -1,0 +1,14 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: agentbundle
+    config:
+      path: ${AGENT_BUNDLE_PATH}
+environment: local
+run:
+  timeoutSeconds: 1800

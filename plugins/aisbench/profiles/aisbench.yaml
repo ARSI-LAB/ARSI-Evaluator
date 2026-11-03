@@ -1,0 +1,32 @@
+id: aisbench
+role: benchmark
+defaultVersion: "1.0"
+defaultScenario: standard
+versions:
+  "1.0": {}
+plugin:
+  name: aisbench
+  config:
+    workload:
+      inputLength: 2048
+      outputLength: 512
+      dataCount: 160
+      concurrency: 16
+      requestRate: 0
+defaults:
+  benchmark:
+    solver:
+      name: aisbench-ssh
+  environment: local
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics: [aisbench-performance, duration, usage]
+  reporter: aisbench-markdown
+  run:
+    timeoutSeconds: 10800
+    preparation:
+      mode: batch
+      concurrency: 1
+scenarios:
+  standard: {}

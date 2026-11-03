@@ -1,0 +1,17 @@
+services:
+  default:
+    provider: openai
+    model: fixture-model
+    base_url: https://example.invalid/v1
+    api_key: ${FIXTURE_KEY}
+benchmark:
+  name: orphan
+  config: {}
+  solver:
+    name: simpleagent
+    service: default
+environment:
+  name: unused
+  config: {}
+output:
+  directory: ./results

@@ -1,0 +1,4 @@
+[
+  { "question": "What is 6 times 7? Reply with only the integer.", "answer": "42" },
+  { "question": "What is 7 times 6? Reply with only the integer.", "answer": "42" }
+]

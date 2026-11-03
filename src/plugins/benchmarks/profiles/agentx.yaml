@@ -1,0 +1,48 @@
+id: agentx
+role: benchmark
+defaultVersion: "1.0"
+defaultScenario: standard
+versions:
+  "1.0": {}
+plugin:
+  name: agentx
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/agentx
+    variant: 256k
+    concurrency: [1]
+defaults:
+  benchmark:
+    solver:
+      name: agentx-replay
+      config:
+        cacheDir: ${EVALUATOR_CACHE_DIR}/agentx
+  environment: local
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics: [agentx-performance, duration, usage]
+  reporter: markdown
+  run:
+    timeoutSeconds: 10800
+    preparation:
+      mode: batch
+      concurrency: 1
+    onError: continue
+scenarios:
+  standard:
+    plugin:
+      name: agentx
+      config:
+        mode: standard
+        durationSeconds: 3600
+        seed: 42
+  replay:
+    plugin:
+      name: agentx
+      config:
+        mode: replay
+        durationSeconds: 86400
+        seed: 42
+    defaults:
+      run:
+        timeoutSeconds: 172800

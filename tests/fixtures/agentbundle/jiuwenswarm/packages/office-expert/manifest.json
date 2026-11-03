@@ -1,0 +1,15 @@
+{
+  "id": "office-expert",
+  "name": "office-expert",
+  "description": "Office expert agent template for the Ember bundle: persona plus the office-report capability.",
+  "package_type": "agent_template",
+  "version": "0.1.0",
+  "persona": {
+    "dir": "./persona"
+  },
+  "skills": [
+    {
+      "dir": "./skills/office-report"
+    }
+  ]
+}

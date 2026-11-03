@@ -1,0 +1,9 @@
+# 目录和文件名使用 mmlu-pro，配置中的注册名为 mmlu_pro。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: mmlu_pro
+environment: local

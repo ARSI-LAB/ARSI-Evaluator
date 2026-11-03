@@ -1,0 +1,10 @@
+kind: hermes-agent-bundle
+schemaVersion: 1
+name: fixture-hermes
+harness:
+  name: hermes
+  version: ">=0.21.0 <0.22"
+entry: ./agent.yaml
+lockfile: ./dependencies.lock
+plugins:
+  - path: ./plugins/fixture-hermes-plugin

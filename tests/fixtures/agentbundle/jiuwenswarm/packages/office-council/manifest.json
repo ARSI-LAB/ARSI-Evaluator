@@ -1,0 +1,12 @@
+{
+  "id": "office-council",
+  "name": "office-council",
+  "description": "Office council: a leader plus a reviewer collaborating on deliverables.",
+  "package_type": "agent_group",
+  "version": "0.1.0",
+  "instruction": "Collaborate as an office council: the leader decomposes the task and assigns work, the reviewer checks every deliverable against the evidence before it is accepted.",
+  "agents": [
+    "leader",
+    "reviewer"
+  ]
+}

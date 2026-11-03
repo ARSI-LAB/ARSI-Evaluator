@@ -1,0 +1,8 @@
+id: drop
+role: benchmark
+plugin:
+  name: drop
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface
+defaults:
+  metrics: [quality-score, success-rate, duration, usage]

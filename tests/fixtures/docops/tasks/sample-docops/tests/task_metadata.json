@@ -1,0 +1,6 @@
+{
+  "input_path": "/root/input.txt",
+  "output_path": "/root/submission/output.txt",
+  "task_id": "sample-docops",
+  "doc_type": "text"
+}

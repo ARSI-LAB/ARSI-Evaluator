@@ -1,0 +1,6 @@
+id: humaneval
+role: benchmark
+plugin:
+  name: humaneval
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/huggingface

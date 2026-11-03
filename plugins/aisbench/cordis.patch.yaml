@@ -1,0 +1,3 @@
+- insert:
+    - id: aisbench-plugin
+      name: ./dist/index.js

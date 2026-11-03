@@ -1,0 +1,2 @@
+# The upstream checksum is defined over UTF-8/LF bytes on every checkout.
+reward.py text eol=lf

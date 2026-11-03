@@ -1,0 +1,8 @@
+# Overlay scripts/ray-smoke/compose.yaml and jobs.yaml for this test only.
+services:
+  worker-a:
+    environment:
+      EVALUATOR_NODE_SLOTS: "10"
+  worker-b:
+    environment:
+      EVALUATOR_NODE_SLOTS: "10"

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+src/adapters/agentbundle/assets/cli.mjs text eol=lf
+package-lock.json text eol=lf
+tests/fixtures/agentbundle/dsh-workbuddy-*/** text eol=lf

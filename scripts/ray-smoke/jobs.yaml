@@ -1,0 +1,29 @@
+# Use with compose.yaml. Ray Client and Dashboard are never published to the host.
+services:
+  head:
+    environment:
+      EVALUATOR_WORKER_PROFILE: builtin
+    volumes:
+      - jobs:/jobs
+  worker-a:
+    environment:
+      EVALUATOR_WORKER_PROFILE: builtin
+  worker-b:
+    environment:
+      EVALUATOR_WORKER_PROFILE: builtin
+  gateway:
+    image: evaluator-ray-smoke:local
+    init: true
+    command: [gateway]
+    environment:
+      EVALUATOR_JOBS_PROGRESS_ORIGIN: https://gateway:9443
+    ports:
+      - "127.0.0.1:9443:9443"
+    networks: [cluster]
+    volumes:
+      - jobs:/jobs
+      - ../../.scratch/ray-smoke/security:/security:ro
+    depends_on:
+      head: {condition: service_healthy}
+volumes:
+  jobs: {}

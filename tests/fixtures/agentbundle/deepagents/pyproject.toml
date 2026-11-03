@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evaluator-fixture"
+version = "0.1.0"
+description = "Controlled deepagents bundle fixture for ember-evaluator integration tests"
+requires-python = ">=3.11"
+# The composition entry itself is dependency-free, but the harness dependency
+# is declared so the evaluator's post-install version probe observes the same
+# pinned release a real bundle would resolve (constraints.txt pins 0.7.15).
+dependencies = [
+    "deepagents>=0.7,<0.8",
+]
+
+[tool.setuptools.packages.find]
+where = ["plugins"]

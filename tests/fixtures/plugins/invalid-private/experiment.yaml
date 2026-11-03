@@ -1,0 +1,38 @@
+services:
+  default:
+    provider: openai
+    model: fixture-model
+    base_url: https://example.invalid/v1
+    api_key: ${FIXTURE_KEY}
+benchmark:
+  name: fixture-benchmark
+  config:
+    marker: wrong
+  solver:
+    name: fixture-solver
+    service: default
+    config:
+      marker: solver
+environment:
+  name: fixture-environment
+  config:
+    marker: environment
+metrics:
+  - name: fixture-metrics
+    config:
+      marker: metrics
+reporter:
+  name: fixture-reporter
+  config:
+    marker: reporter
+store:
+  name: fixture-store
+  config:
+    marker: store
+scheduler:
+  name: fixture-scheduler
+  config:
+    marker: scheduler
+    concurrency: 1
+output:
+  directory: ./results

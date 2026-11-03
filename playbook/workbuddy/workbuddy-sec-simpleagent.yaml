@@ -1,0 +1,9 @@
+# Security 请在 Linux / WSL 运行，默认缓存位于 Linux 原生用户目录。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: workbuddy
+  scenario: security

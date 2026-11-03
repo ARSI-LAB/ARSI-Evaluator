@@ -1,0 +1,12 @@
+{
+  "id": "office-tools",
+  "name": "office-tools",
+  "description": "Office toolchain plugin for the Ember bundle.",
+  "package_type": "plugin",
+  "version": "0.1.0",
+  "skills": [
+    {
+      "dir": "./skills/office-toolchain"
+    }
+  ]
+}

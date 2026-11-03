@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "selectedBeforeModelExecution": true,
+  "gsm8k": {
+    "dataset": "openai/gsm8k",
+    "subset": "main",
+    "split": "test",
+    "commit": "740312add88f781978c0658806c59bc2815b9866",
+    "file": "main/test-00000-of-00001.parquet",
+    "sha256": "ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59",
+    "taskIds": ["test:0", "test:1", "test:2", "test:3", "test:4", "test:5", "test:6", "test:7", "test:8", "test:9"]
+  },
+  "harbor": {
+    "dataset": "terminal-bench@2.0",
+    "registryCommit": "b83e7686999a18ba90a8603794d7d18d42cab010",
+    "registrySha256": "da1446bce05eabbd72a25eb9eef5a2f5db94645ce88c28e2497581433b3d2e60",
+    "repository": "laude-institute/terminal-bench-2",
+    "commit": "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    "tasks": [
+      {
+        "id": "log-summary-date-ranges",
+        "sourcePath": "log-summary-date-ranges",
+        "imageReference": "alexgshaw/log-summary-date-ranges:20251031",
+        "contextSha256": "3fe914c738e5af6a09894ce62598d900da78e38beb5bb5d94513794148946812",
+        "workdir": "/app",
+        "extraPaths": []
+      },
+      {
+        "id": "regex-log",
+        "sourcePath": "regex-log",
+        "imageReference": "alexgshaw/regex-log:20251031",
+        "contextSha256": "b5589f747dde7a439f7889bf28435b5d26f9ea333306664e72e71c24041b837e",
+        "workdir": "/app",
+        "extraPaths": []
+      }
+    ],
+    "resolvedImageIds": {
+      "log-summary-date-ranges": "sha256:cbeb6ba905c2fec294f16cd5e16e3ea7f2e04d38ac2484d51a11de262aa7dc51",
+      "regex-log": "sha256:90101b2e815323a8da20528a1439bebc407eb9761c9c68a3d557730856c878e9"
+    },
+    "imagePreflight": {
+      "platform": "linux/amd64",
+      "workdirExists": true,
+      "bashAvailable": true,
+      "gnuTarVersions": { "log-summary-date-ranges": "1.34", "regex-log": "1.35" }
+    }
+  },
+  "realModelResults": null,
+  "physicalRayHostResults": null
+}

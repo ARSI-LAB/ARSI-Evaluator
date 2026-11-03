@@ -1,0 +1,10 @@
+# GPQA Diamond 需要先接受数据集访问条件，并提供该账号的 HF_TOKEN。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: gpqa
+  config:
+    hfToken: ${HF_TOKEN}

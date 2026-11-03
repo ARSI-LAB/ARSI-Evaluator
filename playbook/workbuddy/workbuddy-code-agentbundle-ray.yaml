@@ -1,0 +1,15 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: workbuddy
+  scenario: code
+  solver:
+    name: agentbundle
+    config:
+      path: ./bundles/dsh-workbuddy-code
+scheduler:
+  name: ray
+  concurrency: 2

@@ -1,0 +1,19 @@
+kind: jiuwenswarm-agent-bundle
+schemaVersion: 1
+name: ember-jw
+harness:
+  name: jiuwenswarm
+  version: ">=0.2,<0.3"
+skills: ./skills
+packages:
+  - path: ./packages/office-expert
+    kind: agent_template
+  - path: ./packages/office-tools
+    kind: plugin
+  - path: ./packages/office-council
+    kind: agent_group
+connectors:
+  - office-mail
+templates: ./templates
+config: ./config.yaml
+lockfile: ./dependencies.lock

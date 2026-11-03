@@ -1,0 +1,5 @@
+preferred_language: zh
+rsi:
+  enabled: false
+symphony:
+  enabled: false

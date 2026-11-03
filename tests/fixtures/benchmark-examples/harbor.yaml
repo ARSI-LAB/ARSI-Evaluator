@@ -1,0 +1,11 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api: openai-completions
+    api_key: ${MODEL_API_KEY}
+benchmark: example-harbor
+run:
+  maxTasks: 2
+output:
+  directory: ../../../.scratch/benchmark-examples/harbor

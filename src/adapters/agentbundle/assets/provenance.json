@@ -1,0 +1,10 @@
+{
+  "name": "AgentBundle CLI",
+  "version": "0.1.0",
+  "upstreamBaseRevision": "d1fbfb23a01f0e419cb0429ac3436eb11d9f9480",
+  "includesUncommittedMachineInterfaceChanges": true,
+  "distribution": "self-contained tsdown build of packages/cli/src/bin.ts",
+  "sha256": "e557122624577d24de57f1ab65937a340835399deefe867958e8cd98703e5ef9",
+  "upstreamDeclaredLicense": "MIT",
+  "bundledNotices": ["commander-license.txt", "yaml-license.txt", "semver-license.txt"]
+}

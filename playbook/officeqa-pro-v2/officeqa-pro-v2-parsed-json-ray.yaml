@@ -1,0 +1,15 @@
+# 官方解析 JSON + simpleagent 的 Ray 调度示例，不是纯图片输入测评。
+# 每个节点需要 HF_TOKEN、相同 HF_ENDPOINT、Docker 和完整的 1,435 份 JSON 缓存空间。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: officeqa-pro-v2
+  config:
+    hfToken: ${HF_TOKEN}
+    corpusFormat: parsed-json
+scheduler:
+  name: ray
+  concurrency: 2

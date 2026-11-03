@@ -1,0 +1,25 @@
+services:
+  head:
+    environment:
+      EVALUATOR_BUNDLE_DIR: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+    volumes:
+      - type: bind
+        source: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+        target: /builtin-experiment/bundles
+        read_only: true
+  worker-a:
+    environment:
+      EVALUATOR_BUNDLE_DIR: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+    volumes:
+      - type: bind
+        source: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+        target: /builtin-experiment/bundles
+        read_only: true
+  worker-b:
+    environment:
+      EVALUATOR_BUNDLE_DIR: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+    volumes:
+      - type: bind
+        source: ${EVALUATOR_BUNDLE_DIR:?Set EVALUATOR_BUNDLE_DIR to the AgentBundle fixture directory}
+        target: /builtin-experiment/bundles
+        read_only: true

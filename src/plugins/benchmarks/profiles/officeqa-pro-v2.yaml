@@ -1,0 +1,19 @@
+# 默认提供可搜索的官方解析 JSON；pdf 为原始 PDF，不是禁止文本提取的纯图片测评。
+id: officeqa-pro-v2
+role: benchmark
+plugin:
+  name: officeqa-pro-v2
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/officeqa-pro-v2
+    revision: 65a2b315780417bc50d7bfe6e5bdb904e63fda65
+    corpusFormat: parsed-json
+    tolerance: 0
+defaults:
+  environment: docker
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics: [success-rate, duration, usage]
+  reporter: markdown
+  run:
+    timeoutSeconds: 3600

@@ -1,0 +1,45 @@
+id: deepswe
+role: benchmark
+extends: harbor
+defaultVersion: "1.1"
+versions:
+  "1.1":
+    plugin:
+      name: harbor
+      config:
+        dataset: deepswe@1.1
+        source:
+          kind: github
+          repository: datacurve-ai/deep-swe
+          revision: 0b9fabbb63b9104d678fe965e1632f2dd9eaa2ea
+          path: tasks
+          exclude:
+            - tasks/README.md
+        tasks:
+          root: .
+          id: metadata.task_id
+          expectedCount: 113
+        defaults:
+          workdir: /app
+          buildTimeoutSeconds: 1800
+        scoring:
+          primary: reward
+          passThreshold: 1
+          errorValues:
+            - -1
+    defaults:
+      run:
+        timeoutSeconds: 18000
+      metrics:
+        - &a1
+          name: harbor-score
+          config:
+            dimensions:
+              - f2p
+              - p2p
+              - partial
+        - name: success-rate
+        - name: duration
+        - name: usage
+metricAliases:
+  deepswe-score: *a1

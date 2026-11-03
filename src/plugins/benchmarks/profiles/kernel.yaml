@@ -1,0 +1,16 @@
+id: kernel
+role: benchmark
+plugin:
+  name: kernel
+defaults:
+  benchmark:
+    solver: kernel-replay
+  environment: local
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics: [kernel, duration, usage]
+  reporter: markdown
+  run:
+    timeoutSeconds: 360
+    onError: continue

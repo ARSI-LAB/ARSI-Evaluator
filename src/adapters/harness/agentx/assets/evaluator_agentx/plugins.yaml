@@ -1,0 +1,20 @@
+schema_version: "1.0"
+public_dataset_loader:
+  semianalysis_cc_traces_weka_062126:
+    class: evaluator_agentx.loader:LockedWekaLoader
+    priority: 100
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
+  semianalysis_cc_traces_weka_062126_256k:
+    class: evaluator_agentx.loader:LockedWekaLoader
+    priority: 100
+    metadata:
+      hf_dataset_name: semianalysisai/cc-traces-weka-062126-256k
+      hf_split: train
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding

@@ -1,0 +1,115 @@
+name: evaluator-ray-smoke
+x-runtime: &runtime
+  image: evaluator-ray-smoke:local
+  build:
+    context: ../..
+    dockerfile: scripts/ray-smoke/Dockerfile
+    # Domestic mirrors: builds run without a proxy on CN networks.
+    args:
+      EVALUATOR_SOURCE_FINGERPRINT: ${EVALUATOR_SOURCE_FINGERPRINT:-manual}
+      APT_MIRROR: https://mirrors.aliyun.com
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple
+  init: true
+  shm_size: 1gb
+services:
+  init:
+    <<: *runtime
+    command: [init]
+    volumes:
+      - ../../.scratch/ray-smoke/security:/security
+  head:
+    <<: *runtime
+    command: [head]
+    networks: [cluster]
+    volumes:
+      - ../../.scratch/ray-smoke/security:/security:ro
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, ray, health-check, --address=127.0.0.1:6379]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+  docker-a:
+    image: docker:28.5.1-dind
+    hostname: docker-a
+    privileged: true
+    networks: [daemon-a]
+    volumes: [docker-a:/var/lib/docker, node-a:/node, certs-a:/certs]
+    healthcheck:
+      test: [CMD, docker, info]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  docker-b:
+    image: docker:28.5.1-dind
+    hostname: docker-b
+    privileged: true
+    networks: [daemon-b]
+    volumes: [docker-b:/var/lib/docker, node-b:/node, certs-b:/certs]
+    healthcheck:
+      test: [CMD, docker, info]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  worker-a:
+    <<: *runtime
+    command: [worker]
+    networks: [cluster, daemon-a]
+    environment:
+      DOCKER_HOST: tcp://docker-a:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      EVALUATOR_NODE_SLOTS: "1"
+      # Domestic npm mirror: direct egress reaches it reliably.
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple
+      EVALUATOR_DEBIAN_MIRROR: https://mirrors.aliyun.com
+    volumes:
+      - node-a:/node
+      - certs-a:/certs:ro
+      - ../../.scratch/ray-smoke/security:/security:ro
+    depends_on:
+      head: {condition: service_healthy}
+      docker-a: {condition: service_healthy}
+  worker-b:
+    <<: *runtime
+    command: [worker]
+    networks: [cluster, daemon-b]
+    environment:
+      DOCKER_HOST: tcp://docker-b:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+      EVALUATOR_NODE_SLOTS: "1"
+      # Domestic npm mirror: direct egress reaches it reliably.
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple
+      EVALUATOR_DEBIAN_MIRROR: https://mirrors.aliyun.com
+    volumes:
+      - node-b:/node
+      - certs-b:/certs:ro
+      - ../../.scratch/ray-smoke/security:/security:ro
+    depends_on:
+      head: {condition: service_healthy}
+      docker-b: {condition: service_healthy}
+  coordinator:
+    <<: *runtime
+    command: [coordinator]
+    networks: [cluster]
+    volumes:
+      - ../../.scratch/ray-smoke/security:/security:ro
+      - ../../.scratch/ray-smoke/results:/results
+    depends_on:
+      head: {condition: service_healthy}
+networks:
+  cluster: {}
+  daemon-a: {}
+  daemon-b: {}
+volumes:
+  docker-a: {}
+  docker-b: {}
+  node-a: {}
+  node-b: {}
+  certs-a: {}
+  certs-b: {}

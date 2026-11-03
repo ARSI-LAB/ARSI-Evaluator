@@ -1,0 +1,9 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+
+benchmark:
+  name: workbuddy
+  scenario: code

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "python": {
+    "packages": [
+      {
+        "module": "demo_required",
+        "package": "demo-required",
+        "kind": "required",
+        "pin": "1.0.0"
+      },
+      {
+        "module": "demo_optional",
+        "package": "demo-optional",
+        "kind": "optional",
+        "pin": "2.0.0"
+      },
+      {
+        "module": "demo_dev",
+        "package": "demo-dev",
+        "kind": "dev",
+        "pin": "3.0.0"
+      },
+      {
+        "module": "demo_windows",
+        "package": "demo-win",
+        "kind": "optional",
+        "pin": "4.0.0",
+        "requires": { "platform": "win32" }
+      }
+    ]
+  }
+}

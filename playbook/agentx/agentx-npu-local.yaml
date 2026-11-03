@@ -1,0 +1,35 @@
+# 本地部署：MODEL_NAME 填推理服务 /v1/models 返回的模型 ID（含启动时设置的别名），
+# MODEL_ENDPOINT 填该服务的 OpenAI 兼容 base URL，例如 http://127.0.0.1:8000/v1；
+# MODEL_API_KEY 填服务配置的密钥，无鉴权时填非空占位值 EMPTY。推理服务需手动启动。
+# 在线 API：MODEL_NAME 填服务商模型 ID，MODEL_ENDPOINT 填服务商 base URL，
+# MODEL_API_KEY 填有效密钥；使用 agentx-model-api.yaml，不启用 telemetry。
+# 在线 API 不能采集服务端推理引擎或 GPU/NPU 硬件指标，只测客户端请求与回放性能。
+# tokenizer 必须与实际模型匹配；模型 ID/别名不是 tokenizer 仓库时，直接修改下方 tokenizer。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: agentx
+  scenario: standard
+  config:
+    concurrency: [1, 4, 8]
+  solver:
+    config:
+      # 模型别名不是 tokenizer 仓库时，改填匹配仓库或本地 tokenizer 目录。
+      tokenizer: ${MODEL_NAME}
+      # 仅适用于能访问自建服务监控端点的部署；在线 API 必须删除整个 telemetry。
+      telemetry:
+        vllm:
+          # 填推理服务监控地址，不带 /v1；没有 vLLM 监控时删除此项。
+          endpoint: http://127.0.0.1:8000/metrics
+        ascend:
+          mode: local
+          # 填手动启动的推理服务实际使用的裸机物理 NPU 卡号；多卡逐项添加。
+          devices:
+            - deviceId: 4
+# 管理容器内运行时通过 toolbox 通道在裸机采样，容器不绑定 NPU。
+# 不进入管理容器时，直接在裸机启动只读采样；需已有 Python 3.11–3.13 和 venv。
+# 两种方式都不创建 AgentX 任务镜像或任务容器，推理服务仍由用户手动启动。
+environment: local

@@ -1,0 +1,24 @@
+# 在线模型 API：MODEL_NAME 填服务商文档中的模型 ID，
+# MODEL_ENDPOINT 填 OpenAI 兼容 base URL（例如 https://api.example.com/v1），
+# MODEL_API_KEY 填服务商签发的有效密钥。
+# 必须支持 AgentX 所需的流式请求、ignore_eos、完整上下文与输出长度。
+# 在线 API 不提供服务端监控访问，不能采集推理引擎或 GPU/NPU 硬件指标；不配置 telemetry。
+# tokenizer 必须改为与服务模型匹配的 Hugging Face 仓库或本地目录；
+# 服务商模型 ID 只有在同时是有效 tokenizer 仓库名时才可直接沿用。
+# 本地部署并采集 NPU 指标请改用 agentx-npu-local.yaml。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: agentx
+  scenario: standard
+  config:
+    variant: 256k
+    concurrency: [1, 4, 8]
+  solver:
+    config:
+      tokenizer: ${MODEL_NAME}
+# 可在管理容器内执行，也可直接裸机执行；裸机需已有 Python 3.11–3.13 和 venv。
+environment: local

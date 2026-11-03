@@ -1,0 +1,14 @@
+id: harbor
+role: benchmark
+plugin:
+  name: harbor
+  config:
+    cacheDir: ${EVALUATOR_CACHE_DIR}/harbor
+defaults:
+  metrics:
+    - harbor-score
+    - success-rate
+    - duration
+    - usage
+  run:
+    onError: continue

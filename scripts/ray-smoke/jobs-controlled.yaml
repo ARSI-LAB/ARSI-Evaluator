@@ -1,0 +1,14 @@
+# Add after jobs.yaml only for controlled, free acceptance. Restart before real runs.
+services:
+  head:
+    environment:
+      EVALUATOR_WORKER_PROFILE: fixture
+      EVALUATOR_PLUGIN_PATCH_PATH: /experiment/cordis.patch.yaml
+  worker-a:
+    environment:
+      EVALUATOR_WORKER_PROFILE: fixture
+      EVALUATOR_PLUGIN_PATCH_PATH: /experiment/cordis.patch.yaml
+  worker-b:
+    environment:
+      EVALUATOR_WORKER_PROFILE: fixture
+      EVALUATOR_PLUGIN_PATCH_PATH: /experiment/cordis.patch.yaml

@@ -1,0 +1,8 @@
+{
+  "name": "reviewer",
+  "description": "Office council reviewer.",
+  "package_type": "agent_template",
+  "persona": {
+    "dir": "./persona"
+  }
+}

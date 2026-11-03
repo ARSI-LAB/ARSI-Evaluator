@@ -1,0 +1,14 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: terminalbench
+  version: "2.0"
+  solver:
+    name: agentbundle
+    config:
+      path: ${AGENT_BUNDLE_PATH}
+run:
+  timeoutSeconds: 3600

@@ -1,0 +1,3 @@
+- insert:
+    - id: failing
+      name: ./plugin.mjs

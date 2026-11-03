@@ -1,0 +1,15 @@
+# 除被测模型外，还需设置 JUDGE_MODEL_NAME、JUDGE_MODEL_ENDPOINT、JUDGE_MODEL_API_KEY。
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+  judge:
+    model: ${JUDGE_MODEL_NAME}
+    base_url: ${JUDGE_MODEL_ENDPOINT}
+    api_key: ${JUDGE_MODEL_API_KEY}
+benchmark:
+  name: healthbench
+  config:
+    judgeService: judge
+environment: local

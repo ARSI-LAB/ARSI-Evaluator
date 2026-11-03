@@ -1,0 +1,127 @@
+{
+  "harborCommit": "527d50deb63a5d279e8c20593c18a2cbc7f61f9e",
+  "cases": [
+    {
+      "name": "below-threshold",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 0.5
+        }
+      ],
+      "threshold": 0.6,
+      "expected": {
+        "continue": false,
+        "rewards": {
+          "reward": 0.5
+        }
+      }
+    },
+    {
+      "name": "equal-threshold",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 0.6
+        }
+      ],
+      "threshold": 0.6,
+      "expected": {
+        "continue": true,
+        "rewards": {
+          "reward": 0.6
+        }
+      }
+    },
+    {
+      "name": "mean-missing-dimension",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 0.8,
+          "partial": 1
+        },
+        {
+          "reward": 1
+        }
+      ],
+      "threshold": null,
+      "expected": {
+        "continue": true,
+        "rewards": {
+          "partial": 0.5,
+          "reward": 0.9
+        }
+      }
+    },
+    {
+      "name": "solver-timeout-with-reward",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 0.8
+        }
+      ],
+      "threshold": 0.6,
+      "error": true,
+      "expected": {
+        "continue": true,
+        "rewards": {
+          "reward": 0.8
+        }
+      }
+    },
+    {
+      "name": "verifier-failure-mean",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 0.8
+        },
+        null
+      ],
+      "threshold": null,
+      "error": true,
+      "expected": {
+        "continue": false,
+        "rewards": {
+          "reward": 0.8
+        }
+      }
+    },
+    {
+      "name": "verifier-failure-final",
+      "strategy": "final",
+      "rewards": [
+        {
+          "reward": 0.8
+        },
+        null
+      ],
+      "threshold": null,
+      "error": true,
+      "expected": {
+        "continue": false,
+        "rewards": null
+      }
+    },
+    {
+      "name": "missing-gated-dimension",
+      "strategy": "mean",
+      "rewards": [
+        {
+          "reward": 1
+        }
+      ],
+      "threshold": {
+        "partial": 0.2
+      },
+      "expected": {
+        "continue": false,
+        "rewards": {
+          "reward": 1.0
+        }
+      }
+    }
+  ]
+}

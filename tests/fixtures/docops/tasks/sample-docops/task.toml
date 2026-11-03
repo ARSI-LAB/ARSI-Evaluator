@@ -1,0 +1,37 @@
+schema_version = "1.1"
+
+[task]
+name = "docops/sample-docops"
+description = "Minimal DocOps fixture"
+
+[metadata]
+difficulty_level = "L1-atomic"
+doc_type = "text"
+
+[verifier]
+timeout_sec = 30.0
+
+[agent]
+timeout_sec = 60.0
+
+[environment]
+build_timeout_sec = 60.0
+cpus = 1
+memory_mb = 256
+storage_mb = 512
+gpus = 0
+allow_internet = true
+mcp_servers = []
+skills_dir = "/skills"
+workdir = "/root"
+
+[environment.env]
+INPUT_PATH = "/root/input.txt"
+OUTPUT_PATH = "/root/submission/output.txt"
+TASK_ID = "sample-docops"
+DOC_TYPE = "text"
+
+[verifier.env]
+TASK_METADATA_PATH = "/tests/task_metadata.json"
+
+[solution.env]

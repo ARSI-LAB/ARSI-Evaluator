@@ -1,0 +1,7 @@
+config_version: ""
+preferred_language: zh
+logging:
+  level: INFO
+  console_level: INFO
+rsi:
+  enabled: false

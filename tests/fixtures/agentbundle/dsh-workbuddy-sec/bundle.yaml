@@ -1,0 +1,8 @@
+kind: dsh-agent-bundle
+schemaVersion: 1
+name: dsh-workbuddy-sec
+harness:
+  name: dsh
+  version: ">=0.1.6-alpha.2 <0.2"
+plugins:
+  - path: ./plugins/sec-guidance

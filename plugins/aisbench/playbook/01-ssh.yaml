@@ -1,0 +1,46 @@
+# 在远端已有 Conda / venv / 系统 Python 中执行 AISBench；不安装依赖或启动模型。
+# 先确认本机 OpenSSH 可用，远端主机密钥已加入 known_hosts。
+services:
+  default:
+    model: ${MODEL_NAME}
+    # 地址从远端服务器视角解释。
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: aisbench
+  config:
+    workload:
+      inputLength: 2048
+      outputLength: 512
+      dataCount: 160
+      concurrency: 16
+      requestRate: 0
+      testType: stream
+      prefixCache:
+        enabled: true
+        prefixCount: 2
+        prefixRatio: 0.5
+        warmup: true
+        dp: 1
+        seed: 42
+  solver:
+    name: aisbench-ssh
+    config:
+      remote:
+        ssh:
+          host: benchmark-server
+          user: benchmark
+          port: 22
+          # 本机密钥路径；也可省略该字段，使用 ssh-agent。
+          identityFile: ${SSH_IDENTITY_FILE}
+        pythonExecutable: /opt/conda/envs/aisbench/bin/python
+        aisbenchWorkPath: /opt/benchmark
+        # 填写远端环境中实际安装的精确版本，不会自动安装。
+        aisbenchVersion: ${AISBENCH_VERSION}
+        workRoot: /data/evaluator/aisbench
+        pollIntervalSeconds: 10
+      tokenizerPath: /data/tokenizers/model
+      # Prefix Cache 命中率从这些服务端指标端点获取。
+      podInfo: ["127.0.0.1:8000"]
+output:
+  directory: ../../../results/aisbench-ssh
