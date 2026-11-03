@@ -56,7 +56,7 @@
 
 ### Dify 能否用于 Office 或代码文件交付？
 
-当前 Dify Solver 返回文本，不将工作流文件同步到任务环境。需要交付文件的任务应使用 SimpleAgent 或具备文件操作能力的 AgentBundle，见[Dify 条件](../solvers.zh-CN.md#使用-dify)。
+当前 AgentBundle 的 Dify Harness 返回文本，不将工作流文件同步到任务环境。需要交付文件的任务应使用 SimpleAgent 或具备文件操作能力的 AgentBundle，见[Dify 条件](../solvers.zh-CN.md#使用-dify)。
 
 ## Benchmark 与评分
 

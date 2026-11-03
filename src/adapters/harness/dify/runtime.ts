@@ -5,7 +5,7 @@ import type { RuntimeInstallation } from "../../../core/contracts/environment.js
 import { canonicalJson } from "../../../core/run-manifest.js";
 
 /** Bumped whenever the runner contract changes; part of the installation id. */
-export const DIFY_RUNNER_VERSION = "1";
+export const DIFY_RUNNER_VERSION = "2";
 export const difyRunner = fileURLToPath(new URL("./assets/runner.mjs", import.meta.url));
 
 /**

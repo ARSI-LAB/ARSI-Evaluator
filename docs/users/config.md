@@ -33,7 +33,7 @@ See [Terminal-Bench](benchmarks/terminalbench.md) for versions, task images, and
 | Name | Decision | Examples |
 | --- | --- | --- |
 | Benchmark | Questions or load to evaluate | `gsm8k`, `workbuddy`, `agentx` |
-| Solver | Task executor | `simpleagent`, `agentbundle`, `dify`, `agentx-replay` |
+| Solver | Task executor | `simpleagent`, `agentbundle`, `agentx-replay` |
 | services | Model name, endpoint, authentication variable | `services.default`, `services.judge` |
 | environment | Agent execution location | Host `local` or isolated `docker` |
 | scheduler | Concurrent task count and Ray use | `local`, `ray` |

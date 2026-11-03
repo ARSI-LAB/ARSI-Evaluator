@@ -38,7 +38,7 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 ## ⚙️ Features
 
 - **Multiple evaluation workloads**: GSM8K, MMLU, HumanEval, Terminal-Bench, SWE-bench, WorkBuddy, [OfficeQA Pro V2](docs/users/benchmarks/officeqa-pro-v2.md) (parsed JSON by default, with original PDF support), and custom Harbor tasks. See [supported benchmarks](docs/users/README.md#supported-benchmarks).
-- **Multiple agents and model services**: SimpleAgent, AgentBundle, and Dify, with optional independent judge models. See [solvers and model services](docs/users/solvers.md).
+- **Multiple agents and model services**: SimpleAgent and AgentBundle (including the Dify Harness), with optional independent judge models. See [solvers and model services](docs/users/solvers.md).
 - **Local, container, and distributed execution**: Run tasks in local or Docker environments, schedule them locally or through Ray, and control concurrency and environment preparation. See [execution modes](docs/users/usage.md#local-docker-and-ray) and [concurrency](docs/users/concurrency.md).
 - **Evidence and resume**: Save configuration, source versions, trajectories, verification logs, and artifacts. Resume unfinished tasks after interruption. See [resume and result files](docs/users/usage.md#resume-and-rebuild-reports).
 - **Metrics and offline reports**: Compute scores, accuracy, duration, and token usage, and rebuild Markdown reports from saved results. See [reading results](docs/users/usage.md#read-results) and [scoring](docs/users/reference/scoring.md).

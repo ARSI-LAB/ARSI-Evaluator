@@ -16,7 +16,6 @@ import { parseRayConfig } from "./schedulers/ray-config.js";
 import { SimpleAgentSolver, parseSimpleAgentConfig } from "./solvers/simpleagent.js";
 import { ChoiceLogprobsSolver, parseChoiceLogprobsConfig } from "./solvers/choice-logprobs.js";
 import { AgentBundleSolver, agentBundleModel, parseAgentBundleConfig } from "./solvers/agentbundle.js";
-import { DifySolver, parseDifyConfig, resolveDifyAuth } from "./solvers/dify.js";
 import { expectRecord, rejectUnknown, expectPositiveInteger, expectNonEmptyString } from "../config/schema.js";
 import { type PluginFactoryContext, bindSolverService } from "../core/registry.js";
 import { installEnvProxy } from "../adapters/net/env-proxy.js";
@@ -85,6 +84,10 @@ export async function apply(ctx: Context): Promise<void> {
         ...(config.hermeshome === undefined ? {} : { hermeshome: runtime.resolvePath(config.hermeshome) }),
         ...(config.jiuwenswarmTimeoutSeconds === undefined ? {} : { jiuwenswarmTimeoutSeconds: config.jiuwenswarmTimeoutSeconds }),
         ...(config.pi === undefined ? {} : { pi: config.pi }),
+        ...(config.dify === undefined ? {} : { dify: {
+          ...config.dify,
+          ...(config.dify.registryPath === undefined ? {} : { registryPath: runtime.resolvePath(config.dify.registryPath) }),
+        } }),
       });
       ctx.effect(() => () => solver.dispose(), "AgentBundle staging lifecycle");
       return solver;
@@ -107,20 +110,6 @@ export async function apply(ctx: Context): Promise<void> {
     (config, runtime) => new HarborBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
       ...(config.source?.kind === "local" ? { source: { ...config.source, path: runtime.resolvePath(config.source.path) } } : {}) }, undefined, runtime.verifier, runtime.phaseTimeouts),
     harborConfigTransport,
-  );
-  ctx.evaluator.register(
-    "solver",
-    "dify",
-    parseDifyConfig,
-    (config, runtime) =>
-      new DifySolver(
-        {
-          ...config,
-          ...(config.bundlePath === undefined ? {} : { bundlePath: runtime.resolvePath(config.bundlePath) }),
-          ...(config.registryPath === undefined ? {} : { registryPath: runtime.resolvePath(config.registryPath) }),
-        },
-        resolveDifyAuth(config),
-      ),
   );
   ctx.evaluator.register(
     "solver",

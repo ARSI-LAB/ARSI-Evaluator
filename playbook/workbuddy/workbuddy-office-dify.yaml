@@ -1,4 +1,4 @@
-# 配置组合示例：当前 DifySolver 仅返回文本，尚未将工作流文件同步到任务环境。
+# 配置组合示例：当前 Dify Harness 仅返回文本，尚未将工作流文件同步到任务环境。
 # Office 的真实文件交付评测请使用 simpleagent 或能够写入 EnvironmentSession 的 AgentBundle。
 services:
   dify-app:
@@ -9,11 +9,11 @@ benchmark:
   name: workbuddy
   scenario: office
   solver:
-    name: dify
+    name: agentbundle
     config:
-      baseUrl: ${DIFY_BASE_URL}
-      apiKeyEnv: DIFY_SERVICE_API_KEY
-      bundlePath: ${DIFY_BUNDLE_PATH}
-      registryPath: ${DIFY_REGISTRY_PATH}
+      path: ${DIFY_BUNDLE_PATH}
+      dify:
+        baseUrl: ${DIFY_BASE_URL}
+        registryPath: ${DIFY_REGISTRY_PATH}
 run:
   timeoutSeconds: 900

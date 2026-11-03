@@ -116,7 +116,7 @@ Plugin authors set `EnvironmentSpec.network` to `{ kind: "allowlist", allowedHos
 
 Shell verifiers execute dataset `tests/test.sh`, preferring `reward.json` over `reward.txt`. Reward map values must be finite. A nonzero exit with valid reward preserves both exit code and reward. Missing/malformed rewards and configured error sentinels are verification failures rather than ordinary zeros.
 
-Remote solvers must deliver files into the environment. DifySolver currently returns text without syncing workflow files to EnvironmentSession. Dify Office YAML demonstrates configuration only; full Office file evaluation requires simpleagent or file-capable AgentBundle.
+Remote solvers must deliver files into the environment. AgentBundle Dify Harness currently returns text without syncing workflow files to EnvironmentSession. Dify Office YAML demonstrates configuration only; full Office file evaluation requires simpleagent or file-capable AgentBundle.
 
 ## Ray, Metrics, and Extensions
 

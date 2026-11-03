@@ -141,7 +141,7 @@ async function writeEvidence(input, observation, startedAt, finalTextValue) {
   const tokens = totalTokens(observation);
   const events = [
     { schemaVersion: 1, key: input.attempt, seq: 1, at: startedAt, type: "start",
-      data: { solver: "dify", taskId: input.attempt.taskId, baseUrl: input.baseUrl, appId: input.appId ?? null } },
+      data: { solver: "agentbundle", harness: "dify", taskId: input.attempt.taskId, baseUrl: input.baseUrl, appId: input.appId ?? null } },
     ...observation.events.map((event, index) => ({
       schemaVersion: 1, key: input.attempt, seq: index + 2, at: event.at, type: event.type,
       data: JSON.parse(redact(JSON.stringify(event.data), input.apiKey)),

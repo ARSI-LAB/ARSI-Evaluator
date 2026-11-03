@@ -3,6 +3,9 @@ import { preparePi } from "../../adapters/harness/pi/prepare.js";
 import { prepareJiuwenswarm, prepareJiuwenswarmDocker } from "../../adapters/harness/jiuwenswarm/prepare.js";
 import { prepareHermes } from "../../adapters/harness/hermes/prepare.js";
 import { prepareDsh } from "../../adapters/harness/dsh/prepare.js";
+import { prepareDify } from "../../adapters/harness/dify/prepare.js";
+import { parseDifyOptions, type DifyOptions } from "../../adapters/harness/dify/config.js";
+import { DIFY_RUNNER_VERSION, difyRuntimeInstallation } from "../../adapters/harness/dify/runtime.js";
 import { prepareDeepagentsDocker, prepareDeepagentsLocal } from "../../adapters/harness/deepagents/prepare.js";
 import { createHash } from "node:crypto";
 
@@ -28,13 +31,14 @@ type DshOptions = { dshhome?: string; dshprofile?: string; environmentName?: str
 type HermesOptions = { hermeshome?: string };
 type JiuwenswarmOptions = { jiuwenswarmhome?: string; jiuwenswarmTimeoutSeconds?: number };
 type PiOptions = { pi?: { settings?: Record<string, JsonValue> } };
+type HarnessOptions = DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions & { dify?: DifyOptions };
 
 export function parseAgentBundleConfig(
   value: unknown,
-): { path: string; maxTokens?: number } & DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions {
+): { path: string; maxTokens?: number } & HarnessOptions {
   const config = expectRecord(value, "agentbundle");
-  rejectUnknown(config, ["path", "dshhome", "dshprofile", "maxTokens", "hermeshome", "jiuwenswarmhome", "jiuwenswarmTimeoutSeconds", "pi"], "agentbundle");
-  const result: { path: string; maxTokens?: number } & DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions = {
+  rejectUnknown(config, ["path", "dshhome", "dshprofile", "maxTokens", "hermeshome", "jiuwenswarmhome", "jiuwenswarmTimeoutSeconds", "pi", "dify"], "agentbundle");
+  const result: { path: string; maxTokens?: number } & HarnessOptions = {
     path: expectNonEmptyString(config.path, "agentbundle.path"),
   };
   if (config.maxTokens !== undefined) result.maxTokens = expectPositiveInteger(config.maxTokens, "agentbundle.maxTokens");
@@ -59,6 +63,7 @@ export function parseAgentBundleConfig(
       result.pi = { settings };
     }
   }
+  if (config.dify !== undefined) result.dify = parseDifyOptions(config.dify);
   return result;
 }
 
@@ -86,8 +91,8 @@ const SUPPORTED_HARNESSES: Record<string, string> = {
 };
 
 /**
- * Resolve the pinned harness version for a verification pass. Every harness is
- * pinned to a fixed version (DSH, deepagents, Hermes, jiuwenswarm and pi).
+ * Local harnesses have pinned versions. Remote Dify records its declared range
+ * separately because the runner version does not identify the platform version.
  */
 async function resolveHarnessVersion(name: string, signal: AbortSignal): Promise<string | undefined> {
   signal.throwIfAborted();
@@ -108,13 +113,14 @@ export class AgentBundleSolver implements Solver {
     private readonly model: ModelConfig,
     private readonly auth: RuntimeAuth,
     private readonly adapter: RuntimeAdapter | undefined = undefined,
-    private readonly options: DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions = {},
+    private readonly options: HarnessOptions = {},
   ) {}
 
   dispose(): Promise<void> { return disposePiBundleRuntime(this.piRuntime); }
 
   private async installation(harness: string, signal: AbortSignal): Promise<RuntimeInstallation> {
     if (this.adapter) return this.adapter.installation(harness, signal);
+    if (harness === "dify") return difyRuntimeInstallation(signal);
     if (harness === "deepagents") return deepagentsBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
     if (harness === "jiuwenswarm") return jiuwenswarmBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
     if (harness === "hermes") return hermesRuntimeInstallation(signal);
@@ -130,6 +136,7 @@ export class AgentBundleSolver implements Solver {
     // one combination declares node the way DSH and deepagents do. DSH and
     // deepagents pin node 24.
     const harness = this.candidate?.harness.name;
+    if (harness === "dify") return [{ name: "node", version: "24.x", platform: "any" }];
     if (harness === "hermes" || harness === "jiuwenswarm" && this.options.environmentName !== "docker")
       return [{ name: "shell", version: "any", platform: "any" }];
     return [
@@ -141,8 +148,13 @@ export class AgentBundleSolver implements Solver {
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     signal.throwIfAborted();
     const identified = await verifyBundleCandidate(this.path);
-    if (identified.harness.name !== "hermes" && SUPPORTED_HARNESSES[identified.harness.name] === undefined)
+    const dify = identified.harness.name === "dify";
+    if (!dify && SUPPORTED_HARNESSES[identified.harness.name] === undefined)
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", `unsupported harness: ${identified.harness.name}`);
+    if (dify && this.options.dify === undefined)
+      throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "Dify bundles require agentbundle.dify.baseUrl");
+    if (!dify && this.options.dify !== undefined)
+      throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "agentbundle.dify settings are only accepted for Dify bundles");
     if (identified.harness.name === "pi") {
       this.piArtifactDigest = await verifyPiBundleIntegrity(this.path);
       this.piConfigurationDigest = createHash("sha256")
@@ -155,16 +167,16 @@ export class AgentBundleSolver implements Solver {
     const harnessVersion = identified.harness.name === "dsh" && this.dshRuntime
       ? this.dshRuntime.version
       : await resolveHarnessVersion(identified.harness.name, signal);
-    if (harnessVersion === undefined)
+    if (!dify && harnessVersion === undefined)
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", `unsupported harness: ${identified.harness.name}`);
-    assertHarnessVersionCompatible(harnessVersion, identified.harness.versionRange);
+    if (harnessVersion !== undefined) assertHarnessVersionCompatible(harnessVersion, identified.harness.versionRange);
     const reverified = await verifyBundleCandidate(this.path, identified.digest);
     if (reverified.harness.name !== identified.harness.name || reverified.digest !== identified.digest) {
       throw new AgentBundleError("SOURCE_CHANGED", "bundle changed while identifying the harness");
     }
     const candidate: VerifiedBundle = {
       ...reverified,
-      harness: { ...reverified.harness, actualVersion: harnessVersion },
+      harness: { ...reverified.harness, ...(harnessVersion === undefined ? {} : { actualVersion: harnessVersion }) },
     };
     signal.throwIfAborted();
     if (this.candidate) sameCandidate(this.candidate, candidate);
@@ -177,10 +189,14 @@ export class AgentBundleSolver implements Solver {
     const provenance: SolverProvenance = {
       bundle: candidate.digest,
       harness: candidate.harness.name,
-      harnessVersion,
+      ...(harnessVersion === undefined ? {} : { harnessVersion }),
       cliVersion: AGENT_BUNDLE_CORE_VERSION,
       installation: installation.id,
     };
+    if (dify) {
+      provenance.harnessVersionRange = candidate.harness.versionRange;
+      provenance.runnerVersion = DIFY_RUNNER_VERSION;
+    }
     if (identified.harness.name === "pi") {
       const artifact = this.piArtifactDigest;
       const configuration = this.piConfigurationDigest;
@@ -211,6 +227,8 @@ export class AgentBundleSolver implements Solver {
     if (!this.candidate) await this.provenance(context.signal);
     const candidate = this.candidate;
     const runtime = session.runtime;
+    if (candidate?.harness.name === "dify" && this.options.dify !== undefined)
+      return prepareDify(this.path, this.options.dify, session, context, candidate);
     if (!candidate || !runtime?.stateRoot)
       throw new AgentBundleError(
         "ENV_RUNTIME_INSTALL_FAILED",
