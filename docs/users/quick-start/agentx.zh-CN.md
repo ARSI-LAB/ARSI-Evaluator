@@ -8,7 +8,7 @@ AgentX 使用与其他 Benchmark 相同的 `doctor → run --dry-run → run` �
 
 ## 1. 选择运行环境并构建
 
-提前把 AgentBundle 放在 Evaluator 同级目录。需要管理容器时，在 Linux Docker 宿主机的 Evaluator 仓库执行以下命令；直接裸机运行时跳过：
+先按[安装指南](../installation.zh-CN.md#直接安装)配置 AgentBundle GitHub 私仓的读取权限。需要管理容器时，在 Linux Docker 宿主机的 Evaluator 仓库执行以下命令；直接裸机运行时跳过：
 
 ```bash
 bash scripts/toolbox/run.sh
@@ -19,21 +19,13 @@ bash scripts/toolbox/run.sh
 使用管理容器时，以下命令在容器内执行。`PNPM_HOME`、全局命令 PATH 和目录已自动配置，无需手动执行 `pnpm setup` 或导出 PATH；裸机运行按安装指南配置全局命令目录。
 
 ```bash
-export EVALUATOR_DIR="$(pwd -P)"
-export AGENTBUNDLE_DIR="$(dirname "$EVALUATOR_DIR")/AgentBundle"
-
-cd "$AGENTBUNDLE_DIR"
-pnpm install --frozen-lockfile
-pnpm --filter agent-bundle-core build
-
-cd "$EVALUATOR_DIR"
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add --global .
 ember-evaluator --help
 ```
 
-工具箱共享同级仓库，Node/pnpm、Python 和编译器由管理镜像提供，AgentBundle 和 Evaluator 的依赖安装在容器或专用卷中。AgentX 首次执行时自动创建独立缓存 venv 并安装 Harness，后续各并发档复用；无需手动创建 venv、任务容器或 SSH Worker。裸机无需安装这些容器内依赖。
+工具箱共享 Evaluator 仓库，Node/pnpm、Python 和编译器由管理镜像提供。AgentBundle 随项目依赖自动安装到容器的专用依赖卷中。AgentX 首次执行时自动创建独立缓存 venv 并安装 Harness，后续各并发档复用；无需手动创建 venv、任务容器或 SSH Worker。裸机无需安装这些容器内依赖。
 
 ## 2. 填写 YAML 和模型变量
 

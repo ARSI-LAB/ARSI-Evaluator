@@ -7,33 +7,33 @@ if [[ "${HOME:-}" != "/toolbox-home" ]]; then
   exit 1
 fi
 
-repository_url="https://gitcode.com/evanTang/AgentBundle.git"
+repository_url="https://github.com/evolving-foundry/agentbundle.git"
 credential_section="credential.$repository_url"
 
-printf '%s\n' "Accessing AgentBundle over HTTPS; use a GitCode access token with read permission for the private repository as the password."
-read -r -p "GitCode username: " gitcode_username
-read -r -s -p "GitCode access token (used as the password): " gitcode_token
+printf '%s\n' "Accessing AgentBundle over HTTPS; use a GitHub access token with read permission for the private repository as the password."
+read -r -p "GitHub username: " github_username
+read -r -s -p "GitHub access token (used as the password): " github_token
 printf '\n'
-if [[ -z "$gitcode_username" || -z "$gitcode_token" ]]; then
+if [[ -z "$github_username" || -z "$github_token" ]]; then
   printf '%s\n' "The username and access token must not be empty." >&2
   exit 1
 fi
 
 # Scope transport and authentication changes to this dependency repository.
-git config --global --replace-all "url.$repository_url.insteadOf" "ssh://git@gitcode.com/evanTang/AgentBundle.git"
-git config --global --add "url.$repository_url.insteadOf" "ssh://gitcode.com/evanTang/AgentBundle.git"
-git config --global --add "url.$repository_url.insteadOf" "git@gitcode.com:evanTang/AgentBundle.git"
+git config --global --unset-all "url.ssh://git@github.com/evolving-foundry/agentbundle.git.insteadOf" || true
+git config --global --replace-all "url.$repository_url.insteadOf" "ssh://git@github.com/evolving-foundry/agentbundle.git"
+git config --global --add "url.$repository_url.insteadOf" "git@github.com:evolving-foundry/agentbundle.git"
 git config --global "$credential_section.useHttpPath" true
 git config --global --replace-all "$credential_section.helper" ""
 git config --global --add "$credential_section.helper" "cache --timeout=28800"
 
 # Reset inherited helpers above so the token is kept only in the cache daemon.
-printf 'protocol=https\nhost=gitcode.com\npath=evanTang/AgentBundle.git\nusername=%s\npassword=%s\n\n' \
-  "$gitcode_username" "$gitcode_token" | git credential approve
-unset gitcode_token gitcode_username
+printf 'protocol=https\nhost=github.com\npath=evolving-foundry/agentbundle.git\nusername=%s\npassword=%s\n\n' \
+  "$github_username" "$github_token" | git credential approve
+unset github_token github_username
 
 if ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git ls-remote "$repository_url" HEAD >/dev/null; then
-  printf 'protocol=https\nhost=gitcode.com\npath=evanTang/AgentBundle.git\n\n' | git credential reject
+  printf 'protocol=https\nhost=github.com\npath=evolving-foundry/agentbundle.git\n\n' | git credential reject
   printf '%s\n' "AgentBundle access verification failed; cached credentials from this attempt were cleared. Check the username, token permissions and network, then retry." >&2
   exit 1
 fi

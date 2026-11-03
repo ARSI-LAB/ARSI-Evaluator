@@ -87,7 +87,7 @@ Provide both fields; the maximum must be at least the default. This fragment ret
 
 ## AgentBundle
 
-Distinguish installation dependencies from the evaluated bundle. The sibling `AgentBundle` **source repository** supplies the locally linked SDK; build `agent-bundle-core` first using [source installation](installation.md#install-from-source). `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**. The source prerequisite applies even when using SimpleAgent.
+Follow [source installation](installation.md#install-from-source) to prepare Evaluator. pnpm installs the AgentBundle SDK automatically, without a sibling source repository. `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**, supplied separately rather than the SDK installation path.
 
 ```yaml
 services:

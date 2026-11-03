@@ -1,10 +1,10 @@
 # 实验配置示例
 
-正式 YAML 按 Benchmark 分类，均使用[渐进式配置](../docs/users/config.zh-CN.md)。质量评测配置默认运行所选版本、场景的全部题目，不设置题数上限、起始偏移、固定题目 ID 或随机选题；模型预算、Solver、并发和输出等参数按运行方式设置。
+正式 YAML 按 Benchmark 分类，均使用[渐进式配置](../docs/users/config.zh-CN.md)。正式质量评测配置默认运行所选版本、场景的全部题目；[GSM8K 快速入门](gsm8k/gsm8k-quick-start.yaml)仅运行两题，用于检查安装和模型配置。
 
 每个 Benchmark 使用一个子目录，YAML 直接放在 `playbook/<benchmark>/` 下，不再按 Solver、版本或场景建立更深目录；这些差异通过文件名区分。
 
-第一次使用先按[安装说明](../docs/users/installation.zh-CN.md#直接安装)准备同级 AgentBundle 仓库，使用 `corepack pnpm@11.22.0` 先构建 `agent-bundle-core`，再安装、构建 Evaluator；之后可按[两题快速上手](../docs/users/quick-start.zh-CN.md)检查环境。全部功能与操作入口见[用户手册](../docs/users/README.zh-CN.md)。已有示例可能包含专用 Bundle、镜像、裁判或 Ray 条件，运行前先阅读注释并执行 doctor。
+第一次使用先完成[安装说明](../docs/users/installation.zh-CN.md)，再按[两题快速上手](../docs/users/quick-start.zh-CN.md)检查环境。示例可能需要专用 Bundle、镜像、裁判或 Ray，运行前先阅读注释并执行 doctor。
 
 | Benchmark | 目录 | 运行配置 |
 | --- | --- | --- |
@@ -13,7 +13,7 @@
 | WorkBuddy | [workbuddy](workbuddy) | [Office 最简配置](workbuddy/workbuddy-office.yaml)、[Code](workbuddy/workbuddy-code.yaml)、[Web](workbuddy/workbuddy-web.yaml)、[Security](workbuddy/workbuddy-security.yaml) |
 | Terminal-Bench | [terminalbench](terminalbench) | [4.0 全量](terminalbench/terminalbench-4.0.yaml)、[2.0 SimpleAgent](terminalbench/terminalbench-simpleagent.yaml)、[AgentBundle](terminalbench/terminalbench-agentbundle.yaml) |
 | SWE-bench Verified | [swebench](swebench) | [AgentBundle](swebench/swebench-agentbundle.yaml) |
-| GSM8K | [gsm8k](gsm8k) | [SimpleAgent](gsm8k/gsm8k-simpleagent.yaml)、[deepagents + Docker](gsm8k/gsm8k-deepagents-docker.yaml) |
+| GSM8K | [gsm8k](gsm8k) | [两题快速入门](gsm8k/gsm8k-quick-start.yaml)、[SimpleAgent 全量](gsm8k/gsm8k-simpleagent.yaml)、[deepagents + Docker](gsm8k/gsm8k-deepagents-docker.yaml) |
 | HumanEval | [humaneval](humaneval) | [SimpleAgent](humaneval/humaneval-simpleagent.yaml) |
 | GPQA Diamond | [gpqa](gpqa) | [SimpleAgent 与 HF 认证](gpqa/gpqa-simpleagent.yaml)；需先接受题库访问条件 |
 | OfficeQA Pro V2 | [officeqa-pro-v2](officeqa-pro-v2) | [解析 JSON 全部 90 题](officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml)、[解析 JSON + SimpleAgent](officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml)、[原始 PDF](officeqa-pro-v2/officeqa-pro-v2-original-pdf.yaml)、[解析 JSON + Ray](officeqa-pro-v2/officeqa-pro-v2-parsed-json-ray.yaml)；均运行全部 90 题，[输入口径说明](../docs/users/benchmarks/officeqa-pro-v2.zh-CN.md#输入与测评口径) |
@@ -38,7 +38,7 @@ node dist/cli.js config explain playbook/workbuddy/workbuddy-office-ray.yaml
 node dist/cli.js run playbook/deepswe/deepswe-simpleagent.yaml
 ```
 
-Terminal-Bench 4.0 的“先构建 AgentBundle、再构建 Evaluator、最后运行”命令见[安装指南](../docs/users/installation.zh-CN.md#直接安装)。也可以先[注册全局命令](../docs/users/installation.zh-CN.md#安装全局命令)，然后离开源码目录使用 YAML 的绝对路径：
+完成[安装](../docs/users/installation.zh-CN.md)后，可以在任意目录使用 YAML 的绝对路径运行，例如 Terminal-Bench 4.0：
 
 ```bash
 ember-evaluator run '/path/to/ember-evaluator/playbook/terminalbench/terminalbench-4.0.yaml'
