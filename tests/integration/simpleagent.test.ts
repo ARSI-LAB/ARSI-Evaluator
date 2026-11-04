@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, rm, cp } from "node:fs/promises";
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 import type { AttemptContext, AttemptKey, AttemptPaths, ComponentActivity, EnvironmentSession, ProcessHandle, PublicTask, RuntimeInstallation } from "../../src/index.js";
+import { packageManagerCli } from "../../src/adapters/network/package-manager.js";
 import { LocalEnvironment } from "../../src/plugins/environments/local.js";
 import { parseRunnerInput, projectRunnerInput } from "../../src/adapters/harness/pi/protocol.js";
 import { run } from "../../src/adapters/harness/pi/runner.js";
@@ -604,10 +605,12 @@ describe("simpleagent bundle", () => {
   // The model-server endpoint only exists after beforeAll; build models lazily.
   const bundleModel = () => ({ name: "fixture-model", endpoint, provider: null, api: "openai-completions" });
 
-  function stubWindowsShell(): void {
+  async function stubWindowsShell(): Promise<void> {
     if (process.platform !== "win32") return;
     const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
-    vi.stubEnv("PATH", [dirname(process.execPath), join(systemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";"));
+    // Standalone Node distributions may use npm installed in a different PATH directory.
+    const npmDirectory = resolve(dirname(await packageManagerCli("npm")), "../../..");
+    vi.stubEnv("PATH", [dirname(process.execPath), npmDirectory, join(systemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";"));
     vi.stubEnv("EMBER_BASH_PATH", join(root, "no-git-bash"));
   }
 
@@ -633,7 +636,7 @@ describe("simpleagent bundle", () => {
   });
 
   test("loads extension tools, skills and instructions through the environment runtime", async () => {
-    stubWindowsShell();
+    await stubWindowsShell();
     // The fixture lock names packages that do not exist on PyPI; a copy
     // without it keeps the managed runtime install off pip entirely.
     const bundleRoot = join(root, "bundle-clean");
@@ -687,7 +690,7 @@ describe("simpleagent bundle", () => {
   });
 
   test("loads an isolated AgentBundle Pi config directory without ambient discovery", async () => {
-    stubWindowsShell();
+    await stubWindowsShell();
     const attemptPaths = await paths("agentbundle-pi-config");
     const agentDir = join(root, "agentbundle-pi-home");
     const extension = join(agentDir, "extensions", "demo");
@@ -718,7 +721,7 @@ describe("simpleagent bundle", () => {
   }, 30_000);
 
   test("task-declared SSE MCP tools are present before model execution and close on completion", async () => {
-    stubWindowsShell();
+    await stubWindowsShell();
     const mcp = await taskMcpServer();
     const attemptPaths = await paths("task-mcp");
     try {
@@ -748,7 +751,7 @@ describe("simpleagent bundle", () => {
   }, 30_000);
 
   test("fails loudly when an extension entry cannot be loaded", async () => {
-    stubWindowsShell();
+    await stubWindowsShell();
     const attemptPaths = await paths("bundle-load-failed");
     const input = projectRunnerInput({
       key: { runId: "run", taskId: "bundle-load", attemptId: "attempt" },

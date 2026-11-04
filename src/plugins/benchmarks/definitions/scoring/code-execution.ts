@@ -36,8 +36,8 @@ else:
 `;
 }
 
-export const humanEvalRuntime: NonNullable<BenchmarkDefinition["verificationRuntime"]> = ({ dockerExecutable }) => ({
-  materialize: async (_task, signal) => ({ image: await materializeVerifierImage(dockerExecutable, "python:3.12-slim", signal) }),
+export const humanEvalRuntime: NonNullable<BenchmarkDefinition["verificationRuntime"]> = ({ dockerExecutable, network }) => ({
+  materialize: async (_task, signal) => ({ image: await materializeVerifierImage(dockerExecutable, "python:3.12-slim", signal, network) }),
   recoverAttempts: (keys, signal) => recoverVerifierContainers(dockerExecutable, keys, signal),
   prepare: async (task, receipt, { key, signal }) => {
     const record = verificationRecord(task.verification, "humaneval");

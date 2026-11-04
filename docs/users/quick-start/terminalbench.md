@@ -10,7 +10,7 @@ Run terminal tasks in Docker with the default SimpleAgent and inspect results fr
 
 Follow [source installation](../installation.md#install-from-source) to configure GitHub read access, then install and build Evaluator. The AgentBundle SDK downloads and builds automatically; no manual clone is required.
 
-Run these commands from the Evaluator repository root with the `ember-evaluator` command registered during installation. The machine needs Docker Engine and access to the model API, task data, and images.
+Register `ember-evaluator` as described in the installation guide, then run these commands from the Evaluator root to use the repository Playbooks. The machine needs Docker Engine and access to the model API, task data, and images.
 
 ```bash
 docker version
@@ -30,7 +30,7 @@ ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-`doctor` does not call models, download tasks, or pull images. Confirm `not-checked` items through actual execution. The following preview may download task data:
+`doctor` does not call models; it probes dataset archives and performs temporary downloads and image checks. Confirm `not-checked` items through actual execution. The following preview may download task data:
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run

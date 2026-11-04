@@ -8,7 +8,7 @@
 
 先完成[安装指南](installation.zh-CN.md#直接安装)。下面的 local 示例不需要 Docker 或 Ray，Agent 会在本机执行工具。
 
-后文统一使用安装指南中注册的 `ember-evaluator` 命令，在 Evaluator 仓库根目录执行。
+后文使用安装时注册的 `ember-evaluator` 命令；请在同一工作目录依次执行，便于使用生成的配置和结果路径。
 
 ## 2. 选择题库并生成配置
 
@@ -78,7 +78,7 @@ ember-evaluator doctor first-run.yaml
 ember-evaluator run first-run.yaml
 ```
 
-`doctor` 会检查配置、认证引用和当前路径需要的工具，不发送模型请求、不下载题库、不构建镜像。`not-checked` 表示没有检查，不表示检查通过；模型与数据源权限需要实际运行确认。
+`doctor` 会检查配置、认证引用、工具和网络，执行临时下载及 Docker 构建探针，不发送模型请求、不执行题目。`not-checked` 表示没有检查，不表示检查通过；模型与数据源权限需要实际运行确认。
 
 `run` 才会读取数据并调用模型。日志会显示准备、求解、验证、报告等阶段；结束后输出类似下面的目录，实际 `<RUN_ID>` 是本次生成的值：
 

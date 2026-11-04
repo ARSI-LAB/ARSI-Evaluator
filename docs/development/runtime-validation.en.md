@@ -27,10 +27,10 @@ The regular [Office Ray Playbook](../../playbook/workbuddy/workbuddy-office-ray.
 For manual concurrency-20 execution, set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY`, then run from the repository root:
 
 ```bash
-node dist/cli.js run tests/fixtures/workbuddy-office-ray-20/experiment.yaml --dry-run
+ember-evaluator run tests/fixtures/workbuddy-office-ray-20/experiment.yaml --dry-run
 pnpm ray:ensure
 docker compose -f scripts/ray-smoke/compose.yaml -f scripts/ray-smoke/jobs.yaml -f tests/fixtures/workbuddy-office-ray-20/compose.yaml up -d --no-deps --no-build worker-a worker-b
-node dist/cli.js run tests/fixtures/workbuddy-office-ray-20/experiment.yaml
+ember-evaluator run tests/fixtures/workbuddy-office-ray-20/experiment.yaml
 ```
 
 The [slot override](../../tests/fixtures/workbuddy-office-ray-20/compose.yaml) sets each worker to 10 slots. Test YAML uses `managedLocal: false` to reuse the explicitly prepared cluster rather than resetting slots through runtime setup. Wait for existing evaluations before changing workers. Restore defaults by omitting the override after testing:

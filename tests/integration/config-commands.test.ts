@@ -110,7 +110,9 @@ test("resolved relative paths retain the experiment-directory convention", async
 
 test("the built CLI resolves filename-based output from an unrelated working directory", async () => {
   const { root, path } = await setup();
-  const { stdout } = await promisify(execFile)(process.execPath, [resolve("dist/cli.js"), "config", "resolve", path], { cwd: root });
+  const network = join(root, "network.yaml");
+  await writeFile(network, "{}");
+  const { stdout } = await promisify(execFile)(process.execPath, [resolve("dist/cli.js"), "config", "resolve", path, "--network", network], { cwd: root });
   expect(parse(stdout).output.directory).toBe(resolve("results/deepswe/experiment"));
 });
 

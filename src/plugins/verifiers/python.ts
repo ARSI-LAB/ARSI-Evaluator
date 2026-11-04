@@ -27,7 +27,7 @@ export class HarborPythonVerifier implements Verifier {
   private readonly image: (signal: AbortSignal) => Promise<string>;
   constructor(private readonly config: PythonVerifierConfig, private readonly factoryRuntime: PluginFactoryContext) {
     if (config.requireService && !factoryRuntime.verifierService) throw new TypeError("This verifier requires an explicit verifier.service binding");
-    this.image = createPythonVerifierImage(config.dockerExecutable);
+    this.image = createPythonVerifierImage(config.dockerExecutable, undefined, factoryRuntime.network);
   }
   async prepare(task: VerificationTask, signal: AbortSignal): Promise<JsonValue> {
     signal.throwIfAborted();
@@ -40,7 +40,7 @@ export class HarborPythonVerifier implements Verifier {
   readonly runtime: VerificationRuntime<JsonValue, VerificationEvidence> = {
     materialize: async (_descriptor, signal) => {
       const image = this.config.runtimeImage ?? await this.image(signal);
-      return { image: await materializeVerifierImage(this.config.dockerExecutable, image, signal) };
+      return { image: await materializeVerifierImage(this.config.dockerExecutable, image, signal, this.factoryRuntime.network) };
     },
     recoverAttempts: (keys, signal) => recoverVerifierContainers(this.config.dockerExecutable, keys, signal),
     prepare: async (value, receipt, { key, signal }) => {

@@ -8,7 +8,7 @@ Use your model API to solve two GSM8K questions and produce an offline report. R
 
 Complete the [installation guide](installation.md#install-from-source). This local example requires neither Docker nor Ray; the agent executes tools on your machine.
 
-The following examples use the `ember-evaluator` command registered by the installation guide. Run them from the Evaluator repository root.
+Use the `ember-evaluator` command registered during installation. Run the following commands from the same working directory so the generated configuration and result paths remain valid.
 
 ## 2. Choose a Benchmark and Generate Configuration
 
@@ -78,7 +78,7 @@ ember-evaluator doctor first-run.yaml
 ember-evaluator run first-run.yaml
 ```
 
-`doctor` checks configuration, authentication references, and required tools for the selected path. It does not send model requests, download datasets, or build images. `not-checked` means untested, not passed. Actual execution verifies model and data access.
+`doctor` checks configuration, authentication references, tools and network access using temporary downloads and Docker build probes. It does not send model requests or execute tasks. `not-checked` means untested, not passed. Actual execution verifies model and data access.
 
 `run` reads data and calls the model. Logs show preparation, solving, verification, and reporting. It prints a directory like this; `<RUN_ID>` is generated for this `run`:
 

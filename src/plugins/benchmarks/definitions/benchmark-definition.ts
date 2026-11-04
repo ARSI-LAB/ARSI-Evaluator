@@ -6,6 +6,7 @@ import type { VerificationRuntime } from "../../../core/contracts/verification-r
 
 export type BenchmarkRecord = { value: JsonValue; selection: string };
 export type BenchmarkDefinitionContext = {
+  network?: import("../../../core/contracts/network.js").NetworkAccess | undefined;
   judge?: { model: ModelConfig; auth: RuntimeAuth };
   judgeService?: string;
   dockerExecutable: string;

@@ -44,14 +44,10 @@ export async function agentXLocalInstallation(configured: string | undefined, si
     throw Object.assign(new Error("AgentX public datasets require Linux/WSL or Windows x64"), { code: "ENV_RUNTIME_INSTALL_FAILED" });
   const python = await resolveAgentXPython(configured, signal);
   const rootPython = process.platform === "win32" ? "{root}/venv/Scripts/python.exe" : "{root}/venv/bin/python";
-  const pipIndex = process.env.PIP_INDEX_URL ?? "https://pypi.org/simple";
-  const url = new URL(pipIndex);
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-    throw new TypeError("AgentX PIP_INDEX_URL must be a credential-free HTTP(S) URL");
   return { id: `agentx-${AGENTX_VERSION}-${python.version}-${await agentXBridgeDigest(signal)}`,
     cacheName: `agentx-${AGENTX_VERSION}-py${python.version.split(".").slice(0, 2).join(".")}`,
     files: [{ source: agentXAssets, target: "bridge" }], commands: [{ executable: python.executable,
-      args: ["{root}/bridge/install.py", "{root}/venv"], env: { PIP_INDEX_URL: pipIndex, PYTHONDONTWRITEBYTECODE: "1" } }],
+      args: ["{root}/bridge/install.py", "{root}/venv"], env: { PYTHONDONTWRITEBYTECODE: "1" } }],
     probes: [{ executable: rootPython, args: ["-c", `import importlib.metadata as m; assert m.version('agentx-harness') == '${AGENTX_VERSION}'; import evaluator_agentx`] }] };
 }
 
@@ -78,7 +74,7 @@ async function directoryDigest(root: string, signal: AbortSignal): Promise<strin
 
 /** Fetch tokenizer assets only, never model weights; resume uses the original commit. */
 export async function lockAgentXLexicon(name: string, revision: string | undefined, cacheDir: string, resolvePath: (path: string) => string,
-  signal: AbortSignal, previous?: SolverProvenance): Promise<AgentXLexicon> {
+  signal: AbortSignal, previous?: SolverProvenance, network?: import("../../../core/contracts/network.js").NetworkAccess): Promise<AgentXLexicon> {
   const local = resolvePath(name);
   const info = await lstat(local).catch(error => {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
@@ -95,11 +91,11 @@ export async function lockAgentXLexicon(name: string, revision: string | undefin
   }
   if (isAbsolute(name) || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(name))
     throw new TypeError("AgentX tokenizer must be a Hugging Face org/repo or an existing local directory");
-  const transport = huggingfaceTransport();
+  const transport = huggingfaceTransport(process.env, network);
   const headers = process.env.HF_TOKEN ? { Authorization: `Bearer ${process.env.HF_TOKEN}` } : undefined;
   const pin = previous?.lexiconRevision ?? revision ?? "main";
   const response = await fetchNetworkResponse(`${transport.apiBase}/api/models/${name}/revision/${encodeURIComponent(pin)}?blobs=true`,
-    { signal, ...(headers ? { headers } : {}) });
+    { signal, ...(headers ? { headers } : {}) }, { ...(network ? { network } : {}) });
   if (!response.ok) throw new Error(`AgentX tokenizer metadata HTTP ${response.status}`);
   const metadata = expectRecord(await response.json(), "AgentX tokenizer metadata");
   if (typeof metadata.sha !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sha) || !Array.isArray(metadata.siblings))
@@ -108,7 +104,7 @@ export async function lockAgentXLexicon(name: string, revision: string | undefin
     typeof file.rfilename === "string" && (/^(?:config\.json|generation_config\.json|tokenizer[^/]*|special_tokens_map\.json|added_tokens\.json|vocab\.[^/]+|merges\.txt|chat_template\.(?:jinja|json))$/u.test(file.rfilename) || file.rfilename.endsWith(".py")));
   if (!files.length) throw new Error("AgentX tokenizer repository has no tokenizer assets");
   const path = join(cacheDir, "lexicons", fingerprintConfig({ name, revision: metadata.sha }));
-  const cache = new DatasetCache(cacheDir);
+  const cache = new DatasetCache(cacheDir, network);
   for (const file of files) {
     const filename = String(file.rfilename);
     if (!/^[A-Za-z0-9_.\/-]+$/u.test(filename) || filename.split("/").some(part => !part || part === "." || part === ".."))

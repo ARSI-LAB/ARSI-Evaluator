@@ -27,8 +27,9 @@ export class HarborBenchmark implements Benchmark {
     private readonly verifier: Verifier = new HarborShellVerifier(),
     phaseTimeouts: PhaseTimeoutOverrides = {},
     hardware: HardwareKind = "npu",
+    network?: import("../../../../core/contracts/network.js").NetworkAccess,
   ) {
-    const source = config.source ? createDirectoryBenchmarkSource(config, verifier, transport, phaseTimeouts, hardware) : createHarborSource(config, transport, verifier, phaseTimeouts, hardware);
+    const source = config.source ? createDirectoryBenchmarkSource(config, verifier, transport, phaseTimeouts, hardware, network) : createHarborSource(config, transport, verifier, phaseTimeouts, hardware, network);
     this.resolveSource = source.resolveSource;
     this.enumerate = source.enumerate;
     this.prepare = source.prepare;

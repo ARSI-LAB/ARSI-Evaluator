@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, lstat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createConnection } from "node:net";
 import { connect } from "node:tls";
@@ -78,11 +78,16 @@ export async function diagnose(config: LoadedConfig, file: string, signal: Abort
     const bundlePath = solver.config.path;
     if (config.experiment.scheduler.name !== "ray" && solver.name === "agentbundle" && typeof bundlePath === "string") await check("AgentBundle path", () => access(resolve(directory, bundlePath)));
     const source = config.experiment.benchmark.config.source;
+    const localPath = config.experiment.benchmark.config.localPath;
+    if (typeof localPath === "string") await check("local dataset", async () => {
+      const info = await lstat(resolve(directory, localPath));
+      if (!info.isFile() && !info.isDirectory()) throw new Error("localPath must be a regular file or directory");
+    });
     if (source && typeof source === "object" && "kind" in source && source.kind === "local" && "path" in source && typeof source.path === "string") {
       const path = source.path;
       await check("local source", () => access(resolve(directory, path)));
     }
   }
-  checks.push({ name: "model and dataset", status: "not-checked", detail: "No model requests, dataset downloads or image builds were performed; connectivity does not guarantee valid credentials or successful execution" });
+  checks.push({ name: "model and task execution", status: "not-checked", detail: "Model calls and real tasks are not executed. Separate network probes check downloads; run warmup to validate the selected task data and images." });
   return checks;
 }

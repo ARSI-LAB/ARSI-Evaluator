@@ -1,3 +1,4 @@
+import { NetworkRuntime } from "./adapters/network/runtime.js";
 import { resolve } from "node:path";
 
 import { openPluginRegistry } from "./plugin-runtime.js";
@@ -10,7 +11,7 @@ import type { PluginFactoryContext } from "./core/registry.js";
 import { fingerprintImageConfig } from "./core/image-config.js";
 import type { ConfigTransportLookup } from "./core/contracts/config-transport.js";
 
-export function createPluginRuntime(config: LoadedConfig, experimentDir: string, pluginPatchPath?: string, onWarning?: (message: string) => void, configTransport?: ConfigTransportLookup) {
+export function createPluginRuntime(config: LoadedConfig, experimentDir: string, pluginPatchPath?: string, onWarning?: (message: string) => void, configTransport?: ConfigTransportLookup, network = new NetworkRuntime(config.network)) {
   assertServiceBindings(config);
   const configDirectory = resolve(experimentDir);
   const services = Object.fromEntries(
@@ -21,6 +22,8 @@ export function createPluginRuntime(config: LoadedConfig, experimentDir: string,
     }),
   );
   return {
+    network,
+    benchmarkName: config.benchmarkName ?? config.experiment.benchmark.name,
     hardware: config.experiment.hardware ?? "npu",
     phaseTimeouts: {
       ...(config.experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: config.experiment.run.solveTimeoutSeconds }),
@@ -85,6 +88,7 @@ export async function bootstrap(
 
     const runtime = { ...createPluginRuntime(config, experimentDir, patch.patchPath ?? undefined, onWarning, (role, name) => ctx.evaluator.configTransport(role, name)),
       ...(imageConfigFingerprint ? { imageConfigFingerprint } : {}) };
+    registry.ctx.effect(() => () => runtime.network.dispose(), "Network client lifecycle");
     const benchmark = await createBenchmark(registry, config, runtime);
     const environment = await createEnvironment(runtime);
     const solver = await createSolver(runtime);
@@ -134,6 +138,7 @@ export async function bootstrapBenchmark(
   const { patch } = registry;
   try {
     const runtime = createPluginRuntime(config, experimentDir, patch.patchPath ?? undefined);
+    registry.ctx.effect(() => () => runtime.network.dispose(), "Network client lifecycle");
     const benchmark = await createBenchmark(registry, config, runtime);
     let disposed = false;
     return {

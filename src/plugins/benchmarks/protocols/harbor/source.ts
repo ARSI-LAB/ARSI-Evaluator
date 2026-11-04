@@ -32,9 +32,10 @@ export function createHarborSource(
   verifier: Verifier = new HarborShellVerifier(),
   phaseTimeouts: PhaseTimeoutOverrides = {},
   hardware: HardwareKind = "npu",
+  network?: import("../../../../core/contracts/network.js").NetworkAccess,
 ): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
   const root = resolve(config.cacheDir);
-  const cache = new GitBlobCache(root);
+  const cache = new GitBlobCache(root, network);
   const inventories = new WeakMap<SourceLock, HarborTrees>();
   const repositoryTree = (repository: string, commit: string) =>
     `${transport.apiBase}/repos/${repository}/git/trees/${commit}?recursive=1`;

@@ -15,6 +15,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Docker terminal tasks | [Terminal-Bench 4.0](quick-start/terminalbench.md) |
 | Model service performance | [AgentX performance](quick-start/agentx.md) |
 | Load-test existing model services over SSH | [Standalone AISBench plugin](../../plugins/aisbench/README.md) |
+| Read downloaded dataset files | [Local datasets](local-datasets.md) |
 | Call evaluations from a Node.js project | [Node.js SDK](sdk.md) |
 
 ## Common Operations
@@ -71,3 +72,5 @@ ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 WorkBuddy Web requires a judge; Office model scoring is optional. Store Security data and results on a native Linux filesystem. Do not extract under Windows or WSL `/mnt/c` or `/mnt/d`. See [WorkBuddy](benchmarks/workbuddy.md).
 
 Run a small sample before increasing tasks, concurrency, or nodes. See the [FAQ](faq/README.md) for installation, scoring, resume, and resource issues.
+
+- [Network downloads, proxies and image acquisition](network.md)

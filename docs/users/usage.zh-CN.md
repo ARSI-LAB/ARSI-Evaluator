@@ -55,20 +55,20 @@ CLI 文件会替换配置里的选题 ID，并清除原 `offset`、`maxTasks` �
 使用独立的 `warmup` 命令，传入正式评测使用的 YAML：
 
 ```bash
-ember warmup first-run.yaml
-# 源码目录也可使用：
+ember-evaluator warmup first-run.yaml
+# 使用纯文本进度输出：
 ember-evaluator warmup first-run.yaml --progress plain
 ```
 
-命令按 YAML 的 `taskIds`、`sampling`、`offset` 和 `maxTasks` 选择题目，准备解题镜像、独立验证镜像、侧车镜像，以及 Evaluator 运行时和 Solver 安装层。镜像下载、Dockerfile 构建、镜像层拼接和 `environment.config.pullProxy` 使用与正式运行相同的逻辑，准备并发和预算也沿用 YAML。构建需要的临时容器可以执行安装命令；预热不调用模型、不启动解题或评分会话，不创建评测结果目录、指标或报告。
+命令按 YAML 的 `taskIds`、`sampling`、`offset` 和 `maxTasks` 选择题目，准备解题镜像、独立验证镜像、侧车镜像，以及 Evaluator 运行时和 Solver 安装层。镜像下载、Dockerfile 构建、镜像层拼接和 网络 YAML 使用与正式运行相同的逻辑，准备并发和预算也沿用 YAML。构建需要的临时容器可以执行安装命令；预热不调用模型、不启动解题或评分会话，不创建评测结果目录、指标或报告。
 
 命令结束时只输出一行就绪/失败数量，以及各失败任务的 ID、错误码和原因，不再打印成功任务明细和完整 JSON。全部成功时只输出统计行；存在失败时退出码为 `1`。
 
 需要固定题目或加载外部插件时，可以使用：
 
 ```bash
-ember warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
-ember run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
 ```
 
 `--task-ids-file` 覆盖 YAML 选题的规则与 `run` 相同。预热完成后，使用相同配置、任务版本、平台和 Docker daemon 运行评测，即可复用本机缓存；再次预热会检查并复用已有缓存。预热不要求模型 API key；YAML 引用的模型名称、端点、Bundle 路径等配置仍需有效。它与只下载数据、枚举 ID 的 `run --dry-run` 是两个独立操作，不接受 `--dry-run` 或 `--resume`。
@@ -87,15 +87,15 @@ ember run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
 
 ```bash
 # 查看同一配置准备过的任务镜像及其依赖
-ember cleanup images first-run.yaml
-ember cleanup images first-run.yaml --yes
+ember-evaluator cleanup images first-run.yaml
+ember-evaluator cleanup images first-run.yaml --yes
 
 # 当前 Docker 中全部可识别的评测镜像
-ember cleanup images --all
-ember cleanup images --all --yes
+ember-evaluator cleanup images --all
+ember-evaluator cleanup images --all --yes
 
 # 按 YAML 连接 Ray，在全部目标节点清理评测镜像
-ember cleanup images first-run.yaml --all --yes
+ember-evaluator cleanup images first-run.yaml --all --yes
 ```
 
 命令支持本机 Docker、Ray Client 和 Ray Jobs；YAML 使用外部插件时加 `--patch cordis.patch.yaml`。清理不调用模型、不下载数据集或镜像、不执行题目，也不会自动启动或重建 Ray 集群。Ray Jobs 仍需网关认证和 TLS。gateway、coordinator 和 worker 需一起更新。

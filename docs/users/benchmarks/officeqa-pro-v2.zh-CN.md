@@ -38,7 +38,7 @@ ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simplea
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ```
 
-`doctor` 检查配置与本机依赖，不下载题库或语料。`--dry-run` 按现有 CLI 规则查询来源、读取题目 CSV 并输出选题 ID；它需要题库访问权限，首次可能下载约 225KB 的题目 CSV，但不下载文档语料、不构建镜像、不调用模型。
+`doctor` 检查配置、本机依赖和网络，执行临时下载及构建探针，不下载完整题库或语料。`--dry-run` 按现有 CLI 规则查询来源、读取题目 CSV 并输出选题 ID；它需要题库访问权限，首次可能下载约 225KB 的题目 CSV，但不下载文档语料、不构建镜像、不调用模型。
 
 Playbook 中的 JSON、PDF、单机和 Ray 配置均不设置题数限制，运行全部 90 题。以下命令使用[解析 JSON 全量配置](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml)：
 

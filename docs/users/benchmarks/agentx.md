@@ -22,7 +22,7 @@ Management images include Python/venv/compiler dependencies; first use creates a
 
 Services need streaming OpenAI Chat Completions, `ignore_eos`, and trace output lengths. Default official 062126 256k corpus requires at least 256k context plus headroom. `full` targets approximately1M context. Traces are not truncated for smaller contexts.
 
-Follow [quick start](../quick-start/agentx.md) for installation, model variables, tokenizer, and doctor/dry-run/run commands. This guide defines loads, metrics, and telemetry. `doctor` downloads/infers nothing; dry-run may download and lists points.
+Follow [quick start](../quick-start/agentx.md) for installation, model variables, tokenizer, and doctor/dry-run/run commands. This guide defines loads, metrics, and telemetry. `doctor` performs download probes without inference; dry-run may download and lists points.
 
 Choose a configuration for your goal; running all in sequence is unnecessary:
 

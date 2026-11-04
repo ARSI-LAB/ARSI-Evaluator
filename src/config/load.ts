@@ -1,3 +1,4 @@
+import { loadNetworkConfig, storedNetworkTemplate, restoreNetworkTemplate } from "./network.js";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { homedir } from "node:os";
@@ -153,17 +154,21 @@ export async function loadConfig(
   options: LoadOptions = {},
 ): Promise<LoadedConfig> {
   const absolutePath = resolve(path);
+  const network = options.network ?? await loadNetworkConfig(options.networkConfigPath, env);
   const source = expectRecord(parse(await readFile(absolutePath, "utf8"), { maxAliasCount: 100 }), "configuration");
   const registry = options.registry ?? await openPluginRegistry(options.patchPath);
   try {
-    const { source: normalized, origins } = resolveInput(absolutePath, parseUserConfig(source), registry.ctx.evaluator.profiles(), overrides);
-    return loadResolvedConfig(normalized, absolutePath, overrides, env, options, origins, registry);
+    const user = parseUserConfig(source);
+    const benchmarkName = typeof user.benchmark === "string" ? user.benchmark : user.benchmark.name;
+    const { source: normalized, origins } = resolveInput(absolutePath, user, registry.ctx.evaluator.profiles(), overrides);
+    const loaded = loadResolvedConfig(normalized, absolutePath, overrides, env, options, origins, registry);
+    return attachNetwork(loaded, network, benchmarkName);
   } finally {
     if (!options.registry) await registry.dispose();
   }
 }
 
-type LoadOptions = { allowMissingAuth?: boolean; patchPath?: string; validatePlugins?: boolean; registry?: PluginRegistry; configDirectory?: string };
+type LoadOptions = { networkConfigPath?: string; network?: import("../core/contracts/network.js").NetworkDocument; allowMissingAuth?: boolean; patchPath?: string; validatePlugins?: boolean; registry?: PluginRegistry; configDirectory?: string };
 
 /** Internal, persisted execution configuration; never accepts public YAML shortcuts. */
 export async function loadSavedConfig(
@@ -173,12 +178,24 @@ export async function loadSavedConfig(
 ): Promise<LoadedConfig> {
   const absolutePath = resolve(path);
   const source = expectRecord(parse(await readFile(absolutePath, "utf8"), { maxAliasCount: 100 }), "saved configuration");
+  const savedNetwork = source.network === undefined ? undefined : expectRecord(source.network, "saved network");
+  delete source.network;
+  const network = options.network ?? (options.networkConfigPath || env.EVALUATOR_NETWORK_CONFIG || !savedNetwork
+    ? await loadNetworkConfig(options.networkConfigPath, env) : restoreNetworkTemplate(savedNetwork.template, env));
+  const benchmarkName = savedNetwork?.benchmarkName === undefined ? undefined : expectNonEmptyString(savedNetwork.benchmarkName, "saved benchmark name");
   const registry = options.registry ?? await openPluginRegistry(options.patchPath);
   try {
-    return loadResolvedConfig(source, absolutePath, {}, env, options, {}, registry);
+    return attachNetwork(loadResolvedConfig(source, absolutePath, {}, env, options, {}, registry), network, benchmarkName);
   } finally {
     if (!options.registry) await registry.dispose();
   }
+}
+
+function attachNetwork(loaded: LoadedConfig, network: import("../core/contracts/network.js").NetworkDocument, benchmarkName?: string): LoadedConfig {
+  const name = benchmarkName ?? loaded.experiment.benchmark.name;
+  const persisted = { ...expectRecord(loaded.persisted, "saved config"), network: { benchmarkName: name, template: storedNetworkTemplate(network.template) } };
+  assertJsonValue(persisted);
+  return { ...loaded, network, benchmarkName: name, persisted };
 }
 
 function loadResolvedConfig(

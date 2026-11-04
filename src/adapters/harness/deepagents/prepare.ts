@@ -48,7 +48,7 @@ export async function prepareDeepagentsDocker(
     executable: "node",
     args: [posix.join(root, "agentbundle", "run.mjs"), "--json", ...args, "--harness-version", DEEPAGENTS_VERSION],
     cwd: root,
-    env: containerEnv,
+    env: preparation.network?.environment("runtime", containerEnv, "container") ?? containerEnv,
     inheritEnv: false,
     input: null,
   });
@@ -205,7 +205,7 @@ export async function prepareDeepagentsLocal(
     executable: node,
     args: [cli, "--json", ...args, "--harness-version", DEEPAGENTS_VERSION],
     cwd: runtime.root,
-    env,
+    env: preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env,
     inheritEnv: false,
     input: null,
   });

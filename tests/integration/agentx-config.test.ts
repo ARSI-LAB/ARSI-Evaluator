@@ -1,3 +1,4 @@
+import "../fixtures/network-fetch.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";

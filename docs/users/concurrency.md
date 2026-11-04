@@ -116,8 +116,8 @@ Before preparation, Scheduler chooses the smallest allocated-task/node-slot rati
 Independent warmup uses the same placement/preparation code for direct Ray Client and Ray Jobs:
 
 ```bash
-ember warmup ray-experiment.yaml
-ember run ray-experiment.yaml
+ember-evaluator warmup ray-experiment.yaml
+ember-evaluator run ray-experiment.yaml
 ```
 
 Warmup starts neither Solver nor scoring; `placements` lists task nodes. Identical selection order, nodes, and slots yield identical allocation. Node/capacity changes recompute it, and new nodes prepare their own images. Warmup does not replace run receipt checks or add cache copying, failover, or Ray pipelines.

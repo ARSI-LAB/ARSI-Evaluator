@@ -71,6 +71,7 @@ export async function claimPersistentState(stateRoot: string, state: string, ide
 }
 
 export type BundlePreparation = {
+  network?: import("../../core/contracts/network.js").NetworkAccess | undefined;
   path: string;
   model: ModelConfig;
   auth: RuntimeAuth;

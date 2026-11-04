@@ -116,8 +116,8 @@ Docker 的 `cpus` 是单容器使用上限，不是预留核心。等待模型�
 独立预热使用相同分配和准备代码，支持直接 Ray Client 与 Ray Jobs：
 
 ```bash
-ember warmup ray-experiment.yaml
-ember run ray-experiment.yaml
+ember-evaluator warmup ray-experiment.yaml
+ember-evaluator run ray-experiment.yaml
 ```
 
 预热不启动 Solver 或评分；摘要的 `placements` 列出每题所属节点。相同选题顺序、节点集合和槽位配置得到相同分配；节点或容量发生变化后重新计算，新节点准备自己的任务镜像。预热不替代正式运行的准备回执检查，也不增加跨节点缓存复制、故障迁移或 Ray 流水线。

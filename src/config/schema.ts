@@ -67,6 +67,9 @@ export type RuntimeAuth = {
 };
 
 export type LoadedConfig = {
+  /** User-selected profile name, before expansion to an implementation such as harbor. */
+  benchmarkName?: string;
+  network?: import("../core/contracts/network.js").NetworkDocument;
   deployment?: import("./deployment.js").Deployment;
   experiment: EffectiveConfig;
   /** Secrets for services whose credentials were resolved. The solver's service is always present. */

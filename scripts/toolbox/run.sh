@@ -15,11 +15,10 @@ if [[ ! -S /var/run/docker.sock ]]; then
   exit 1
 fi
 docker --host unix:///var/run/docker.sock info >/dev/null
-# Package installation uses the host network, matching the toolbox runtime.
-docker --host unix:///var/run/docker.sock build \
-  --network host \
-  --tag ember-evaluator-toolbox:local \
-  "$script_dir"
+# The bundled launcher can read YAML before repository dependencies exist.
+cd "$repo_dir"
+node scripts/network/bootstrap.mjs -- pnpm install --frozen-lockfile
+node scripts/network/deployment.mjs toolbox-build
 
 host_pid=""
 cleanup() {
@@ -59,6 +58,12 @@ if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]] && command -v python3 >/dev
 fi
 
 proxy_env=()
+network_file="$(node scripts/network/variables.mjs --path)"
+proxy_env+=(--mount "type=bind,source=$network_file,target=/etc/ember/network.yaml,readonly" --env "EVALUATOR_NETWORK_CONFIG=/etc/ember/network.yaml")
+network_variables="$(node scripts/network/variables.mjs)"
+while IFS= read -r variable; do
+  if [[ -n "$variable" ]]; then proxy_env+=(--env "$variable"); fi
+done <<< "$network_variables"
 for variable in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy HF_ENDPOINT; do
   if [[ -n "${!variable:-}" ]]; then proxy_env+=(--env "$variable"); fi
 done

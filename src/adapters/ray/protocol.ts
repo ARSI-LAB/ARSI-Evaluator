@@ -1,3 +1,5 @@
+import { validateNetworkSnapshot } from "../../config/network.js";
+import type { NetworkSnapshot } from "../../core/contracts/network.js";
 import { join, posix, win32 } from "node:path";
 import { parseHardware } from "../../config/hardware.js";
 import type { ConfigTransportLookup } from "../../core/contracts/config-transport.js";
@@ -14,6 +16,7 @@ import { fingerprintImageConfig } from "../../core/image-config.js";
 export type RemoteConfig = Pick<EffectiveConfig, "hardware" | "benchmark" | "environment" | "solver" | "verifier"> & PhaseTimeoutOverrides & {
   timeoutSeconds: number;
   includeTaskAnswer?: boolean;
+  network?: NetworkSnapshot;
 };
 export type RemotePreparation = {
   roundId: string;
@@ -188,8 +191,10 @@ export function validateRemoteJob(value: unknown, lookup?: ConfigTransportLookup
   for (const key of ["solveTimeoutSeconds", "verifyTimeoutSeconds"]) if (Object.hasOwn(object(record.safeConfig), key)) configFields.push(key);
   if (Object.hasOwn(object(record.safeConfig), "includeTaskAnswer")) configFields.push("includeTaskAnswer");
   if (Object.hasOwn(object(record.safeConfig), "verifier")) configFields.push("verifier");
+  if (Object.hasOwn(object(record.safeConfig), "network")) configFields.push("network");
   if (Object.hasOwn(object(record.safeConfig), "hardware")) configFields.push("hardware");
   const config = object(record.safeConfig, configFields);
+  if (config.network !== undefined) validateNetworkSnapshot(config.network);
   parseHardware(config.hardware);
   for (const key of ["solveTimeoutSeconds", "verifyTimeoutSeconds"]) {
     const value = config[key];
@@ -245,6 +250,7 @@ export function projectRemoteJob(input: {
   job: TaskJob;
   run: Pick<RunManifest, "runId" | "source" | "configFingerprint" | "pluginVersions" | "solverProvenance">;
   config: EffectiveConfig;
+  network?: NetworkSnapshot;
   packageDigest: string;
   uploadEndpoint: string;
   previousAttempts: AttemptKey[];
@@ -262,6 +268,7 @@ export function projectRemoteJob(input: {
     imageConfigFingerprint: fingerprintImageConfig(input.config as unknown as import("../../core/contracts/task.js").JsonValue, input.configTransport),
     source: input.run.source,
     safeConfig: {
+      ...(input.network ? { network: input.network } : {}),
       hardware: input.config.hardware ?? "npu",
       benchmark,
       environment,

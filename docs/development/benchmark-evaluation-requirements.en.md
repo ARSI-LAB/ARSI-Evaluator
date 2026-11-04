@@ -371,14 +371,14 @@ Paths use the YAML directory. For Ray, replace local sources and check node imag
 After installation/build, run from the repository root with actual paths:
 
 ```bash
-node dist/cli.js config explain experiment.yaml
-node dist/cli.js doctor experiment.yaml
-node dist/cli.js run experiment.yaml --dry-run
-node dist/cli.js run experiment.yaml
-node dist/cli.js report <run-dir>
+ember-evaluator config explain experiment.yaml
+ember-evaluator doctor experiment.yaml
+ember-evaluator run experiment.yaml --dry-run
+ember-evaluator run experiment.yaml
+ember-evaluator report <run-dir>
 ```
 
-Use identical --patch for checks/execution. Offline reports use saved provenance without patches. `doctor` pulls/calls nothing; dry-run is not runtime acceptance.
+Use identical --patch for checks/execution. Offline reports use saved provenance without patches. `doctor` runs download/build probes without calling models; dry-run is not runtime acceptance.
 
 | Check | Pass criteria |
 | --- | --- |

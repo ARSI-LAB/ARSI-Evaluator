@@ -120,7 +120,7 @@ ember-evaluator run "$EVALUATOR_CONFIG" --dry-run
 ember-evaluator run "$EVALUATOR_CONFIG"
 ```
 
-Run in order and fix failures before proceeding. `doctor` downloads/infers/samples nothing. dry-run resolves/downloads sources and lists points without harness installation/sampling. `run` prepares venv/data, configured samplers, warmup, measurements, and reports. Initial installs/full corpus rebuilds may take time. Keep foreground terminals connected; use your existing job manager for background execution.
+Run in order and fix failures before proceeding. `doctor` performs network download probes without inference or device sampling. dry-run resolves/downloads sources and lists points without harness installation/sampling. `run` prepares venv/data, configured samplers, warmup, measurements, and reports. Initial installs/full corpus rebuilds may take time. Keep foreground terminals connected; use your existing job manager for background execution.
 
 `[1, 4, 8]` are sequential active-session-tree levels, each one hour by default or 60 seconds with `durationSeconds: 60`, plus other stages. They are not fixed concurrent HTTP request counts. Run after configuration checks pass.
 

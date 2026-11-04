@@ -1,3 +1,4 @@
+vi.mock("../../src/adapters/network/doctor.js", () => ({ diagnoseNetwork: async () => [] }));
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,7 +56,7 @@ test("discovery, init, doctor, run and report work through the same explicit pat
   expect(await runCli(["init", "--benchmark", "fixture", "--output", f.file, "--patch", f.patch], f.io)).toBe(2);
   expect(await readFile(f.file, "utf8")).toBe(original);
   expect(await runCli(["doctor", f.file, "--patch", f.patch], f.io)).toBe(0);
-  expect(JSON.parse(f.out.at(-1) ?? "").checks).toContainEqual(expect.objectContaining({ status: "not-checked", name: "model and dataset" }));
+  expect(JSON.parse(f.out.at(-1) ?? "").checks).toContainEqual(expect.objectContaining({ status: "not-checked", name: "model and task execution" }));
   expect(await readFile(f.events, "utf8")).toBe("");
   expect(await runCli(["run", f.file, "--patch", f.patch], f.io)).toBe(0);
   const run = f.out.at(-1);

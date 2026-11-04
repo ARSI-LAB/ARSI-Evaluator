@@ -18,7 +18,7 @@ Evaluator 导入内置插件时需要 AgentBundle SDK，因此 pnpm 会自动下
 
 ### doctor 通过后，为什么正式运行仍可能失败？
 
-`doctor` 不发送模型请求、不下载数据、不构建镜像，`not-checked` 也不是通过。`run --dry-run` 可以锁定来源并枚举任务，但仍不证明模型调用和任务执行成功；先限制样本实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
+`doctor` 不发送模型请求，但会执行临时下载和 Docker 构建探针，`not-checked` 也不是通过。`run --dry-run` 可以锁定来源并枚举任务，但仍不证明模型调用和任务执行成功；先限制样本实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
 
 ## 下载、容器与资源
 

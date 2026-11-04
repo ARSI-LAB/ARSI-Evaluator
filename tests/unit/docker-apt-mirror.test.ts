@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { aptMirrorInstructions } from "../../src/plugins/environments/docker-apt-mirror.js";
+import { aptSourceInstructions } from "../../src/adapters/containers/apt-sources.js";
 
 const execute = promisify(execFile);
 
@@ -20,7 +20,7 @@ async function withAptDirectory(run: (root: string, apply: (mirror: string) => P
     // Observe bootstrap ordering without accessing the machine's APT or trust store.
     await writeFile(join(root, "bin/apt-get"), '#!/bin/sh\ncat "$APT_TEST_ROOT/sources.list.d/ubuntu.sources" >> "$APT_TEST_ROOT/calls"\nprintf "%s\\n" "$*" >> "$APT_TEST_ROOT/calls"\nif [ "$1" = install ]; then touch "$APT_TEST_ROOT/ca.crt"; fi\n', { mode: 0o755 });
     await run(root, async mirror => {
-      const script = aptMirrorInstructions(new URL(mirror)).map(instruction => instruction.slice(4)).join("\n")
+      const script = aptSourceInstructions({ debian: String(mirror).replace(/\/$/u, "") + "/debian", debianSecurity: String(mirror).replace(/\/$/u, "") + "/debian-security", ubuntu: String(mirror).replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String(mirror).replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String(mirror).replace(/\/$/u, "") + "/ubuntu-ports" }).map(instruction => instruction.slice(4)).join("\n")
         .replaceAll("/etc/apt", quote(root))
         .replaceAll("/etc/ssl/certs/ca-certificates.crt", quote(join(root, "ca.crt")))
         .replaceAll("/var/lib/apt/lists", quote(join(root, "lists")));
@@ -32,7 +32,7 @@ async function withAptDirectory(run: (root: string, apply: (mirror: string) => P
 }
 
 test("HTTPS task mirrors bootstrap missing CA trust before switching sources", () => {
-  const instructions = aptMirrorInstructions(new URL("https://repo.huaweicloud.com"));
+  const instructions = aptSourceInstructions({ debian: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/debian", debianSecurity: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/debian-security", ubuntu: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu-ports" });
   expect(instructions).toHaveLength(3);
   expect(instructions[0]).toContain('Acquire::Retries "3";');
   expect(instructions[1]).toContain("[ ! -s /etc/ssl/certs/ca-certificates.crt ]");
@@ -43,9 +43,9 @@ test("HTTPS task mirrors bootstrap missing CA trust before switching sources", (
 });
 
 test("HTTP mirrors and custom ports retain the selected origin", () => {
-  expect(aptMirrorInstructions(new URL("http://mirror.example:8080"))).toHaveLength(2);
-  expect(aptMirrorInstructions(new URL("http://mirror.example:8080"))[1]).toContain("http://mirror.example:8080/debian");
-  expect(aptMirrorInstructions(new URL("https://mirror.example:8443"))[1]).toContain("http://mirror.example:8443/debian");
+  expect(aptSourceInstructions({ debian: String("http://mirror.example:8080").replace(/\/$/u, "") + "/debian", debianSecurity: String("http://mirror.example:8080").replace(/\/$/u, "") + "/debian-security", ubuntu: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu-ports" })).toHaveLength(2);
+  expect(aptSourceInstructions({ debian: String("http://mirror.example:8080").replace(/\/$/u, "") + "/debian", debianSecurity: String("http://mirror.example:8080").replace(/\/$/u, "") + "/debian-security", ubuntu: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("http://mirror.example:8080").replace(/\/$/u, "") + "/ubuntu-ports" })[1]).toContain("http://mirror.example:8080/debian");
+  expect(aptSourceInstructions({ debian: String("https://mirror.example:8443").replace(/\/$/u, "") + "/debian", debianSecurity: String("https://mirror.example:8443").replace(/\/$/u, "") + "/debian-security", ubuntu: String("https://mirror.example:8443").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("https://mirror.example:8443").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("https://mirror.example:8443").replace(/\/$/u, "") + "/ubuntu-ports" })[1]).toContain("http://mirror.example:8443/debian");
 });
 
 test.skipIf(process.platform === "win32")("APT defaults preserve explicit image options and leave room for task overrides", async () => {

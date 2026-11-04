@@ -5,13 +5,23 @@ import { runDockerCommand } from "../../plugins/environments/docker.js";
 import { removeDockerContainer } from "../../plugins/environments/docker-cleanup.js";
 import { recoverDockerAttempts } from "../../plugins/environments/docker-recovery.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
+import { createDockerImagePuller } from "../../plugins/environments/docker-image-pull.js";
+import { PlatformCapabilityDetector } from "../../plugins/environments/docker-platform.js";
 
 /** Resolve the local immutable image ID before a task becomes ready. */
-export async function materializeVerifierImage(docker: string, image: string, signal: AbortSignal): Promise<string> {
-  const inspect = () => runDockerCommand(docker, ["image", "inspect", image, "--format", "{{.Id}}"], { signal });
+export async function materializeVerifierImage(docker: string, image: string, signal: AbortSignal,
+  network?: import("../../core/contracts/network.js").NetworkAccess): Promise<string> {
+  const command: import("../../plugins/environments/docker-runtime.js").DockerCommand = (args, options) => runDockerCommand(docker, args, options);
+  let reference = image;
+  const inspect = () => runDockerCommand(docker, ["image", "inspect", reference, "--format", "{{.Id}}"], { signal });
   let result;
   try { result = await inspect(); }
-  catch { signal.throwIfAborted(); await runDockerCommand(docker, ["pull", image], { signal }); result = await inspect(); }
+  catch {
+    signal.throwIfAborted();
+    const platform = await new PlatformCapabilityDetector(command).nativePlatform(signal);
+    reference = (await createDockerImagePuller(command, { network })(image, platform, signal)).reference;
+    result = await inspect();
+  }
   const id = result.stdout.trim();
   if (!/^sha256:[a-f0-9]{64}$/u.test(id)) throw new Error("Invalid verifier image identity");
   return id;

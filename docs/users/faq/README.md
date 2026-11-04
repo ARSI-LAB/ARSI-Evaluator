@@ -18,7 +18,7 @@ Evaluator needs the AgentBundle SDK when importing built-in plugins, so pnpm dow
 
 ### Why can execution fail after doctor passes?
 
-`doctor` sends no model requests, downloads no data, and builds no images. `not-checked` is not a pass. `run --dry-run` locks sources and enumerates tasks, without proving model/task execution works. Run a small sample; see [quick start](../quick-start.md#4-check-then-run).
+`doctor` sends no model requests, but performs temporary downloads and Docker build probes. `not-checked` is not a pass. `run --dry-run` locks sources and enumerates tasks, without proving model/task execution works. Run a small sample; see [quick start](../quick-start.md#4-check-then-run).
 
 ## Downloads, Containers, and Resources
 

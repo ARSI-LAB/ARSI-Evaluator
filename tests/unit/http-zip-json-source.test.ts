@@ -1,3 +1,4 @@
+import "../fixtures/network-fetch.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { crc32, deflateRawSync } from "node:zlib";
 import { afterEach, expect, test, vi } from "vitest";
 import { HttpZipJsonSource } from "../../src/adapters/datasets/sources/http/zip-json-source.js";
 import { readZipJson } from "../../src/adapters/datasets/input-readers/zip-json.js";
+import { LocalZipJsonSource } from "../../src/adapters/datasets/sources/local/zip-json-source.js";
 
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllGlobals(); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -28,6 +30,19 @@ function zip(content: string, name: string, method = 8): Buffer {
   end.writeUInt32LE(local.length + filename.length + payload.length, 16);
   return Buffer.concat([local, filename, payload, central, filename, end]);
 }
+
+test("local ZIP data is read without a request and file changes are rejected", async () => {
+  const directory = await root(), path = join(directory, "drop.zip");
+  await writeFile(path, zip('{"passage":{"qa_pairs":[]}}', "drop_dataset/dev.json"));
+  const fetch = vi.fn(async () => { throw new Error("Unexpected remote request"); }); vi.stubGlobal("fetch", fetch);
+  const source = new LocalZipJsonSource(path, { test: "drop_dataset/dev.json" });
+  const signal = new AbortController().signal;
+  const lock = await source.resolve(null, signal);
+  expect((await source.rows(lock, "test", signal)[Symbol.asyncIterator]().next()).value).toEqual({ passage: { qa_pairs: [] } });
+  expect(fetch).not.toHaveBeenCalled();
+  await writeFile(path, zip('{"changed":true}', "drop_dataset/dev.json"));
+  await expect(source.rows(lock, "test", signal)[Symbol.asyncIterator]().next()).rejects.toThrow(/changed/);
+});
 
 test.each([0, 8])("locked ZIP JSON source resumes from verified cache (method %s)", async method => {
   const directory = await root();

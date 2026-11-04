@@ -68,6 +68,7 @@ Set the YAML model variables in the current terminal as shown in [quick start](q
 | Option | Meaning |
 | --- | --- |
 | `configPath` | Experiment YAML; relative to the working directory at call time |
+| `networkConfigPath` | Network YAML, relative to the working directory; defaults to `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` |
 | `patchPath` | Explicit plugin patch, relative to the current directory; no automatic scan beside configuration |
 | `overrides` | CLI-equivalent `model` `overrides`: `model`, `endpoint`, `apiKey`, `apiKeyEnv` |
 | `env` | YAML variable expansion and model authentication; defaults to `process.env`; an explicit object replaces it without merging |
@@ -77,7 +78,21 @@ Set the YAML model variables in the current terminal as shown in [quick start](q
 
 YAML bundle/output paths remain relative to the YAML directory; patch module paths are relative to the patch file. The SDK does not call `process.chdir()` or modify `process.env`. One instance supports concurrent calls, each with separate registry/resources. Choose appropriate output paths and avoid concurrent resume calls on the same run.
 
-`env` supplies configuration input only. Docker, proxy, and Ray gateway variables still come from the actual process or execution node. Ray Jobs tokens, for example, continue to use `tokenEnv` or secure files without changing process globals through `env`.
+`env` supplies variables for both experiment and network YAML without automatically merging process.env. Docker daemon and Ray gateway variables still come from the actual process or execution node. Ray Jobs tokens, for example, continue to use `tokenEnv` or secure files without changing process globals through `env`.
+
+## Networks and Local Datasets
+
+```js
+const result = await evaluator.run({
+  configPath: "/path/to/experiment.yaml",
+  networkConfigPath: "/path/to/network.yaml",
+  env: { ...process.env, DOWNLOAD_PROXY: "http://proxy.example:8080" },
+});
+```
+
+The network YAML can reference `proxy: { https: "${DOWNLOAD_PROXY}" }`. Empty files use default sources and direct connections. Omit `networkConfigPath` to use the user default file, created on first use. See [network configuration](network.md).
+
+Set local data paths in the experiment YAML: `benchmark.config.localPath` for record datasets, or `benchmark.config.source: { kind: local, path: ./dataset }` for Harbor tasks. Paths are relative to the experiment YAML for both SDK and CLI. See [local datasets](local-datasets.md). The SDK does not expose `doctor()` or `inspect()`; use `ember-evaluator doctor experiment.yaml` for diagnosis.
 
 ## Cancellation, Resume, and Reports
 

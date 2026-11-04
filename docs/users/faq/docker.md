@@ -6,24 +6,13 @@
 
 Run shell commands from the Evaluator root and merge YAML fragments into actual experiments.
 
-## Configure a Proxy Only for Image Pulls
+## Configure image sources and proxies
 
-Set an HTTP/HTTPS proxy in Docker environment options:
+Pass a separate network YAML with `--network network.yaml`. `docker.pull.method` selects native Docker or Registry API downloads, `docker.mirrors` rewrites the registry for explicit acquisition, and `docker.benchmarks` can select ModelScope/Hugging Face image archives.
 
-```yaml
-environment:
-  name: docker
-  config:
-    pullProxy: ${DOCKER_PULL_PROXY}
-```
+Registry API acquisition supports the built-in Node.js client and user-installed skopeo. Configure proxies under `proxy`, with separate `host`, `daemon`, `build`, and `runtime` overrides. See [network configuration](../network.md) for credentials, node addresses and fixed archive paths.
 
-For local Clash, a variable may contain http://127.0.0.1:7890. Evaluator's process accesses it; inside containers/Ray, loopback means that container/node, so supply a reachable address. HTTP/HTTPS and URL proxy authentication are supported, not SOCKS.
-
-For missing images, Evaluator proxies registry authentication/manifests/layers, verifies digests/platforms, archives them, and docker-loads into the current daemon. Registry credentials come from the execution user's config.json/credHelpers/credsStore; public images allow anonymous access. Temporary compressed/expanded/archive files require disk and are cleaned on failure/cancellation. Verified local images/source credentials can be reused.
-
-This applies only to framework-fetched task/verification/sidecar/runtime images. It changes no system/daemon proxies and enters no Dockerfile args, containers, data downloads, or model requests. Docker/BuildKit still fetches `FROM` images. Existing system/Docker globals retain their effect. Proxy credentials are redacted; use variable references for restoration from saved configuration.
-
-Omission retains native docker pull. Explicit proxy failures remain errors without direct/alternate fallback. HTTPS uses normal TLS; loopback registries may use HTTP. Remote insecure-registry/certificate-bypass daemon settings are not inherited automatically.
+`FROM` and external `COPY --from` use Docker's built-in builder and the daemon's active network settings. `doctor experiment.yaml` generates application guidance without changing files or restarting Docker. After an administrator applies it, use `doctor experiment.yaml` to check explicit acquisition, `FROM`, and `RUN` independently.
 
 ## Identify and Inspect Task Images
 

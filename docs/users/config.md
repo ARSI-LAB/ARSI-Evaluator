@@ -117,7 +117,7 @@ Whole-task/phase clocks run simultaneously; the first expiration stops execution
 
 Old `benchmark.config.defaults.verifyTimeoutSeconds` is removed; use `run.verifyTimeoutSeconds`, without automatic migration/compatibility. Update Ray coordinator, workers, and Jobs packages together to preserve phase settings.
 
-Docker `environment.config.pullProxy` configures HTTP/HTTPS image-fetch proxies separately from builds, containers, and models. See [Docker proxies](faq/docker.md#configure-a-proxy-only-for-image-pulls).
+Configure download sources, proxies and image acquisition with a separate [network YAML](network.md), selected by `--network`.
 
 Pi/SimpleAgent and built-in judges with explicit OpenAI Chat Completions `base_url` send `services.<service>.maxTokens` only when configured. Omission sends neither `max_tokens` nor `max_completion_tokens`; the API decides. SDK model budgets still manage local context without hidden output caps. Registered providers retain SDK protocol defaults; external agents retain their own mechanisms.
 
@@ -267,7 +267,7 @@ scheduler:
 
 benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. These commands and doctor accept explicit --patch.
 
-doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It sends no model requests/downloads/builds/cluster starts. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
+doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It performs temporary downloads and Docker build probes without sending model requests or executing tasks. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
 
 --dry-run resolves sources, checks caches, downloads as needed, and enumerates selected IDs; its side effects differ from doctor.
 
@@ -279,6 +279,6 @@ Plugin authors: see [profile publication](../development/benchmarks.en.md#publis
 
 ## Network Failure Recovery
 
-`ember retry --run <run-id>` creates attempts for current network failures in the original run. Valid zeros, ordinary phase timeouts, and non-network errors are ineligible. Network operations retry within their own bounds rather than whole tasks; each manual request may add one eligible attempt. Removed `run.taskRetry` must be deleted from old YAML. Ray Jobs connects the original gateway through separate `deployment`, not a Scheduler plugin. See [network recovery](network-retry.md).
+`ember-evaluator retry --run <run-id>` creates attempts for current network failures in the original run. Valid zeros, ordinary phase timeouts, and non-network errors are ineligible. Network operations retry within their own bounds rather than whole tasks; each manual request may add one eligible attempt. Removed `run.taskRetry` must be deleted from old YAML. Ray Jobs connects the original gateway through separate `deployment`, not a Scheduler plugin. See [network recovery](network-retry.md).
 
 [User guide](README.md) · [Quick start](quick-start.md)

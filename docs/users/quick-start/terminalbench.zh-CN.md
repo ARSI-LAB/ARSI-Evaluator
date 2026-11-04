@@ -10,7 +10,7 @@
 
 先按[源码安装](../installation.zh-CN.md#直接安装)配置 GitHub 读取权限并安装、构建 Evaluator。AgentBundle SDK 会自动下载和构建，无需手动克隆。
 
-以下命令在 Evaluator 仓库根目录执行，使用安装时注册的 `ember-evaluator` 命令。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
+按安装指南注册 `ember-evaluator` 后，在 Evaluator 仓库根目录执行以下命令，以便读取仓库中的 Playbook。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
 
 ```bash
 docker version
@@ -30,7 +30,7 @@ ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-`doctor` 不调用模型、不下载任务、不拉取镜像；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
+`doctor` 不调用模型，会读取任务归档样本并执行下载和镜像探针；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run

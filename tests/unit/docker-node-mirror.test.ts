@@ -1,9 +1,14 @@
+import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
+import { networkDocument } from "../../src/config/network.js";
+import { createDockerImagePuller } from "../../src/plugins/environments/docker-image-pull.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { DockerRuntime, PINNED_NODE_IMAGE, type DockerCommand } from "../../src/plugins/environments/docker-runtime.js";
 
 afterEach(() => vi.unstubAllEnvs());
+const runtimeWithMirror = (command: DockerCommand, platform: "linux/amd64" | "linux/arm64" = "linux/amd64") => new DockerRuntime(command, PINNED_NODE_IMAGE, platform,
+  createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ version: 1, docker: { mirrors: { "docker.io": origin } } }, {})) }));
 const origin = "https://fixture.mirror.swr.myhuaweicloud.com";
 const mirrored = `${new URL(origin).host}/library/${PINNED_NODE_IMAGE}`;
 const digest = "sha256:" + "a".repeat(64);
@@ -25,13 +30,14 @@ test.each(["linux/amd64", "linux/arm64"] as const)("shares a Huawei Node pull an
     const ref = args[4];
     if (ref === PINNED_NODE_IMAGE || (ref === mirrored && !pulled)) throw new Error("No such image");
     if (ref?.includes(":solve-runtime-") && !calls.some(call => call[0] === "build")) throw new Error("No such image");
+    if (args.at(-1)?.includes(".Os")) return { stdout: JSON.stringify([digest, "linux", platform.split("/")[1]]), stderr: "" };
     return { stdout: args.at(-1)?.includes("RepoDigests") ? `${digest} ${JSON.stringify([mirrored])}` : digest, stderr: "" };
   };
-  const runtime = new DockerRuntime(command, PINNED_NODE_IMAGE, platform);
+  const runtime = runtimeWithMirror(command, platform);
   await Promise.all([runtime.prepare("base", [], AbortSignal.timeout(5000)), runtime.prepare("base", [], AbortSignal.timeout(5000))]);
   expect(runtime.nodeImage).toBe(mirrored);
   expect(calls.filter(args => args[0] === "pull")).toEqual([["pull", "--platform", platform, mirrored]]);
-  expect(calls.filter(args => args[0] === "info")).toHaveLength(1);
+  expect(calls.filter(args => args[0] === "info")).toHaveLength(0);
   expect(calls.filter(args => args[0] === "build")).toHaveLength(1);
 });
 
@@ -44,19 +50,18 @@ test("keeps a locally cached official Node image without contacting a registry",
 });
 
 test("an explicit mirror still rejects the wrong digest without falling back", async () => {
-  vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", origin);
   const calls: string[][] = [];
   const command: DockerCommand = async args => {
-    if (args.at(-1) === "{{json .Config.User}}") return { stdout: JSON.stringify(""), stderr: "" };
     calls.push(args);
     if (args[4] === PINNED_NODE_IMAGE) throw new Error("No such image");
+    if (args.at(-1)?.includes(".Os")) return { stdout: JSON.stringify([digest, "linux", "amd64"]), stderr: "" };
     return { stdout: `${digest} ["registry.test/node@sha256:${"b".repeat(64)}"]`, stderr: "" };
   };
-  await expect(new DockerRuntime(command).nodeImageDigest(AbortSignal.timeout(5000))).rejects.toThrow("expected sha256:");
-  expect(calls).toHaveLength(2);
+  await expect(runtimeWithMirror(command).nodeImageDigest(AbortSignal.timeout(5000))).rejects.toThrow("expected sha256:");
+  expect(calls.some(args => args[0] === "pull")).toBe(false);
 });
 
-test("fails immediately on a Huawei pull error without retrying Docker Hub", async () => {
+test("fails on a configured mirror pull error without retrying Docker Hub", async () => {
   vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", "");
   const pulls: string[] = [];
   const command: DockerCommand = async args => {
@@ -65,6 +70,6 @@ test("fails immediately on a Huawei pull error without retrying Docker Hub", asy
     if (args[0] === "pull") { pulls.push(args.at(-1)!); throw new Error("registry timeout"); }
     throw new Error("No such image");
   };
-  await expect(new DockerRuntime(command).nodeImageDigest(AbortSignal.timeout(5000))).rejects.toThrow("registry timeout");
+  await expect(runtimeWithMirror(command).nodeImageDigest(AbortSignal.timeout(5000))).rejects.toThrow("registry timeout");
   expect(pulls).toEqual([mirrored]);
 });

@@ -1,0 +1,253 @@
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { createHash, randomUUID } from "node:crypto";
+import { parse } from "yaml";
+import type { AptSources, ImageAcquisition, RegistryImageAcquisition, NetworkDocument, NetworkLocation, NetworkProxy, NetworkSettings } from "../core/contracts/network.js";
+import type { JsonValue } from "../core/contracts/task.js";
+
+const locations: NetworkLocation[] = ["host", "daemon", "build", "runtime"];
+const aptKeys = ["debian", "debianSecurity", "ubuntu", "ubuntuSecurity", "ubuntuPorts"] as const;
+function record(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} must be an object`);
+  const result = value as Record<string, unknown>;
+  for (const key of Object.keys(result)) if (!keys.includes(key)) throw new TypeError(`Unknown ${label} field: ${key}`);
+  return result;
+}
+function url(value: unknown, label: string, credentials = false, origin = false): string {
+  if (typeof value !== "string" || !value || /[\s\u0000-\u001f\\"'`$|]/u.test(value)) throw new TypeError(`${label} must be an HTTP(S) URL`);
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new TypeError(`${label} must be an HTTP(S) URL`); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.search || parsed.hash ||
+    (!credentials && (parsed.username || parsed.password)) || (origin && parsed.pathname !== "/"))
+    throw new TypeError(`${label} must be a ${credentials ? "" : "credential-free "}HTTP(S) ${origin ? "origin" : "URL"}`);
+  if (credentials) { try { decodeURIComponent(parsed.username); decodeURIComponent(parsed.password); } catch { throw new TypeError(`${label} has invalid credentials`); } }
+  return origin && !credentials ? parsed.origin : parsed.href.replace(/\/$/u, "");
+}
+function list(value: unknown, label: string, urls = false): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item || /[\s\u0000-\u001f]/u.test(item)))
+    throw new TypeError(`${label} must be an array of nonempty strings`);
+  return [...new Set((value as string[]).map(item => urls ? url(item, label) : item))];
+}
+function proxy(value: unknown, defaults: NetworkProxy, label: string, overrides = false): NetworkProxy {
+  if (value === null) return { http: null, https: null, noProxy: [] };
+  const raw = record(value, overrides ? ["http", "https", "noProxy", "overrides"] : ["http", "https", "noProxy"], label);
+  const entry = (key: "http" | "https") => raw[key] === undefined ? defaults[key] : raw[key] === null ? null : url(raw[key], `${label}.${key}`, true, true);
+  return { http: entry("http"), https: entry("https"), noProxy: raw.noProxy === undefined ? [...defaults.noProxy] : list(raw.noProxy, `${label}.noProxy`) };
+}
+
+function acquisition(value: unknown, label: string, archive: false): RegistryImageAcquisition;
+function acquisition(value: unknown, label: string, archive: true): ImageAcquisition;
+function acquisition(value: unknown, label: string, archive: boolean): ImageAcquisition {
+  const raw = record(value, ["method", "backend", "skopeoExecutable", "provider", "baseUrl"], label);
+  const method = raw.method ?? "docker";
+  if (method === "docker") { record(value, ["method"], label); return { method }; }
+  if (method === "registry-client") {
+    record(value, ["method", "backend", "skopeoExecutable"], label);
+    const backend = raw.backend ?? "nodejs";
+    if (backend !== "nodejs" && backend !== "skopeo") throw new TypeError(`${label}.backend must be nodejs or skopeo`);
+    const executable = raw.skopeoExecutable ?? "skopeo";
+    if (typeof executable !== "string" || !executable.trim() || /[\u0000-\u001f]/u.test(executable))
+      throw new TypeError(`${label}.skopeoExecutable must be an executable name or path`);
+    if (backend !== "skopeo" && raw.skopeoExecutable !== undefined) throw new TypeError(`${label}.skopeoExecutable requires backend skopeo`);
+    return { method, backend, skopeoExecutable: executable };
+  }
+  if (archive && method === "archive") {
+    record(value, ["method", "provider", "baseUrl"], label);
+    if (raw.provider !== "modelscope" && raw.provider !== "huggingface") throw new TypeError(`${label}.provider must be modelscope or huggingface`);
+    return { method, provider: raw.provider, baseUrl: url(raw.baseUrl, `${label}.baseUrl`) };
+  }
+  throw new TypeError(`${label}.method must be docker, registry-client${archive ? " or archive" : ""}`);
+}
+
+function dictionary(value: unknown, label: string): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} must be an object`);
+  return value as Record<string, unknown>;
+}
+
+export function parseNetworkSettings(value: unknown): NetworkSettings {
+  const raw = record(value, ["version", "proxy", "sources", "docker", "git"], "network");
+  if (raw.version !== undefined && raw.version !== 1) throw new TypeError("network.version must be 1");
+  const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true);
+  const proxyObject = record(raw.proxy === null ? undefined : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
+  const overrides = record(proxyObject.overrides, locations, "network.proxy.overrides");
+  const resolvedProxy = Object.fromEntries(locations.map(location => [location, proxy(overrides[location], common, `network.proxy.overrides.${location}`)])) as Record<NetworkLocation, NetworkProxy>;
+  const sources = record(raw.sources, ["huggingface", "python", "npm", "node", "github", "apt"], "network.sources");
+  const python = record(sources.python, ["index", "extraIndexes", "interpreter"], "network.sources.python");
+  const npm = record(sources.npm, ["registry"], "network.sources.npm");
+  const node = record(sources.node, ["dist"], "network.sources.node");
+  const github = record(sources.github, ["api", "raw", "repository"], "network.sources.github");
+  const apt = record(sources.apt, aptKeys, "network.sources.apt");
+  const docker = record(raw.docker, ["pull", "mirrors", "benchmarks", "buildNetwork"], "network.docker");
+  const pull = acquisition(docker.pull, "network.docker.pull", false);
+  const mirrors = Object.fromEntries(Object.entries(dictionary(docker.mirrors, "network.docker.mirrors")).map(([registry, value]) => {
+    if (!/^(?:[a-z0-9]+(?:[.-][a-z0-9]+)*|\[[a-f0-9:]+\])(?::[0-9]+)?$/u.test(registry)) throw new TypeError("network.docker.mirrors keys must be registry hosts");
+    const origin = url(value, `network.docker.mirrors.${registry}`, false, true);
+    if (!origin.startsWith("https:") && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname))
+      throw new TypeError("Docker mirrors require HTTPS except for loopback registries");
+    return [registry, origin];
+  }));
+  const benchmarks = Object.fromEntries(Object.entries(dictionary(docker.benchmarks, "network.docker.benchmarks")).map(([name, value]) => {
+    if (!name.trim() || /[\s\u0000-\u001f]/u.test(name)) throw new TypeError("Docker benchmark names must be nonempty identifiers");
+    return [name, acquisition(value, `network.docker.benchmarks.${name}`, true)];
+  }));
+  const buildNetwork = docker.buildNetwork ?? "default";
+  if (buildNetwork !== "default" && buildNetwork !== "host") throw new TypeError("network.docker.buildNetwork must be default or host");
+  const git = record(raw.git, ["ssh"], "network.git");
+  const ssh = record(git.ssh, ["route"], "network.git.ssh");
+  const route = ssh.route ?? "direct";
+  if (route !== "direct" && route !== "proxy") throw new TypeError("network.git.ssh.route must be direct or proxy");
+  if (route === "proxy" && !resolvedProxy.host.https && !resolvedProxy.host.http)
+    throw new TypeError("Git SSH proxy requires a host HTTP(S) proxy");
+  return {
+    version: 1, proxy: resolvedProxy,
+    sources: {
+      huggingface: url(sources.huggingface ?? "https://huggingface.co", "network.sources.huggingface", false, true),
+      python: { index: url(python.index ?? "https://pypi.org/simple", "network.sources.python.index"),
+        extraIndexes: python.extraIndexes === undefined ? [] : list(python.extraIndexes, "network.sources.python.extraIndexes", true),
+        interpreter: python.interpreter === undefined || python.interpreter === null ? null : url(python.interpreter, "network.sources.python.interpreter") },
+      npm: { registry: url(npm.registry ?? "https://registry.npmjs.org", "network.sources.npm.registry") },
+      node: { dist: url(node.dist ?? "https://nodejs.org/dist", "network.sources.node.dist") },
+      github: { api: url(github.api ?? "https://api.github.com", "network.sources.github.api"),
+        raw: url(github.raw ?? "https://raw.githubusercontent.com", "network.sources.github.raw"),
+        repository: url(github.repository ?? "https://github.com", "network.sources.github.repository") },
+      apt: Object.fromEntries(aptKeys.flatMap(key => apt[key] === undefined ? [] : [[key, url(apt[key], `network.sources.apt.${key}`)]])) as AptSources,
+    },
+    docker: { pull, mirrors, benchmarks, buildNetwork },
+    git: { ssh: { route } },
+  };
+}
+
+function expand(value: unknown, env: NodeJS.ProcessEnv): JsonValue {
+  if (typeof value === "string") return value.replace(/\$\{([A-Za-z_]\w*)\}/gu, (_match, key: string) => {
+    if (env[key] === undefined) throw new TypeError(`Network configuration references missing environment variable ${key}`);
+    return env[key];
+  });
+  if (value === null || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(item => expand(item, env));
+  if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, env)]));
+  throw new TypeError("Network configuration must contain JSON-compatible values");
+}
+
+/** Existing environment support lives here, not in individual downloaders. */
+export function networkEnvironmentTemplate(env: NodeJS.ProcessEnv): JsonValue {
+  const apt = env.EVALUATOR_DEBIAN_MIRROR;
+  const reference = (names: string[]) => { const key = names.find(name => env[name]); return key ? `\${${key}}` : null; };
+  return { version: 1, proxy: { http: reference(["HTTP_PROXY", "http_proxy"]), https: reference(["HTTPS_PROXY", "https_proxy"]),
+    noProxy: (env.NO_PROXY || env.no_proxy || "").split(",").map(item => item.trim()).filter(Boolean) },
+    sources: { huggingface: env.HF_ENDPOINT || "https://huggingface.co",
+      python: { index: env.UV_DEFAULT_INDEX || env.UV_INDEX_URL || env.PIP_INDEX_URL || "https://pypi.org/simple",
+        extraIndexes: (env.PIP_EXTRA_INDEX_URL || "").split(/\s+/u).filter(Boolean), interpreter: env.UV_PYTHON_INSTALL_MIRROR || null },
+      npm: { registry: env.NPM_CONFIG_REGISTRY || env.npm_config_registry || "https://registry.npmjs.org" },
+      node: { dist: env.EVALUATOR_NODE_MIRROR || "https://nodejs.org/dist" },
+      github: { repository: env.EVALUATOR_GITHUB_MIRROR || "https://github.com" },
+      apt: apt ? { debian: `${apt.replace(/\/$/u, "")}/debian`, debianSecurity: `${apt.replace(/\/$/u, "")}/debian-security`,
+        ubuntu: `${apt.replace(/\/$/u, "")}/ubuntu`, ubuntuSecurity: `${apt.replace(/\/$/u, "")}/ubuntu`, ubuntuPorts: `${apt.replace(/\/$/u, "")}/ubuntu-ports` } : {} },
+    docker: { buildNetwork: env.EVALUATOR_DOCKER_BUILD_NETWORK || "default" } };
+}
+
+export function networkDocument(template: JsonValue, env: NodeJS.ProcessEnv, origin = "template"): NetworkDocument {
+  const settings = parseNetworkSettings(expand(template, env));
+  return { template: structuredClone(template), settings, origin,
+    digest: createHash("sha256").update(JSON.stringify(redactNetwork(settings))).digest("hex") };
+}
+export async function loadNetworkConfig(path?: string, env: NodeJS.ProcessEnv = process.env): Promise<NetworkDocument> {
+  const selected = path ?? env.EVALUATOR_NETWORK_CONFIG;
+  const absolute = selected ? resolve(selected) : defaultNetworkConfigPath();
+  let content: string;
+  try { content = await readFile(absolute, "utf8"); }
+  catch (error) {
+    if (selected || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    await mkdir(dirname(absolute), { recursive: true });
+    const temporary = join(dirname(absolute), `.network-${randomUUID()}.yaml`);
+    try {
+      await writeFile(temporary, await readFile(new URL("../../playbook/network/official.yaml", import.meta.url)), { flag: "wx", mode: 0o600 });
+      // Publish complete bytes without replacing an existing user file, including concurrent first runs.
+      try { await link(temporary, absolute); }
+      catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
+    } finally { await rm(temporary, { force: true }); }
+    content = await readFile(absolute, "utf8");
+  }
+  const template: unknown = parse(content, { maxAliasCount: 50, uniqueKeys: true }) ?? {};
+  // Validate/clone before saving a template; do not expand its references on another node.
+  return networkDocument(expand(template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined })), env, absolute);
+}
+
+export function defaultNetworkConfigPath(): string {
+  return join(homedir(), ".ember-evaluator", "network.yaml");
+}
+
+export function recommendedNetworkConfigPath(): string {
+  return fileURLToPath(new URL("../../playbook/network/mirrors.yaml", import.meta.url));
+}
+
+export function redactNetwork(value: unknown): JsonValue {
+  if (typeof value === "string") {
+    try { const parsed = new URL(value); if (parsed.username || parsed.password) { parsed.username = "redacted"; parsed.password = "redacted"; return parsed.href; } } catch { /* Non-URL configuration strings are public. */ }
+    return value;
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (Array.isArray(value)) return value.map(redactNetwork);
+  if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactNetwork(item)]));
+  return null;
+}
+
+export function networkSecrets(document: NetworkDocument | undefined): string[] {
+  if (!document) return [];
+  return Object.values(document.settings.proxy).flatMap(proxy => [proxy.http, proxy.https]).flatMap(value => {
+    if (!value) return [];
+    const url = new URL(value);
+    return url.username || url.password ? [value, url.href, decodeURIComponent(url.password)].filter(Boolean) : [];
+  });
+}
+
+/** Preserve variable references, never persist literal proxy credentials for reuse on another node. */
+export function storedNetworkTemplate(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map(storedNetworkTemplate);
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, storedNetworkTemplate(item)]));
+  if (typeof value !== "string") return value;
+  try {
+    const parsed = new URL(value);
+    const credential = (part: string) => {
+      const decoded = decodeURIComponent(part);
+      return decoded !== "" && !/^(?:\$\{[A-Za-z_]\w*\})+$/u.test(decoded);
+    };
+    if (credential(parsed.username) || credential(parsed.password)) return "[runtime-provided]";
+  } catch { /* Whole-value environment references are kept verbatim. */ }
+  return value;
+}
+
+export function restoreNetworkTemplate(value: unknown, env: NodeJS.ProcessEnv): NetworkDocument {
+  if (JSON.stringify(value).includes("[runtime-provided]"))
+    throw new TypeError("Saved network configuration used literal credentials; supply --network with environment references");
+  // Validate JSON shape before allowing a transport to supply a template.
+  const template = expand(value, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined }));
+  return networkDocument(template, env, "saved network template");
+}
+
+export function networkSnapshot(network: import("../core/contracts/network.js").NetworkAccess, benchmarkName: string): import("../core/contracts/network.js").NetworkSnapshot {
+  const snapshot = { benchmarkName, template: storedNetworkTemplate(network.document.template) };
+  validateNetworkSnapshot(snapshot);
+  return snapshot;
+}
+
+/** Transport validation does not resolve variables on the sending machine. */
+export function validateNetworkSnapshot(value: unknown): asserts value is import("../core/contracts/network.js").NetworkSnapshot {
+  const raw = record(value, ["benchmarkName", "template"], "network snapshot");
+  if (typeof raw.benchmarkName !== "string" || !raw.benchmarkName.trim()) throw new TypeError("Network snapshot benchmarkName is missing");
+  const template = expand(raw.template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined }));
+  if (JSON.stringify(template).includes("[runtime-provided]") || JSON.stringify(storedNetworkTemplate(template)) !== JSON.stringify(template))
+    throw new TypeError("Ray network credentials must use node-local environment references");
+  const visit = (value: JsonValue): void => {
+    if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value)) {
+      if (key === "skopeoExecutable" && typeof item === "string" && /[/\\]/u.test(item) && !/^\$\{[A-Za-z_]\w*\}$/u.test(item))
+        throw new TypeError("Ray skopeoExecutable paths must use a node-local environment reference");
+      visit(item);
+    }
+    else if (Array.isArray(value)) value.forEach(visit);
+  };
+  visit(template);
+}

@@ -37,6 +37,8 @@ export type ReportingFactoryContext = {
 export type FactoryContext<R extends PluginRole> = R extends "metrics" | "reporter" ? ReportingFactoryContext : PluginFactoryContext;
 
 export type PluginFactoryContext = {
+  benchmarkName?: string;
+  network?: import("./contracts/network.js").NetworkAccess;
   /** Bootstrap always supplies this; omitted by historical SDK callers means NPU. */
   hardware?: HardwareKind;
   phaseTimeouts?: PhaseTimeoutOverrides;

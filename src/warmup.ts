@@ -1,3 +1,4 @@
+import { networkSecrets } from "./config/network.js";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { bootstrap, bootstrapBenchmark, createPluginRuntime } from "./bootstrap.js";
@@ -106,7 +107,7 @@ export async function warmupSelectedTasks(components: RunComponents, config: Loa
   return summary();
 }
 
-export async function executeWarmup(options: { configPath: string; patchPath?: string; overrides?: CliOverrides;
+export async function executeWarmup(options: { configPath: string; networkConfigPath?: string; patchPath?: string; overrides?: CliOverrides;
   taskIds?: string[]; signal: AbortSignal; onProgress?: ProgressListener;
   execution?: { config: LoadedConfig; registry: PluginRegistry };
   onLoaded?: (config: LoadedConfig) => void }): Promise<WarmupSummary> {
@@ -127,9 +128,10 @@ export async function executeWarmup(options: { configPath: string; patchPath?: s
     progress({ phase: "config", message: `Loading warmup configuration ${file}` });
     registry = options.execution?.registry ?? await openPluginRegistry(options.patchPath);
     const config = options.execution?.config ?? await loadConfig(file, options.overrides ?? {}, process.env, { registry, allowMissingAuth: true,
+      ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(options.patchPath ? { patchPath: options.patchPath } : {}) });
     options.onLoaded?.(config);
-    secrets.push(...Object.values(config.auths).map(auth => auth.value).filter(Boolean));
+    secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value).filter(Boolean));
     if (options.taskIds) {
       const run = { ...config.experiment.run, taskIds: options.taskIds, maxTasks: null };
       delete run.sampling; delete run.offset;

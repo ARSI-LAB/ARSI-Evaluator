@@ -29,7 +29,7 @@ export function parseWorkload(value: unknown): AgentXWorkload {
   rejectUnknown(v, ["schemaVersion", "kind", "variant", "mode", "concurrency", "durationSeconds", "seed", "dataset", "loader", "revision", "sha256", "tracePath", "traceCount"], "AgentX workload");
   if (v.schemaVersion !== 1 || v.kind !== "agentx" || !["256k", "full"].includes(String(v.variant)) ||
     !["standard", "smoke", "replay"].includes(String(v.mode)) || !Number.isSafeInteger(v.seed) ||
-    !/^[a-f0-9]{40}$/u.test(String(v.revision)) || !/^[a-f0-9]{64}$/u.test(String(v.sha256)) ||
+    !/^(?:[a-f0-9]{40}|local:[a-f0-9]{64})$/u.test(String(v.revision)) || !/^[a-f0-9]{64}$/u.test(String(v.sha256)) ||
     v.tracePath !== "input/traces.jsonl") throw new TypeError("Invalid AgentX workload identity");
   const variant = v.variant === "full" ? "full" : "256k";
   const dataset = `semianalysisai/cc-traces-weka-062126${variant === "256k" ? "-256k" : ""}`;

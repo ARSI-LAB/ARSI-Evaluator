@@ -1,3 +1,4 @@
+import "../fixtures/network-fetch.js";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

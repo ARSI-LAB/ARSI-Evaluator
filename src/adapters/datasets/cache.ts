@@ -65,7 +65,7 @@ export class DatasetCache {
     listeners: Set<ActivityListener>;
     latest?: ComponentActivity;
   }>>();
-  constructor(root: string) {
+  constructor(root: string, private readonly network?: import("../../core/contracts/network.js").NetworkAccess) {
     this.root = resolve(root);
   }
   objectPath(digest: string): string {
@@ -100,6 +100,7 @@ export class DatasetCache {
     headers?: Record<string, string>,
   ): Promise<{ path: string; sha256: string }> {
     signal.throwIfAborted();
+    url = this.network?.sourceUrl(url) ?? url;
     let flights = this.flights.get(signal);
     if (!flights) {
       flights = new Map();
@@ -179,7 +180,7 @@ export class DatasetCache {
       // Never expose URL credentials, query parameters or private dataset paths.
       const host = new URL(url).hostname;
       datasetActivity(`Connecting to data source ${host}; waiting for a response`);
-      const response = await fetch(url, { signal: requestSignal, ...(headers === undefined ? {} : { headers }) });
+      const response = await (this.network?.fetch ?? fetch)(url, { signal: requestSignal, ...(headers === undefined ? {} : { headers }) });
       resetIdle();
       if (!response.ok || !response.body) {
         await response.body?.cancel();
@@ -204,7 +205,7 @@ export class DatasetCache {
           if (performance.now() - last >= 200) { report(); last = performance.now(); }
         }
         report();
-        datasetActivity(`Download completed; validating ${byteSize(bytes)} of data`);
+        datasetActivity(`Download completed; ${expected === null ? "saving" : "validating"} ${byteSize(bytes)} of data`);
         await handle.sync();
       } finally {
         await handle.close();
@@ -219,7 +220,7 @@ export class DatasetCache {
       if (expected !== null && expected !== sha256) throw new Error("Locked dataset checksum mismatch");
       const path = this.objectPath(sha256);
       await rename(temporary, path);
-      datasetActivity(`Data cached; SHA-256 validation passed (${byteSize(bytes)})`);
+      datasetActivity(expected === null ? `Data cached (${byteSize(bytes)})` : `Data cached; SHA-256 validation passed (${byteSize(bytes)})`);
       return { path, sha256 };
     } catch (cause) {
       if (idle.signal.aborted && !signal.aborted) throw idle.signal.reason;

@@ -1,13 +1,11 @@
 FROM docker:28.5.1-cli AS docker-cli
 FROM node:24.22.1-bookworm-slim
 
-ARG APT_MIRROR=https://repo.huaweicloud.com
-ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
 ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
 ENV HOME=/toolbox-home
 ENV PNPM_HOME=/toolbox-home/.local/share/pnpm \
-    EVALUATOR_DOCKER_CLI=/usr/local/bin/docker \
-    EVALUATOR_DOCKER_BUILD_NETWORK=host
+    EVALUATOR_DOCKER_CLI=/usr/local/bin/docker
 ENV PATH="/toolbox-home/.local/share/pnpm/bin:/toolbox-home/.local/share/pnpm:/opt/evaluator-toolbox:${PATH}"
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -18,8 +16,7 @@ COPY docker-host.sh /opt/evaluator-toolbox/docker
 COPY entrypoint.sh /opt/evaluator-toolbox/entrypoint.sh
 RUN chmod +x /opt/evaluator-toolbox/docker /opt/evaluator-toolbox/entrypoint.sh
 
-RUN sed -i "s@http://deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends bash git openssh-client ca-certificates python3 python3-venv python3-dev build-essential && \
     rm -rf /var/lib/apt/lists/* && \
     npm install --global pnpm@11.22.0 --ignore-scripts
