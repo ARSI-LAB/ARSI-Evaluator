@@ -1,0 +1,3 @@
+- insert:
+    - id: tracer-plugin
+      name: ./dist/index.js

@@ -12,3 +12,9 @@ coverage/
 .zcodeignore
 __pycache__/
 .evaluator-build.lock/
+plugins/tracer/trace.db*
+plugins/tracer/spool/
+plugins/tracer/collector.log
+plugins/tracer/collector.log.*
+plugins/tracer/tracer.pid
+plugins/tracer/collector/tests/

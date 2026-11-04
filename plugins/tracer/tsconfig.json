@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "ember-evaluator": ["../../src/index.ts"]
+    },
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["./dist", "./node_modules"]
+}

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>轨迹分析面板</title>
+<!-- VIEW_CSS -->
+</head>
+<body>
+<header>
+  <h1>轨迹分析面板</h1>
+  <button id="openDir" data-online title="打开目录对话框，选择任意位置的 run 目录并导入">打开目录</button>
+  <button id="snapBtn" data-online title="下载单文件 HTML 快照：内联当前 epoch 的结论、指标与全部轨迹，离线可打开，可归档分享">导出快照</button>
+  <label class="epochpick">epoch
+    <select id="epochSel"><option value="">全部</option></select>
+  </label>
+  <div id="meta"></div>
+</header>
+<main>
+  <div id="tabs">
+    <button class="tab on" data-t="traj">轨迹</button>
+    <button class="tab" data-t="met">指标</button>
+    <button class="tab" data-t="fb">反馈</button>
+  </div>
+  <div id="panes">
+    <section id="pane-traj" class="pane on">
+      <div id="bar">
+        <div class="barrow"><div id="views">
+          <button class="viewbtn on" data-v="waterfall" title="按原始步骤顺序，含工具返回等所有事件">瀑布图</button>
+          <button class="viewbtn" data-v="agg" title="同一函数名合并成一行：次数 / 累计耗时 / 活跃区间，按累计耗时排序">聚合视图</button>
+          <button class="viewbtn" data-v="exp" title="每次调用单独一行，按 ancestry 父子关系缩进">展开视图</button>
+        </div>
+        <input id="filter" placeholder="过滤：函数名 / tool / 状态（含 error）">
+        <span id="fcount"></span>
+        <button id="toggleRail">轨迹列表</button>
+        <button id="toggleDet">详情</button>
+        </div>
+        <div class="barrow"><div id="summary"></div></div>
+      </div>
+      <div id="body">
+        <div id="trajrail">
+          <div class="railhead">轨迹列表 <span class="cnt" id="railCount">0</span></div>
+          <div id="trajList"></div>
+          <div id="railfoot"><button id="analyze">AI 分析</button></div>
+        </div>
+        <div id="splitRail" class="splitter"></div>
+        <div id="wfNames"><div class="wf-head"></div><div class="wf-scroll" id="namesBody"></div></div>
+        <div id="splitName" class="splitter"></div>
+        <div id="wfTracks"><div id="axis"></div><div class="wf-scroll" id="tracksBody"></div>
+          <div id="wftools">
+            <button id="expandAll">全部展开</button>
+            <button id="collapseAll">全部折叠</button>
+            <button id="resetZoom">重置视图</button>
+            <span id="zwin" class="hint"></span>
+            <button id="helpbtn" class="copybtn" title="查看全部快捷键（?）">? 快捷键</button>
+          </div>
+        </div>
+        <div id="splitDet" class="splitter"></div>
+        <div id="details"><div class="emptyfull"><div class="empty"><b>未选择步骤</b><span>点击左侧条形查看该步骤的指标与工具调用</span></div></div></div>
+      </div>
+      <div id="profview"></div>
+    </section>
+    <section id="pane-met" class="pane"><div id="metpane" class="metrics"></div></section>
+    <section id="pane-fb" class="pane"><div id="fbpane" class="metrics"></div></section>
+  </div>
+</main>
+<aside id="aiback"></aside><aside id="aipanel"><div class="aihead"><b>AI 分析</b><button id="aiClose">关闭</button></div><div id="aibody"><div class="note">点击「AI 分析」查看结论文本</div></div></aside>
+<div id="helpbox"><div class="hc"><h3>快捷键</h3><table>
+  <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>上一步 / 下一步</td></tr>
+  <tr><td><kbd>Enter</kbd></td><td>展开或折叠当前步骤的子节点</td></tr>
+  <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>跳到第一 / 最后一个步骤</td></tr>
+  <tr><td><kbd>e</kbd></td><td>只看失败步骤</td></tr>
+  <tr><td><kbd>/</kbd></td><td>聚焦过滤框</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+滚轮</td><td>以光标位置缩放时间轴</td></tr>
+  <tr><td>拖拽</td><td>平移时间轴（双击复位）</td></tr>
+  <tr><td><kbd>W</kbd> <kbd>S</kbd> <kbd>A</kbd> <kbd>D</kbd></td><td>缩放 / 平移时间轴</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>关闭浮层 / 清除过滤与选中</td></tr>
+</table><div class="hint" style="margin-top:8px">按 Esc 或点击空白处关闭</div></div></div>
+<!-- VIEW_JS -->
+</body>
+</html>
