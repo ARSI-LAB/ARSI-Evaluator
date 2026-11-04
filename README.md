@@ -74,8 +74,11 @@ export MODEL_NAME="your-model-id"
 export MODEL_ENDPOINT="https://your-model-service.example/v1"
 export MODEL_API_KEY="your-api-key"
 
+ember-evaluator inspect playbook/gsm8k/gsm8k-quick-start.yaml
 ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 ```
+
+Use `inspect` to validate the configuration file and review the expanded experiment and network settings before executing `run`.
 
 The model service must support OpenAI Chat Completions and tool calling. When the run finishes, open `report.md` in the result directory shown in the logs. See the [two-question quick start](docs/users/quick-start.md) for PowerShell commands and more details.
 
@@ -92,13 +95,16 @@ See [Playbook examples](playbook/README.md) for other benchmarks and combination
 For Docker workloads, prepare images and dependencies ahead of time with the same YAML you will use for evaluation. For example, after setting the model variables above, run:
 
 ```bash
+ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
+Use `doctor` to diagnose configuration, required tools, and network access, then resolve failed checks before warming up. Diagnostics perform temporary downloads and Docker build probes without calling models or executing tasks; `not-checked` means a check has not been performed.
+
 Warmup follows the YAML task selection and prepares task, verification, and sidecar images, Evaluator runtimes, and Solver installation layers. It makes no model calls and creates no evaluation results or reports; a model API key is not required, but model names, endpoints, and other configuration must still be valid. Unlike `run --dry-run`, it pulls or builds images.
 
-Keep the configuration, task versions, platform, and Docker daemon the same to reuse the cache. Local Docker, Ray Client, and Ray Jobs are supported; Ray prepares images on the assigned execution nodes. If using `--task-ids-file` or `--patch`, pass the same options to both commands. See [image warmup](docs/users/usage.md#warm-images-without-evaluation) for details and prerequisites.
+Keep the configuration, task versions, platform, and Docker daemon the same to reuse the cache. Local Docker, Ray Client, and Ray Jobs are supported; Ray prepares images on the assigned execution nodes. If using `--patch`, load the same patch in all three commands; if using `--task-ids-file`, pass the same option to `warmup` and `run`. See [image warmup](docs/users/usage.md#warm-images-without-evaluation) for details and prerequisites.
 
 ## 📖 Guides
 
@@ -112,6 +118,16 @@ Choose a guide for your task:
 - **Troubleshoot**: [Downloads, logs, and truncated model output](docs/users/faq/README.md); [error codes](docs/users/reference/errors.md); [retrying network failures](docs/users/network-retry.md).
 
 See the [user documentation index](docs/users/README.md) for all guides, benchmarks, and execution limitations.
+
+## 🧪 Supported Benchmarks
+
+Benchmarks fall into three categories by evaluation purpose:
+
+| Category | Supported benchmarks | What is measured and where to start |
+| --- | --- | --- |
+| Model + agent harness capability evaluation | GSM8K, MATH-500, MGSM, MMLU, MMLU-Pro, GPQA, DROP, TriviaQA, SimpleQA, HealthBench, HumanEval, DeepSWE, SWE-bench Verified, Terminal-Bench, WorkBuddy, OfficeQA Pro V2, and custom Harbor task packages | Math, knowledge questions, code generation and changes, terminal, office, web, and security tasks, with accuracy or scores computed under each benchmark's rules. See [benchmarks and requirements](docs/users/README.md#supported-benchmarks) and [Playbook configurations](playbook/README.md). |
+| Inference engine performance evaluation (AgentX) | AgentX (`agentx`) | Replay agent traces to measure throughput, TTFT, ITL, and request latency, optionally collecting vLLM and Ascend NPU metrics. See the [AgentX guide](docs/users/benchmarks/agentx.md). |
+| Operator performance evaluation (kernel) | kernel (`kernel`) | Verify existing candidate kernels on Ascend NPU, measure reference and candidate execution times and speedup, and optionally collect detailed hardware performance metrics. Runs locally and serially without model calls. See the [kernel guide](docs/users/benchmarks/kernel-npu.md) and [example configuration](playbook/kernel/existing.yaml). |
 
 ## 📊 Evaluation Results
 
