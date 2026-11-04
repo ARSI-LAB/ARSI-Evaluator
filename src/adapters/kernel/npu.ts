@@ -6,6 +6,7 @@ import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
 import { expectRecord } from "../../config/schema.js";
 import { VerificationError } from "../../core/errors/verification-error.js";
 import { readProcess } from "../verifiers/process.js";
+import { KernelExecError } from "./cli.js";
 import { kernelProfile } from "./profile.js";
 
 /** NPU-only execution. Benchmark owns task identity and verdict validation. */
@@ -13,7 +14,7 @@ export class NpuKernelBackend implements KernelBackend {
   constructor(private readonly config: KernelExecutionOptions) {}
 
   environment(): Record<string, string> {
-    return { ASCEND_RT_VISIBLE_DEVICES: String(this.config.device), KERNEL_NPU_DEVICE: String(this.config.device) };
+    return { ASCEND_VISIBLE_DEVICES: String(this.config.device), ASCEND_RT_VISIBLE_DEVICES: String(this.config.device), KERNEL_NPU_DEVICE: "0" };
   }
 
   runtimeFiles(): { path: string; origin: string }[] {
@@ -22,11 +23,16 @@ export class NpuKernelBackend implements KernelBackend {
       { path: "runtime/precision.py", origin: asset("precision.py") },
       { path: "runtime/timing.py", origin: this.config.kernelRoot === undefined ? asset("timing.py")
         : join(this.config.kernelRoot, "src/kernel_agent/kernel_agent/triton_kernel_agent/opt_worker_component/benchmarking/bench_kernel_util.py") },
-      { path: "runtime/msprof_replay.py", origin: asset("msprof_replay.py") },
+      ...["msprof_replay.py", "strict.py", "timing_evidence.py"].map(name => ({ path: `runtime/${name}`, origin: asset(name) })),
     ];
   }
 
   async execute(request: Record<string, unknown>, session: EnvironmentSession, signal: AbortSignal): Promise<unknown> {
+    if (request.operation === "profile") {
+      const profile: Record<string, unknown> = {};
+      await this.collectProfiling(request, session, signal, profile);
+      return profile;
+    }
     const handle = await session.start({ executable: this.config.python,
       args: ["runtime/precision.py", "--output", join(session.verifierOutputDir, "kernel-result.json")], cwd: session.workdir,
       env: {}, input: Buffer.from(JSON.stringify(request)) }, signal);
@@ -49,18 +55,28 @@ export class NpuKernelBackend implements KernelBackend {
     };
     try {
       const stem = "kernel-profile";
-      const result = await kernelProfile({
+      await kernelProfile({
         problem: join(session.workdir, String(request.problem)),
         kernel: join(session.workdir, String(request.candidate)),
         out: join(session.verifierOutputDir, `${stem}.json`), round: this.config.profiling.roundNum,
+        ...(this.config.profiling.collection === undefined ? {} : { collection: this.config.profiling.collection }),
+        seed: (request.seeds as number[])[0]!,
+        ...(this.config.profiling.warmup === undefined ? {} : { warmup: this.config.profiling.warmup }), caseId: String(request.caseId),
+        ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
+        ...(this.config.profiling.maxAttempts === undefined ? {} : { maxAttempts: this.config.profiling.maxAttempts }),
+        ...(this.config.profiling.attemptTimeoutSeconds === undefined ? {} : { attemptTimeoutSeconds: this.config.profiling.attemptTimeoutSeconds }),
+        ...(this.config.profiling.cacheEnabled === undefined ? {} : { cacheEnabled: this.config.profiling.cacheEnabled }),
+        ...(this.config.profiling.cacheDir === undefined ? {} : { cacheDir: this.config.profiling.cacheDir }),
         ...(this.config.profiling.msprofBin === undefined ? {} : { msprofBin: this.config.profiling.msprofBin }),
         ...(this.config.profiling.deviceName === undefined ? {} : { deviceName: this.config.profiling.deviceName }),
       }, { python: this.config.python, signal,
-        env: this.environment() });
-      if (result.error !== "") return fail(`msprof profiling failed: ${result.error}`);
+        env: this.environment() },
+        { session, atomDirectory: join(session.workdir, "runtime") });
       const raw = JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8"));
       value.profiling = prefixProfilingPaths(raw, `${stem}_profiling_root`);
     } catch (error) {
+      if (error instanceof KernelExecError) throw new VerificationError(error.message, { cleanup: "unconfirmed", protocol: "kernel-v1" });
+      signal.throwIfAborted();
       fail(`profiling orchestration failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

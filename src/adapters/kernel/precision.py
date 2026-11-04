@@ -146,6 +146,9 @@ def positive_measurement(value):
 
 def evaluate(request, profile_root=Path(".")):
     """返回正确性和相同范围的设备耗时；整个过程不访问模型服务。"""
+    if "contract" in request:
+        strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
+        return strict.evaluate(request, profile_root, globals())
     verify_hashes(request["hashes"])
     import torch
     import torch_npu  # noqa: F401
@@ -358,6 +361,10 @@ def main():
     result = {"schemaVersion": 1, "candidateSha256": request["candidateSha256"],
               "referenceKind": request["referenceKind"], "timingScope": "all-device-kernels",
               "referenceMs": None, "candidateMs": None, "speedup": None}
+    if "contract" in request:
+        strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
+        result["assessment"] = strict.new_assessment(request)
+        request["_assessment"] = result["assessment"]
     # 外部 profiler 的 print 写入诊断日志，不与结果通道混合。
     with output.with_suffix(".log").open("w") as log, native_output(log):
         try:
@@ -368,6 +375,15 @@ def main():
         except Exception as exc:
             traceback.print_exc()
             result.update(status="infrastructure_error", error=f"{type(exc).__name__}: {exc}"[:4000])
+            if "assessment" in result:
+                result["assessment"]["errorOwnership"] = "evaluation"
+    try:
+        verify_hashes(request["hashes"])
+    except Exception as exc:
+        result.update(status="infrastructure_error", error=f"Locked source validation failed: {exc}"[:4000],
+                      referenceMs=None, candidateMs=None, speedup=None)
+        if "assessment" in result:
+            result["assessment"]["errorOwnership"] = "evaluation"
     encoded = json.dumps(result, allow_nan=False)
     temp = output.with_suffix(".tmp")
     temp.write_text(encoded + "\n")

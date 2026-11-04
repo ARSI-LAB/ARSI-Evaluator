@@ -17,7 +17,7 @@ test.skipIf(!available)("NPU timing honors the selected device and never probes 
 
 test("NPU backend keeps device environment, packaged files and worker protocol", async () => {
   const backend = new NpuKernelBackend({ python: "fixture-python", device: 3, profiling: { enabled: false, roundNum: 1 } });
-  expect(backend.environment()).toEqual({ ASCEND_RT_VISIBLE_DEVICES: "3", KERNEL_NPU_DEVICE: "3" });
+  expect(backend.environment()).toEqual({ ASCEND_VISIBLE_DEVICES: "3", ASCEND_RT_VISIBLE_DEVICES: "3", KERNEL_NPU_DEVICE: "0" });
   await Promise.all(backend.runtimeFiles().map(file => access(file.origin)));
   const root = await mkdtemp(join(tmpdir(), "kernel-npu-"));
   const response = { status: "incorrect", error: "fixture mismatch" };

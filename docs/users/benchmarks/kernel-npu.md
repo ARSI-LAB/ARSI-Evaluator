@@ -2,7 +2,7 @@
 
 > English | [中文](./kernel-npu.zh-CN.md)
 
-`kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. With RSI, its `kernel` evaluator generates candidates then calls the same CLI. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
+`kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. RSI generates candidates through its Proposer and evaluates frozen artifacts through the full SDK. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
 
 ## Hardware Selection
 
@@ -54,78 +54,55 @@ Reference/candidate remain under `data/<manifest-relative-path>`; candidates are
 - Compare full nested tensor/list/tuple/dict/scalar outputs by default. Explicit `outputIndices` selects top-level list/tuple elements. For (tensor,tiling metadata...), `[0]` excludes non-computational metadata; retain all relevant multi-tensor indices.
 - Fixed seeds call candidates twice each. Compare shape/dtype/device/value and finite tensors/nested floats. Reference NaN/Inf invalidates evaluation; candidate NaN/Inf fails correctness. Separate input copies preserve strides.
 
-Source locks include SHA-256 for manifests, candidate/reference/dependencies, `precision.py`, `timing.py`, and `msprof_replay.py` (the msprof-attached operator replay). Changes require new runs; resume rejects them. Dependencies enter only after solving switches to verification; public Solver inputs exclude references.
+Source locks include SHA-256 for manifests, candidate/reference/dependencies, `precision.py`, `timing.py`, `strict.py`, `timing_evidence.py`, and `msprof_replay.py` (the msprof-attached operator replay). Changes require new runs; resume rejects them. Dependencies enter only after solving switches to verification; public Solver inputs exclude references.
+
+## Strict Task Contracts and Audited Timing
+
+A manifest task may provide `contract` with schemaVersion 1, caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor specifies shape, dtype (`float16`) and contiguous; output also specifies independent. Contracts are optional for existing manifests. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference/infrastructure failures remain invalid evaluations; candidate failures remain candidate failures.
+
+Strict timing uses schemaVersion 2 / `profiler-flow/v1` evidence and CPU-to-NPU flow associations to assign device kernels to profiler steps. Raw CSV Step Id values are retained, not rewritten or trusted as the sole association. The audit rejects incomplete/ambiguous evidence and excludes warmup steps. The reported iteration mean covers all device kernels, not host launch time. CSV and trace artifacts accompany timing results. Public SDK exports parse contracts, assessments and timing evidence, and audit each timing sample.
 
 ## Detailed Profiling
 
-Enable `benchmark.config.profiling.enabled` explicitly; default off retains correctness/timing. The original kernel semantics are ported: Python keeps only `msprof_replay.py`; TS manages collection, `msprof op`, retries/backoff, merging, ub_ratio, core utilization, L2 analysis, NPU specs/cache in `src/adapters/kernel/profile.ts` and protocols/kernel/msprof-csv.ts/msprof-analysis.ts/msprof-cache.ts. Source commit `f542552167fef844e10b865dc001e5c019f01ea5` is pinned. Only implementation language changes, not parser/cache/L2/retry rules.
+The NPU backend owns Python/msprof execution, device binding and cleanup. The benchmark owns task identity and verdict validation. Full evaluation (`operation: evaluate`, the default) can collect diagnostics after successful correctness/timing by enabling profiling. Independent `operation: profile` requires exactly one task, one seed, `profiling.enabled: true` and `cacheEnabled: false`; it skips precision/timing and returns a performance result with no candidate score.
 
 ```yaml
 benchmark:
   name: kernel
   config:
+    operation: profile
     manifest: ${KERNEL_MANIFEST}
     python: ${KERNEL_EVAL_PYTHON}
-    timeoutSeconds: 2100
+    device: 0
+    seeds: [42]
+    timeoutSeconds: 900
     profiling:
       enabled: true
+      collection: Default
+      warmup: 25
       attemptTimeoutSeconds: 300
       maxAttempts: 2
-      roundNum: 1
-      cacheEnabled: true
+      cacheEnabled: false
 run:
-  timeoutSeconds: 2160
+  timeoutSeconds: 960
 ```
 
-Merge this fragment into existing experiments; services are above. Optional `msprofBin` selects profiler path; omission retains executable/CANN search. Optional `deviceName` enters original spec lookup; omission passes None and preserves defaults.
+Merge this fragment into an existing experiment including the placeholder service above. `benchmark.config.device` selects one physical card: both visibility variables are set to that card and the worker uses logical device 0. Inherited multi-card visibility does not expand the allocation.
 
-`attemptTimeoutSeconds` defaults 300 and maps directly to per-command timeout. `maxAttempts` defaults 2, maps to `max_retries` including the first. `roundNum` defaults 1 and supplies rounds/metadata. Original functions decide retry/None behavior for missing files, timeout, parse, and other exceptions.
+Replay uses the unchanged `problem.get_inputs()` and fixed seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates; unconfirmed cleanup is an infrastructure failure. Per-attempt timeout defaults to 300 seconds and maxAttempts defaults to 2; the run timeout must exceed the benchmark timeout.
 
-`cacheEnabled` defaults true for this integration, using the original factory and hit/core/L2 behavior. false corresponds to `cache=None` and may omit fields. Optional `cacheDir` resolves against experiment YAML; omission uses original `default_msprof_cache`, preferring `KA_MSPROF_CACHE_DIR` then `~/.kernel_agent/msprof_cache` and respecting KA_MSPROF_CACHE_DISABLED=1. Explicit `cacheDir` directly constructs `MSProfCache`, bypassing factory disable logic. `metadata.cacheHit` records hits; original keys/reuse apply. Hits copy evidence into this attempt while returned `profile_dir` retains its original path.
+Two explicit collection protocols are supported:
 
-`benchmark.config.timeoutSeconds` bounds whole verification, including correctness/timing/profiling, not the original algorithm's internal budget. Defaults to `maxAttempts * attemptTimeoutSeconds + 300` when profiling, otherwise 300. Set `run.timeoutSeconds` larger. Retries/backoff add time; outer termination may leave incomplete results.
+- `PipeTimeline,Default` (default) requires PipeUtilization, L2Cache, ResourceConflictRatio CSVs and usable trace evidence.
+- `Default` requires the three CSVs and marks trace unavailable with reason `not-requested-by-default-protocol`. Pipeline overlap/bubble/Double Buffer analysis is null. It never claims the full protocol passed.
 
-Profile candidates only after correctness/standard timing. The adapter passes fixed-input `msprof_replay.py` to `msprof op`; TS spawns, extracts kernel names, merges tables, and exports. Profiler replay durations do not replace `referenceMs/candidateMs` or speedups.
+Missing required evidence produces unavailable diagnostics, distinct from incorrect candidate code. Raw CSV, trace when available, replay metadata and process logs are retained. Source identity, case, seed, warmup, collection and device context identify reusable evidence. Independent profile runs disable disk cache so the caller owns reuse; evaluation-mode caching is optional.
 
-Main `metrics` come directly from the original return object's metrics. This version uses `select="last"`, original merging, and three decimals. Evaluator adds no sorting/deduplication/sub-block association/missing-value filling/sign validation. Empty/zero/negative/string values remain. `metadata.outputPolicy="kernel-original-f542-v1"` and `upstreamCommit` identify source; raw `to_dict()` is `original-result.json` at metadata.originalResultJson.
-
-Raw CSV/trace/logs/objects remain evidence. Current paths require neither `raw-metrics.json` nor selectedRawDurations. Historical `kernel-last-block-v1` retains saved LAST/raw evidence; unmarked history uses its existing block scope without reinterpretation.
-
-| Data | Result location and units |
-| --- | --- |
-| AIC/AIV duration | aic_time(us)/aiv_time(us), µs |
-| Cube/Vector/Scalar/MTE pipelines | aic_*_ratio/aiv_*_ratio, original CSV ratio units |
-| L2 read/write hits | `aic_read_hit_rate(%)` and related columns, % |
-| L2 optimization analysis | `metrics[blockId].l2_cache_analysis`, original fields/conclusions |
-| Vector resource conflicts | `aiv_vec_stu_cflt_ratio` and original columns |
-| UB ratio | Original `ub_ratio`; capacity/missing handling follows source |
-| Vector core coverage | Conditional `core_utilization`, original denominator/result, not time utilization |
-| Raw evidence | CSV/trace/log `artifacts` relative to attempt `verifier/` |
-
-The parser also preserves these11 hardware fields:
-
-| Source | Fields | Units and meaning |
-| --- | --- | --- |
-| `ResourceConflictRatio.csv` | `aiv_vec_wait_ratio`, `aiv_mte2_wait_ratio`, `aiv_mte3_wait_ratio` | Original Vector/MTE2/MTE3 wait ratios |
-| `Memory.csv` | `aiv_gm_to_ub_bw(GB/s)`, `aiv_main_mem_read_bw(GB/s)` | Actual GB/s bandwidth |
-| `Memory.csv` | `GM_to_UB_bw_usage_rate(%)` | Bandwidth utilization, % |
-| `Memory.csv` | `read_main_memory_datas(KB)`, `write_main_memory_datas(KB)` | Original KB, not rewritten as KiB |
-| `Memory.csv` | `aiv_mte2_instructions` | Original MTE2 instruction count |
-| `ArithmeticUtilization.csv` | `aiv_vec_vf_ratio`, `aiv_vec_sfu_ratio` | Original arithmetic ratios, not FLOPS |
-
-Original parsing handles missing tables/columns, empty cells, and merges. No extra required tables, positive duration, or unique-identity conditions are added; successful empty metrics still mean collection succeeded. Inspect raw tables/logs; missing fields are not measured zeros.
-
-UB lookup/defaults use the original npu_specs/database; `deviceName` selects supported models. This version's `core_utilization` uses `ASCEND 950PR 128G` vector core counts regardless of deviceName. No additional UB/core overrides exist. Pipeline/wait/arithmetic ratios are not GB/s or FLOPS; explicit bandwidth fields retain GB/s.
-
-Original `L2CacheAnalyzer` runs under original conditions. Reports display returned conclusions/evidence without new states/missing reasons/rules. These are optimization hints, not proof of bottlenecks or improvement. See task JSON/original-result.json.
-
-Original None produces `profiling.status="failed"` and metadata.originalReturnedNone=true. Collection/wrapping exceptions stay local and do not change completed correctness/timing/scores/speedups. Incorrect candidates skip profiling; uncollected differs from failed.
-
-Results require finite JSON. NaN/Inf in original output become representable text only in wrapper copies, with field paths/originals in `metadata.serializationConversions` and raw evidence intact. Algorithms remain unchanged and no zeros are substituted. Existing strings, including `"inf"`, remain. Completed means original return success, not all fields present/finite numeric.
+Parsing retains ngo-agent-style block tables and last-row selection. Pipeline ratios, wait ratios, bandwidth and L2 fields retain source units. Missing pipe values remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Diagnostic roofline classifications are hints, not proof of speedup. Nonfinite values are serialized explicitly without substituting zero. Profiler durations do not replace referenceMs/candidateMs.
 
 ## Metrics and Results
 
-Type is quality. `passed/score` means output equivalence only:1 on pass,0 for candidate error/incorrectness. Correct slower candidates still pass with speedup<1.
+Evaluation type is quality; independent profiling uses performance. `passed/score` means output equivalence only:1 on pass,0 for candidate error/incorrectness. Correct slower candidates still pass with speedup<1.
 
 Timing now ships as `timing.bench_kernel_ms` without external source access. Optional `benchmark.config.kernelRoot` retains external timing compatibility, locking external modules and their behavior. Both reference/candidate use `triton_only=False` for all device kernels per call, excluding CPU launch overhead. Built-in timing retains real reductions such as ReduceSum and validates finite nonnegative CSV rows. Missing columns/data, incomplete records, or nonpositive totals invalidate timing. Warmup is excluded; units ms. Timing uses the final seed's input; separate shapes into tasks.
 
@@ -191,7 +168,7 @@ ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
   --out <bench.json> [--python /usr/bin/python3]
 # msprof attaches to replay for hardware metrics, with cache/retries and roofline classification
 ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
-  --out <profile.json> [--round 0] [--python /usr/bin/python3]
+  --out <profile.json> [--round 0] [--seed 42] [--warmup 25] [--python /usr/bin/python3]
 ```
 
 Each outputs one JSON object:
@@ -210,25 +187,6 @@ All atoms accept `--device <n>` for the logical NPU ID, default 0, equivalent to
 
 ## RSI Integration
 
-RSI calls measure/verify only, not atoms individually. Internally it always runs precision then bench and saves artifacts, matching original `verify`→benchmark semantics:
+RSI's `application.kernel` seals candidate source, `proposer.operator` generates changes, and `evaluator.operatorbench` invokes `Evaluator.run()` using the kernel benchmark and kernel-replay solver. RSI installs the pinned `ember-evaluator` SDK; it does not discover a sibling checkout or run a separate CLI bridge. Evaluation and independent profiling are separate SDK operations. Measurement evidence links to the saved native result and verifier artifacts; evidence availability and calibration label confidence separately from candidate generation.
 
-```ts
-import { defaultKernelStepRunner } from './target-adapter/kernel/exec.js';
-
-// Measure one candidate; skip timing if precision fails
-const r = await defaultKernelStepRunner('measure',
-  ['--workdir', workdir, '--problem-path', problem, '--kernel-file', kernel, '--kind', 'baseline'],
-  { repoRoot, python: '/usr/bin/python3', timeoutMs: 600_000 });
-// Returns { kind, time_ms, error, failure_class, failure_key }
-// Saves beside the kernel: <stem>_precision.json, <stem>_bench.json, and input/output timing records
-
-// Verify round artifacts: locate round{N}_output_kernel.py and its ancestor problem.py
-await defaultKernelStepRunner('verify',
-  ['--repo-root', repoRoot, '--workdir', workdir, '--round', '3'],
-  { repoRoot, python: '/usr/bin/python3', timeoutMs: 600_000 });
-// Pass: verify.json under <repoRoot>/rsi_runs/r3/verify/; failure: business error (exit 1)
-```
-
-`--kind`: `baseline` records input timing; `candidate` records round{N}_output artifacts. Failed verify/missing kernel is a business failure; `failure_class` distinguishes no_new_kernel/numeric/runtime/env.
-
-RSI resolves execution through the command prefix configured by the installed RSI version, falling back to the sibling `../ember-evaluator/dist/cli.js`. Consult that RSI version for configuration details. RSI `python` forwards as --python. Subprocess contract: success exit 0/stdout one JSON; business errors exit 1/stderr text; environment faults exit 2/130. describe/read-slot/apply/restore/reflect/artifacts/render remain RSI-native without Evaluator subprocesses.
+The SDK owns runtime assets, dependencies and prepare/build. Use the SDK package exports for contract and timing validation. An installed-consumer test can prove packaging and software integration without proving NPU correctness or performance; those require a real device run.

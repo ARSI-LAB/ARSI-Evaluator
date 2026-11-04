@@ -225,6 +225,7 @@ async function reclaimDeadWriter(directory: string): Promise<void> {
 }
 
 export class LocalRunStore implements RunStore {
+  constructor(private readonly runIndexDirectory?: string) {}
   private directory: string | null = null;
   private run: RunManifest | null = null;
   private token: string | null = null;
@@ -291,7 +292,7 @@ export class LocalRunStore implements RunStore {
         await atomicWrite(join(directory, "config.yaml"), serialized(safe));
         await atomicWrite(join(directory, "manifest.json"), serialized(manifest));
         this.run = structuredClone(manifest);
-        await registerRunLocation(manifest.runId, directory);
+        await registerRunLocation(manifest.runId, directory, this.runIndexDirectory);
       } catch (error) {
         await this.release();
         throw error;

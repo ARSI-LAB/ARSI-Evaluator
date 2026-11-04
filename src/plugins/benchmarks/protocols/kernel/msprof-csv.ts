@@ -52,14 +52,14 @@ async function readTable(profDir: string, name: string): Promise<Record<string, 
   return rows.map(cells => Object.fromEntries(header.map((key, i) => [key, cells[i] ?? ""])));
 }
 
-/** 单元格定型：空 → null；可解析数值 → number；其余 → string。 */
+/** 单元格定型：空/非数值 → null；有限数值 → number；原始 CSV 仍完整归档。 */
 function coerce(raw: unknown): unknown {
   if (raw === undefined || raw === null || raw === "") return null;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
     if (trimmed === "") return null;
     if (Number.isFinite(Number(trimmed)) && trimmed !== "") return Number(trimmed);
-    return raw;
+    return null;
   }
   return raw;
 }
@@ -114,7 +114,7 @@ export async function parseMsprofMetricsTable(profDir: string): Promise<MetricRo
   // 只留白名单列；整列全空说明该表对这类算子不适用（例如 vector 算子无 cube 数据），丢弃。
   const kept = MSPROF_METRIC_COLUMNS.filter(name => name === "block_id" ||
     rows.some(row => row[name] !== undefined && row[name] !== null));
-  rows = rows.map(row => Object.fromEntries(kept.map(name => [name, row[name] ?? null]))) as MetricRow[];
+  rows = rows.map(row => Object.fromEntries(kept.map(name => [name, name === "block_id" ? String(row[name]) : row[name] ?? null]))) as MetricRow[];
   // LAST 策略：多行留最后一行。
   return rows.length <= 1 ? rows : [rows[rows.length - 1]!];
 }

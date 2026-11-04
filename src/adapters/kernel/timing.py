@@ -55,7 +55,7 @@ def device_synchronize():
 
 # ============ NPU Profiler计时 ============
 def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                        triton_only=False):
+                        triton_only=False, audit=None):
     """
     NPU: 使用torch_npu.profiler采集kernel_details.csv
     返回: 平均kernel执行时间(ms)
@@ -89,8 +89,15 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     print(f"[bench_kernel] NPU Profiler: {prof_dir_rel}")
 
     total = warmup + active
+    options = {}
+    activities = [torch_npu.profiler.ProfilerActivity.NPU]
+    if audit is not None:
+        # Capture every step, then explicitly exclude our warmup steps during reduction.
+        options['schedule'] = torch_npu.profiler.schedule(wait=0, warmup=0, active=total, repeat=1)
+        # CPU records provide ProfilerStep ranges; only device kernel durations enter the mean.
+        activities.append(torch_npu.profiler.ProfilerActivity.CPU)
     with torch_npu.profiler.profile(
-            activities=[torch_npu.profiler.ProfilerActivity.NPU],
+            activities=activities,
             on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(dir_name=prof_dir_rel),
             record_shapes=False,
             profile_memory=False,
@@ -98,13 +105,20 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
             with_flops=False,
             with_modules=False,
             experimental_config=experimental_config,
+        **options,
     ) as prof:
         for _ in builtins.range(total):
             fn()
             device_synchronize()
+            if audit is not None:
+                prof.step()
 
-    # 从kernel_details.csv采集结果
-    if triton_only:
+    # Strict callers require explicit flow association; no equal-row-count fallback.
+    if audit is not None:
+        from timing_evidence import collect_flow_timing
+        audit.update(collect_flow_timing(prof_dir, warmup, active))
+        time_cost_ms = audit['meanMs']
+    elif triton_only:
         time_cost_ms = _collect_npu_prof_triton_only(prof_dir, warmup, active)
     else:
         time_cost_ms = _collect_npu_prof_result(prof_dir, warmup, active)
@@ -208,14 +222,14 @@ def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
 
 
 def bench_kernel(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                 triton_only=False):
+                 triton_only=False, audit=None):
     """NPU profiler duration in ms; triton_only excludes framework kernels."""
     if not torch.npu.is_available():
         raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
     torch.npu.set_device(_logical_npu_device_id())
     return _bench_npu_profiler(fn, warmup=warmup, active=active,
                                prof_dir=prof_dir, keep_res=keep_res,
-                               triton_only=triton_only)
+                               triton_only=triton_only, audit=audit)
 
 
 def bench_kernel_ms(fn, **kwargs):

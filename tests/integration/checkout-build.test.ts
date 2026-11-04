@@ -12,6 +12,11 @@ async function fixture(): Promise<string> {
   for (const dir of ["src", "scripts", "dist", "bin", "src/adapters/ray/python", "src/adapters/ray/runtime", "src/adapters/verifiers/python", "src/adapters/harness/pi", "src/adapters/harness/dsh/assets", "src/adapters/harness/deepagents/assets", "src/adapters/harness/dify/assets", "src/adapters/harness/jiuwenswarm/assets", "src/adapters/agentbundle/assets", "src/plugins/benchmarks/profiles"]) await mkdir(join(root, dir), { recursive: true });
   await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
   await writeFile(join(root, "package-lock.json"), JSON.stringify({ packages: { "": {} } }));
+  await cp(new URL("../../src/plugins/benchmarks/definitions/scoring/", import.meta.url), join(root, "src/plugins/benchmarks/definitions/scoring"), { recursive: true });
+  await cp(new URL("../../src/adapters/verifiers/officeqa/", import.meta.url), join(root, "src/adapters/verifiers/officeqa"), { recursive: true });
+  await mkdir(join(root, "src/adapters/kernel"), { recursive: true });
+  for (const name of ["precision.py", "timing.py", "msprof_replay.py", "strict.py", "timing_evidence.py"])
+    await writeFile(join(root, "src/adapters/kernel", name), "# packaged worker fixture\n");
   await writeFile(join(root, "src/cli.ts"), "fixture");
   await writeFile(join(root, "src/plugins/benchmarks/profiles/fixture.yaml"), "id: fixture\n");
   await writeFile(join(root, "src/adapters/harness/dify/assets/runner.mjs"), "export {};\n");
@@ -36,6 +41,8 @@ if (process.argv[2] === "build") {
   if (process.env.FIXTURE_BUILD_FAIL) process.exit(7);
   await mkdir("dist/adapters/harness/pi", { recursive: true });
   await mkdir("dist/core/errors", { recursive: true });
+  await mkdir("dist/adapters/net", { recursive: true });
+  await writeFile("dist/adapters/net/env-proxy.js", "export {};\\n");
   for (const name of ["classify", "network-failure", "evaluator-error", "registry"])
     await writeFile("dist/core/errors/" + name + ".js", "export {};\\n");
   await writeFile("dist/core/diagnostics.js", "export {};\\n");

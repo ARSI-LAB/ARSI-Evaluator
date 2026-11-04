@@ -40,7 +40,7 @@ export type Command = (
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
-  | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; device: number; python?: string }
+  | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; seed: number; warmup: number; device: number; python?: string }
   | { kind: "kernel-precision"; problem: string; kernel: string; out: string; seeds: number[]; device: number; python?: string }
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }

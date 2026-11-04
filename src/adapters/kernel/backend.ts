@@ -1,12 +1,13 @@
 import type { EnvironmentSession } from "../../core/contracts/environment.js";
 import type { HardwareKind } from "../../core/contracts/hardware.js";
+import type { KernelProfileArgs } from "./profile.js";
 import { NpuKernelBackend } from "./npu.js";
 
 export type KernelExecutionOptions = {
   python: string;
   device: number;
   kernelRoot?: string;
-  profiling: { enabled: boolean; roundNum: number; msprofBin?: string; deviceName?: string };
+  profiling: Pick<KernelProfileArgs, "collection" | "warmup" | "attemptTimeoutSeconds" | "maxAttempts" | "cacheEnabled" | "cacheDir" | "msprofBin" | "deviceName"> & { enabled: boolean; roundNum: number };
 };
 
 /** Hardware execution only; the benchmark owns task identity and verdicts. */

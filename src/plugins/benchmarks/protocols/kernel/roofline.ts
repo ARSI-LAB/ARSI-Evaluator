@@ -35,11 +35,11 @@ const AIV_RATIO_KEYS: readonly (readonly [pipe: string, key: string])[] = [
 ];
 
 export interface RooflineResult {
-  scalar_rate: number;
-  vec_rate: number;
-  mte2_rate: number;
-  mte3_rate: number;
-  efficiency_rate: number;
+  scalar_rate: number | null;
+  vec_rate: number | null;
+  mte2_rate: number | null;
+  mte3_rate: number | null;
+  efficiency_rate: number | null;
   at_roofline: boolean;
   bottleneck: string;
   warnings: string[];
@@ -83,8 +83,8 @@ export function analyzeRoofline(
   if (blocks.length === 0) {
     warnings.push('Empty msprof_metrics');
     return {
-      scalar_rate: 0, vec_rate: 0, mte2_rate: 0, mte3_rate: 0,
-      efficiency_rate: 0, at_roofline: false, bottleneck: 'no',
+      scalar_rate: null, vec_rate: null, mte2_rate: null, mte3_rate: null,
+      efficiency_rate: null, at_roofline: false, bottleneck: 'no',
       warnings, msprof_metrics: {},
     };
   }
@@ -110,34 +110,31 @@ export function analyzeRoofline(
     );
   }
 
-  // AIV 管道利用率（取最大 vec_time 行）；缺键记 0 并告警。
+  // AIV 管道利用率（取最大 vec_time 行）；缺键保留不可用并告警。
   const ratios = new Map<string, number>();
   const missing: string[] = [];
   for (const [pipe, key] of AIV_RATIO_KEYS) {
     const value = analysisRow[key];
     if (value === null || value === undefined) {
       missing.push(key);
-      ratios.set(pipe, 0);
       continue;
     }
     const parsed = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(parsed)) {
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
       missing.push(key);
-      ratios.set(pipe, 0);
       continue;
     }
     ratios.set(pipe, parsed);
   }
   if (missing.length > 0) warnings.push(`Missing AIV pipe metrics: ${missing.join(', ')}`);
 
-  let efficiency = 0;
-  for (const value of ratios.values()) efficiency = Math.max(efficiency, value);
+  const efficiency = ratios.size ? Math.max(...ratios.values()) : null;
 
   return {
-    scalar_rate: ratios.get('scalar') ?? 0,
-    vec_rate: ratios.get('vec') ?? 0,
-    mte2_rate: ratios.get('mte2') ?? 0,
-    mte3_rate: ratios.get('mte3') ?? 0,
+    scalar_rate: ratios.get('scalar') ?? null,
+    vec_rate: ratios.get('vec') ?? null,
+    mte2_rate: ratios.get('mte2') ?? null,
+    mte3_rate: ratios.get('mte3') ?? null,
     efficiency_rate: efficiency,
     // 管道利用率 % 与绝对 SOL 不可比：恒 false，不产伪判停依据。
     at_roofline: false,

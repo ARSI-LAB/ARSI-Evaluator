@@ -2,7 +2,7 @@
 
 > [English](./kernel-npu.md) | 中文
 
-`kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI 的 `kernel` 评测器启动优化流程生成新候选，再调用同一 Evaluator CLI；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
+`kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI Proposer 生成新候选，再通过完整 SDK 评测冻结产物；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
 
 ## 硬件选择
 
@@ -56,76 +56,53 @@ ember-evaluator run playbook/kernel/existing.yaml
 
 来源锁包含清单、候选、参考、依赖、验证入口 `precision.py`、计时模块 `timing.py`、采集目标 `msprof_replay.py`（被 msprof 进程 attach 跑算子的重放脚本）的 SHA-256。变化后必须新建 run；续跑会拒绝变化。依赖文件在 Solver 结束并切换到验证阶段后注入，Solver 的公开输入不包含参考内容。
 
+## 严格任务契约与计时审计
+
+Manifest 的任务可提供 `contract`，包含 schemaVersion 1、caseId、输入张量契约、输出张量契约与 inputUnmodified。张量声明 shape、dtype（`float16`）、contiguous；输出还声明 independent。旧清单可以省略契约。严格评测对每个 seed 执行两次，检查入口、形状、类型、设备、布局、输出独立性、输入不变性与数值一致性。结果保存契约摘要、逐项检查、有效协议和实际环境。参考实现或基础设施失败属于无效评测，候选失败属于候选问题。
+
+严格计时保存 schemaVersion 2 / `profiler-flow/v1` 证据，通过 CPU→NPU flow 关联分配设备 kernel 到 profiler Step。原 CSV Step Id 原样保留，不改写，也不作为唯一关联依据。审计拒绝缺失或歧义证据并排除 warmup Step。均值包含每次调用的全部设备 kernel，不包含主机发射时延；CSV 与 trace 随结果保存。公共 SDK 导出契约、assessment、计时证据解析和逐样本审计接口。
+
 ## 详细性能采集
 
-在实验 YAML 中显式开启 `benchmark.config.profiling.enabled`。默认关闭，已有配置沿用正确性与计时行为。Evaluator 的采集链路按 kernel 原版语义移植：py 侧只保留被 msprof 进程 attach 跑算子的 `msprof_replay.py`，采集编排、`msprof op` 调用、重试退避、表格合并、ub_ratio、核利用率、L2 分析、NPU 规格表与缓存在 TS 层执行（`src/adapters/kernel/profile.ts` 与 `src/plugins/benchmarks/protocols/kernel/` 下 `msprof-csv.ts`/`msprof-analysis.ts`（含 NPU 规格表）/`msprof-cache.ts`）。固定来源为提交 `f542552167fef844e10b865dc001e5c019f01ea5`。移植只做语言载体替换，不重写指标解析、缓存、L2 分析或失败重试规则。
+NPU backend 负责 Python/msprof 执行、设备绑定和清理；Benchmark 负责任务身份与裁决验证。默认 `operation: evaluate` 在精度和计时成功后可采集诊断。独立 `operation: profile` 要求单任务、单 seed、`profiling.enabled: true`、`cacheEnabled: false`，跳过精度与计时，返回不带候选分数的 performance 结果。
 
 ```yaml
 benchmark:
   name: kernel
   config:
+    operation: profile
     manifest: ${KERNEL_MANIFEST}
     python: ${KERNEL_EVAL_PYTHON}
-    timeoutSeconds: 2100
+    device: 0
+    seeds: [42]
+    timeoutSeconds: 900
     profiling:
       enabled: true
+      collection: Default
+      warmup: 25
       attemptTimeoutSeconds: 300
       maxAttempts: 2
-      roundNum: 1
-      cacheEnabled: true
+      cacheEnabled: false
 run:
-  timeoutSeconds: 2160
+  timeoutSeconds: 960
 ```
 
-这是需合入现有实验配置的片段，service 等公共配置见上文。可选 `msprofBin` 指定 profiler 路径；省略时沿用原实现的可执行文件与 CANN 路径查找。可选 `deviceName` 传入原设备规格查询，省略时将 None 传给原构造函数，沿用原默认行为。
+此片段合入包含上述占位 service 的实验配置。`benchmark.config.device` 选择一张物理卡：两个可见设备变量均固定该卡，worker 使用逻辑设备 0；继承的多卡环境变量不会扩大设备范围。
 
-`attemptTimeoutSeconds` 默认 300 秒，直接对应原 profiler 单次命令超时；`maxAttempts` 默认 2，传给原函数的 `max_retries`，包含第一次执行。`roundNum` 默认 1，传给原函数的轮次参数和元数据。缺文件、超时、解析异常及其他异常是否重试、何时返回 None，均由原函数决定。
+Replay 使用未修改的 `problem.get_inputs()` 和固定 seed，预热完成后仅在 MSTX 区间 `rsi_operator_profile` 内调用一次。SDK session 管理 profiler 子进程；取消向上传播，清理无法确认属于基础设施失败。单次超时默认 300 秒，maxAttempts 默认 2；run 超时必须大于 benchmark 超时。
 
-`cacheEnabled` 默认 true 是 Evaluator 对本次调用显式选择的默认值：调用原版缓存工厂，保留原缓存命中和附加 core／L2 指标行为。原构造函数允许 `cache=None`；设置 false 即采用这种行为，不能假定仍有相同的附加字段。可选 `cacheDir` 指定持久缓存目录，相对路径按实验配置解析；不指定时沿用原 `default_msprof_cache`，优先取 `KA_MSPROF_CACHE_DIR`，否则使用 `~/.kernel_agent/msprof_cache`，并遵守 `KA_MSPROF_CACHE_DISABLED=1`。显式指定 `cacheDir` 时直接构造原 `MSProfCache`，不经过默认工厂的禁用环境变量分支。命中状态记录在 `metadata.cacheHit`，缓存键、命中与复用内容按原逻辑执行；命中时将原采集目录复制到本次证据目录，原返回对象中的 `profile_dir` 保持原值。
+支持两个显式采集协议：
 
-`benchmark.config.timeoutSeconds` 是 Evaluator 对整个验证阶段设置的外层超时，包含正确性、计时和详细采集；不是原算法的内部总预算。启用 profiling 时默认值为 `maxAttempts * attemptTimeoutSeconds + 300`，关闭时为 300 秒，可按工作量覆盖。`run.timeoutSeconds` 应大于该 Benchmark 超时。原函数的重试及退避可能耗时，框架外层强制终止仍可能导致没有完整评测结果。
+- 默认 `PipeTimeline,Default` 要求 PipeUtilization、L2Cache、ResourceConflictRatio 三类 CSV 和可用 trace。
+- `Default` 要求上述三类 CSV，将 trace 标为 unavailable，原因为 `not-requested-by-default-protocol`；流水重叠、气泡与 Double Buffer 分析为 null，不宣称完整协议通过。
 
-采集只针对候选，先完成正确性与统一计时。适配器把固定输入的重放脚本 `msprof_replay.py` 作为 `msprof op` 的被采集应用，TS 编排层负责 spawn、kernel 名称提取、表格合并和指标输出。详细 profiler 重放耗时不代替 `referenceMs/candidateMs`，也不参与加速比计算。
+缺少必需证据时诊断不可用，与候选数值错误区分。保留原始 CSV、可用 trace、replay 元数据与进程日志。源码身份、case、seed、warmup、collection 和设备环境共同标识可复用证据。独立 profile 关闭磁盘缓存，由调用方管理复用；evaluate 模式可显式使用缓存。
 
-主 `metrics` 直接采用原函数返回对象中的 `metrics`。该版本原函数使用 `select="last"`、原表格合并和三位小数输出规则；Evaluator 不另外排序、去重、关联 sub-block、补齐缺失值或验证指标正负。空字典、零值、负值或字符串是否出现，均随原返回保留。`metadata.outputPolicy="kernel-original-f542-v1"` 与 `upstreamCommit` 标识原实现来源；原始 `to_dict()` 输出保存为 `original-result.json`，路径由 `metadata.originalResultJson` 给出。
-
-原始 CSV、trace、日志和返回对象随证据保留。当前原版路径不要求生成 `raw-metrics.json` 或 `selectedRawDurations`。历史 `kernel-last-block-v1` 结果继续展示其已保存的 LAST 和 raw 证据；没有策略标记的历史结果仍按已有 block 范围展示，不用当前代码重解释。
-
-| 数据 | 结果位置与单位 |
-| --- | --- |
-| AIC/AIV 执行时间 | `aic_time(us)` / `aiv_time(us)`，单位 µs |
-| Cube、Vector、Scalar、MTE 管道 | `aic_*_ratio` / `aiv_*_ratio`，保留原始 CSV 比率单位 |
-| L2 读写命中 | `aic_read_hit_rate(%)` 等原始列，单位 % |
-| L2 优化空间规则分析 | 原 `metrics[blockId].l2_cache_analysis`，字段及结论沿用原函数 |
-| 向量资源冲突 | `aiv_vec_stu_cflt_ratio` 等原始列 |
-| UB 占比 | 原 `ub_ratio`，设备容量与缺失处理由原函数决定 |
-| 向量核覆盖率 | 原流程在相应条件下附加 `core_utilization`，保留原设备分母及计算结果，并非时间利用率 |
-| 原始证据 | `artifacts` 列出的 CSV、trace、日志等文件，相对本次 attempt 的 `verifier/` 目录 |
-
-解析器也保留以下 11 个硬件字段：
-
-| 来源 | 字段 | 单位与含义 |
-| --- | --- | --- |
-| `ResourceConflictRatio.csv` | `aiv_vec_wait_ratio`、`aiv_mte2_wait_ratio`、`aiv_mte3_wait_ratio` | Vector/MTE2/MTE3 等待比率，沿用 CSV 原值 |
-| `Memory.csv` | `aiv_gm_to_ub_bw(GB/s)`、`aiv_main_mem_read_bw(GB/s)` | 实际带宽，GB/s |
-| `Memory.csv` | `GM_to_UB_bw_usage_rate(%)` | 带宽使用率，% |
-| `Memory.csv` | `read_main_memory_datas(KB)`、`write_main_memory_datas(KB)` | 主存读写数据量，保留 CSV 标注的 KB，不改写成 KiB |
-| `Memory.csv` | `aiv_mte2_instructions` | MTE2 指令计数，沿用 CSV 原值 |
-| `ArithmeticUtilization.csv` | `aiv_vec_vf_ratio`、`aiv_vec_sfu_ratio` | Arithmetic 比率，沿用 CSV 原值，不换算成 FLOPS |
-
-各 CSV 是否存在、缺列、空单元以及合并行为均交给原解析函数处理。Evaluator 不增加“必需表”、正耗时、唯一执行身份等成功条件，也不另做可选字段缺失分析；原函数成功返回的空指标仍是采集成功。具体缺失情况可通过原始表格和日志复核，不能把没有字段等同于测量值为零。
-
-UB 规格查询与默认值沿用原 `npu_specs` 和规格数据库，可用 `deviceName` 选择原实现支持的机型。该版本的 `core_utilization` 按原逻辑使用规格库中 `ASCEND 950PR 128G` 的向量核数作为分母，不随 `deviceName` 重新推算；Evaluator 不另设 UB 容量或核数覆盖参数。管道、等待和 Arithmetic 比率不能当成 GB/s 或 FLOPS，带宽字段本身保留其明确标注的 GB/s。
-
-L2 分析由原 `L2CacheAnalyzer` 在原条件下执行，报告直接展示已返回的结论和依据，不补充新的三态判定、缺失原因或规则。它是优化提示，不能证明实际瓶颈或改写后的收益；完整内容见逐题 JSON 及 `original-result.json`。
-
-原函数返回 None 时，适配器记录 `profiling.status="failed"` 与 `metadata.originalReturnedNone=true`。采集异常或包装失败同样局部记录，不改变已经完成的正确性、计时、评分和加速比汇总。候选数值不正确时不继续详细采集，这种“未采集”与采集失败分开记录。
-
-框架结果必须是有限 JSON。若原始返回中出现 NaN／Inf，适配器只在包装副本中转换为可表示的文本并记录 `metadata.serializationConversions` 的字段路径和原值，原始证据保留原表示；不会修改原算法或把值补成零。原 metrics 已有的字符串（包括 `"inf"`）直接保留。报告中的“完成”表示原函数成功返回，不保证所有字段都有值或可作为有限数值使用。
+指标解析沿用 ngo-agent 的 block 表与末行选择；管道、等待、带宽和 L2 字段保留来源单位。缺失管道值保持 null。依赖硬编码硬件规格推导的 UB 占比与核利用率标为不可用；硬件事实来自已核实上下文。Roofline 分类只提供方向，不能证明加速；非有限值显式序列化，不补零。Profiler 耗时不替代 referenceMs/candidateMs。
 
 ## 指标与结果
 
-评测类型为 `quality`。`passed/score` 只表示输出等价性，通过为 1，候选错误或不正确为 0。正确但更慢的候选仍为通过，`speedup < 1`。
+常规评测类型为 `quality`，独立诊断为 `performance`。`passed/score` 只表示输出等价性，通过为 1，候选错误或不正确为 0。正确但更慢的候选仍为通过，`speedup < 1`。
 
 计时模块已迁入 Evaluator，默认使用随包发布的 `timing.bench_kernel_ms`，无需访问外部源码目录。兼容已有配置时，可以显式设置 `benchmark.config.kernelRoot` 使用该外部仓库的计时模块；此时来源锁包含外部模块，且适用外部模块自身的计时行为。参考与候选均使用 `triton_only=False`，统计整个调用中所有设备 kernel 的耗时，不含 CPU 发射开销。内置计时器保留真实 ReduceSum 等归约耗时，逐行验证 CSV 耗时是否为有限非负数；缺列、空数据、记录数不完整或非正总耗时均视为无效测量。预热在有效样本之外，耗时单位为 ms。当前计时使用最后一个测试种子的输入；多种 shape 应拆成独立任务。
 
@@ -191,7 +168,7 @@ ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
   --out <bench.json> [--python /usr/bin/python3]
 # msprof 采集：attach 重放脚本采集硬件指标，带缓存与重试；roofline 分类一体返回
 ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
-  --out <profile.json> [--round 0] [--python /usr/bin/python3]
+  --out <profile.json> [--round 0] [--seed 42] [--warmup 25] [--python /usr/bin/python3]
 ```
 
 输出均为单份 JSON：
@@ -210,25 +187,6 @@ roofline 判定：最高管道利用率低于 0.8 直接判 `no`（欠利用优�
 
 ## 与 RSI 框架对接
 
-RSI 不逐个调用上述原子，其 kernel 链路只暴露 `measure` 与 `verify` 两个测量入口，内部固定按"先 precision 后 bench"编排并落产物（kernel 原版 verify→benchmark 语义）：
+RSI 的 `application.kernel` 封存候选源码，`proposer.operator` 生成改动，`evaluator.operatorbench` 通过完整 `Evaluator.run()` SDK 调用 kernel Benchmark 与 kernel-replay Solver。RSI 安装固定提交的 `ember-evaluator`，不查找相邻源码仓库，也不依赖单独的 CLI 桥接。评测和独立诊断是两个 SDK 操作。Measurement 证据链接原生结果与 verifier 产物；证据可用性及校准用于标记可信度，与候选生成区分。
 
-```ts
-import { defaultKernelStepRunner } from './target-adapter/kernel/exec.js';
-
-// 单候选实测：精度不过直接不计时
-const r = await defaultKernelStepRunner('measure',
-  ['--workdir', workdir, '--problem-path', problem, '--kernel-file', kernel, '--kind', 'baseline'],
-  { repoRoot, python: '/usr/bin/python3', timeoutMs: 600_000 });
-// 返回 { kind, time_ms, error, failure_class, failure_key }
-// 产物落 kernel 同目录：<stem>_precision.json、<stem>_bench.json 及 input/output 口径耗时记录
-
-// round 产物核验：自动定位 round{N}_output_kernel.py 与其上溯的 problem.py
-await defaultKernelStepRunner('verify',
-  ['--repo-root', repoRoot, '--workdir', workdir, '--round', '3'],
-  { repoRoot, python: '/usr/bin/python3', timeoutMs: 600_000 });
-// 通过：verify.json 落 <repoRoot>/rsi_runs/r3/verify/；不通过：业务失败（exit 1）
-```
-
-`--kind` 取值：`baseline` 结果记输入口径（round 输入耗时），`candidate` 记输出口径（round{N}_output 三件套）。`verify` 未通过或找不到 kernel 时以业务失败结束，`failure_class` 区分 `no_new_kernel`/`numeric`/`runtime`/`env`。
-
-执行端定位（RSI → Evaluator 的桥）使用 RSI 侧配置的命令前缀，具体设置方式以所用 RSI 版本为准；缺省回退相邻仓 `../ember-evaluator/dist/cli.js`。RSI 的 `python` 选项透传为 Evaluator 侧 `--python`。子进程契约：成功 exit 0 + stdout 单 JSON；业务错误 exit 1 + stderr 文本；执行环境故障 exit 2/130（调用方按基础设施故障处理）。`describe`/`read-slot`/`apply`/`restore`/`reflect`/`artifacts`/`render` 为 RSI 原生实现，不经 Evaluator 子进程。
+SDK 拥有运行资产、依赖和 prepare/build 生命周期。契约与计时验证通过公共导出消费。独立安装包测试只能证明打包和软件链路，真实精度与性能仍须在 NPU 验证。

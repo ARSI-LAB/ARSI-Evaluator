@@ -43,7 +43,7 @@ for key in ("ASCEND_RT_VISIBLE_DEVICES", "ASCEND_VISIBLE_DEVICES", "ASCEND_DEVIC
 os.environ["KERNEL_NPU_DEVICE"] = "5"
 os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "3,5"
 def profile(fn, **options):
-    assert options == dict(warmup=2, active=7, prof_dir=None, keep_res=False, triton_only=True)
+    assert options == dict(warmup=2, active=7, prof_dir=None, keep_res=False, triton_only=True, audit=None)
     fn()
     return 1.25
 timing._bench_npu_profiler = profile

@@ -184,3 +184,13 @@ test("kernel atom --device parses card id and rejects invalid values", async () 
   expect(() => parseArgs(["kernel", "bench", "--problem", "p.py", "--kernel", "k.py",
     "--out", "o.json", "--device", "x"])).toThrow(/non-negative/);
 });
+
+
+test("profile CLI forwards replay seed and warmup through the current command parser", async () => {
+  const { parseArgs } = await import("../../src/cli.js");
+  const base = ["kernel", "profile", "--problem", "p.py", "--kernel", "k.py", "--out", "o.json"];
+  expect(parseArgs(base)).toMatchObject({ kind: "kernel-profile", seed: 0, warmup: 25 });
+  expect(parseArgs([...base, "--seed", "42", "--warmup", "7"]))
+    .toMatchObject({ kind: "kernel-profile", seed: 42, warmup: 7 });
+  expect(() => parseArgs([...base, "--seed", "-1"])).toThrow(/non-negative/);
+});

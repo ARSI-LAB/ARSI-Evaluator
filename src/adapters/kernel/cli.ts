@@ -49,6 +49,8 @@ export function resolveAtomDir(sub: string, options: KernelExecOptions = {},
   const explicit = process.env.KERNEL_ATOM_DIR;
   if (explicit !== undefined && explicit !== "" && existsSync(join(explicit, "precision.py")))
     return explicit;
+  // Published packages carry Python workers beside this compiled module.
+  if (existsSync(join(moduleDir, "precision.py"))) return moduleDir;
   let dir = moduleDir;
   for (;;) {
     const candidate = join(dir, "src", "adapters", "kernel", "precision.py");

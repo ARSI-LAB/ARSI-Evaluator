@@ -1,7 +1,9 @@
+import { parseKernelTimingEvidence } from "./timing.js";
 import { expectNonEmptyString, expectRecord } from "../../../../config/schema.js";
 import { VerificationError } from "../../../../core/errors/verification-error.js";
 import type { JsonValue } from "../../../../core/contracts/task.js";
 import type { VerifyResult } from "../../../../core/contracts/result.js";
+import { parseKernelAssessment, type KernelContract } from "./strict.js";
 import { isAbsolute, posix } from "node:path";
 
 function finiteJson(value: unknown, label: string): JsonValue {
@@ -50,7 +52,7 @@ export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue
 }
 
 /** 计时只接受完整的有限正数，基础设施错误不会转成候选零分。 */
-export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false): VerifyResult {
+export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false, contract?: KernelContract, seeds: number[] = []): VerifyResult {
   const r = expectRecord(value, "kernel result");
   if (r.schemaVersion !== 1 || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
@@ -58,6 +60,15 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
     referenceMs: null, candidateMs: null, speedup: null,
     ...(profilingRequested ? { profilingRequested: true } : {}) };
+  if (contract !== undefined) {
+    const assessment = parseKernelAssessment(r.assessment, contract, seeds);
+    details.assessment = finiteJson(assessment, "assessment");
+    if (r.status === "passed" && (assessment.errorOwnership !== null || assessment.checks.some(c => c.status !== "passed")))
+      throw new VerificationError("Strict checks did not pass", details);
+    if ((r.status === "incorrect" || r.status === "candidate_error") &&
+      (assessment.errorOwnership !== "candidate" || !assessment.checks.some(c => c.status === "failed")))
+      throw new VerificationError("Candidate failure lacks strict evidence", details);
+  }
   if (r.profiling !== undefined) {
     try { details.profiling = parseKernelProfiling(r.profiling); }
     catch {
@@ -80,6 +91,12 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     if (typeof measured !== "number" || !Number.isFinite(measured) || measured <= 0)
       throw new VerificationError(`Invalid kernel measurement: ${name}`, details);
     details[name] = measured;
+  }
+  if (r.timingEvidence !== undefined) {
+    const timing = parseKernelTimingEvidence(r.timingEvidence);
+    if (Math.abs(timing.reference.meanMs - Number(r.referenceMs)) > 1e-12 || Math.abs(timing.candidate.meanMs - Number(r.candidateMs)) > 1e-12)
+      throw new VerificationError("Timing evidence mean mismatch", details);
+    details.timingEvidence = finiteJson(timing, "timing evidence");
   }
   const reference = details.referenceMs as number, candidate = details.candidateMs as number, speedup = details.speedup as number;
   if (Math.abs(reference / candidate - speedup) > 1e-8 * Math.max(1, speedup)) throw new Error("Inconsistent kernel speedup");

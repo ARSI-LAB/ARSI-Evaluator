@@ -105,3 +105,9 @@ export type { Deployment } from "./config/deployment.js";
 export { bindService, bindSolverService } from "./core/registry.js";
 
 export { attemptStatus, attemptTimeoutKind } from "./core/evaluation-outcome.js";
+
+export { parseKernelContract, parseKernelAssessment, kernelContractDigest, KERNEL_CHECK_IDS, KERNEL_ENVIRONMENT_FIELDS } from "./plugins/benchmarks/protocols/kernel/strict.js";
+export type { KernelContract, KernelAssessment, KernelCheck, KernelEffectiveProtocol, KernelEnvironment } from "./plugins/benchmarks/protocols/kernel/strict.js";
+
+export { parseKernelTimingEvidence, auditKernelTimingSample } from "./plugins/benchmarks/protocols/kernel/timing.js";
+export type { KernelTimingEvidence, KernelTimingSample, KernelTimingRow } from "./plugins/benchmarks/protocols/kernel/timing.js";

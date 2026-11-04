@@ -29,11 +29,26 @@ import random
 import sys
 
 from precision import load_module, load_task_module, verify_hashes
+from strict import observe_environment
 
 
 def replay(request):
     """在指定逻辑 NPU 重放候选（KERNEL_NPU_DEVICE 选卡，缺省 0）；不推断 dtype、不额外拼接模型参数。"""
+    seeds = request["seeds"]
+    if not isinstance(seeds, list) or len(seeds) != 1 or isinstance(seeds[0], bool) or not isinstance(seeds[0], int) or not 0 <= seeds[0] <= 0xffffffff:
+        raise ValueError("Diagnostic replay requires one unsigned 32-bit seed")
+    if isinstance(request["warmup"], bool) or not isinstance(request["warmup"], int) or request["warmup"] < 1:
+        raise ValueError("Diagnostic replay warmup must be a positive integer")
     verify_hashes(request["hashes"])
+    try:
+        import mstx
+    except ImportError as error:
+        raise RuntimeError("MSTX runtime is required for diagnostic capture") from error
+    if not callable(getattr(mstx, "get_tool_id", None)):
+        raise RuntimeError("MSTX runtime must expose its active tool ID")
+    tool_id = mstx.get_tool_id()
+    if tool_id != 0x1001:
+        raise RuntimeError("MSTX operator profiler injection is not active")
     import torch
     import torch_npu  # noqa: F401  (registers the npu backend, required on Ascend)
 
@@ -51,7 +66,7 @@ def replay(request):
         candidate = load_module(request["candidate"], "kernel_msprof_kernel").kernel_function
     if not callable(candidate):
         raise TypeError("kernel_function must be callable")
-    seed = request["seeds"][-1]
+    seed = seeds[0]
     with torch.inference_mode():
         random.seed(seed)
         torch.manual_seed(seed)
@@ -62,15 +77,31 @@ def replay(request):
         inputs = problem.get_inputs()
         if not isinstance(inputs, (tuple, list)):
             raise TypeError("get_inputs must return a positional argument list")
-        for _ in range(max(request["warmup"], 1)):
+        warmup_completed = 0
+        for _ in range(request["warmup"]):
             candidate(*inputs)
+            warmup_completed += 1
         torch.npu.synchronize()
-        candidate(*inputs)
-        torch.npu.synchronize()
+        range_id = mstx.range_start("rsi_operator_profile", None)
+        if isinstance(range_id, bool) or not isinstance(range_id, int) or range_id < 0:
+            raise RuntimeError("MSTX range start did not return a valid range ID")
+        calls_in_range = 0
+        try:
+            candidate(*inputs)
+            calls_in_range += 1
+            torch.npu.synchronize()
+        finally:
+            mstx.range_end(range_id)
         del reference
     verify_hashes(request["hashes"])
-    return {"seed": seed, "logicalDevice": device, "deviceName": torch.npu.get_device_name(device),
-            "warmup": max(request["warmup"], 1), "inputContract": "unchanged problem.get_inputs"}
+    observed_device = torch.npu.current_device()
+    device_count = torch.npu.device_count()
+    return {"seed": seed, "requestedLogicalDevice": device, "logicalDevice": observed_device,
+            "deviceCount": device_count, "deviceName": torch.npu.get_device_name(observed_device),
+            "warmup": request["warmup"], "inputContract": "unchanged problem.get_inputs",
+            "capture": {"method": "mstx", "range": "rsi_operator_profile", "toolId": tool_id,
+                        "rangeId": range_id, "warmupCompleted": warmup_completed, "callsInRange": calls_in_range},
+            "environment": observe_environment(torch, torch_npu, observed_device)}
 
 
 def main():
