@@ -13,7 +13,6 @@ export type ArchiveImageAcquisition = {
 export type ImageAcquisition = RegistryImageAcquisition | ArchiveImageAcquisition;
 export type ImageRequestContext = { taskId: string; phase: "solve" | "verify"; service?: string };
 export type NetworkSettings = {
-  version: 1;
   proxy: Record<NetworkLocation, NetworkProxy>;
   sources: {
     huggingface: string;

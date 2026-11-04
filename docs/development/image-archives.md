@@ -11,7 +11,6 @@
 ## 网络配置
 
 ```yaml
-version: 1
 docker:
   pull:
     method: docker

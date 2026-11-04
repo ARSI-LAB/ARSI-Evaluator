@@ -100,7 +100,7 @@ test("rejects a manifest which differs from the requested pinned digest", async 
 
 test("reports registry authentication rejection without exposing proxy credentials", async () => {
   const f = await fixture(); f.controls.auth = true; f.controls.failToken = true;
-  await expect(downloadRegistryImage(f.reference, "linux/amd64", parseNetworkSettings({ version: 1, proxy: { http: f.proxy.replace("http://", "http://user:proxy-secret@") } }).proxy.host, f.directory, "fixture/image:bad", AbortSignal.timeout(5000)))
+  await expect(downloadRegistryImage(f.reference, "linux/amd64", parseNetworkSettings({ proxy: { http: f.proxy.replace("http://", "http://user:proxy-secret@") } }).proxy.host, f.directory, "fixture/image:bad", AbortSignal.timeout(5000)))
     .rejects.toThrow("Registry token request failed (HTTP 403)");
 });
 

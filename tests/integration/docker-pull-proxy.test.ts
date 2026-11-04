@@ -24,7 +24,7 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")("proxy-only registry imag
   vi.stubEnv("EVALUATOR_CACHE_DIR", root);
   const signal = AbortSignal.timeout(45_000);
   try {
-    const pull = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ version: 1, proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
+    const pull = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
     const scope = { taskId: "fixture/proxy-import", phase: "solve" as const };
     const first = await resolvePinnedTaskImage(command, f.reference, "linux/amd64", scope, signal, undefined, pull);
     expect(first).not.toBeNull();
@@ -34,7 +34,7 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")("proxy-only registry imag
     images.add(imported.reference);
     expect([f.configDigest, f.manifestDigest]).toContain(first.id);
     expect(imported.verifiedDigest).toBe(f.indexDigest);
-    const offline = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ version: 1, proxy: { http: "http://127.0.0.1:1", https: "http://127.0.0.1:1" }, docker: { pull: { method: "registry-client" } } }, {})) });
+    const offline = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ proxy: { http: "http://127.0.0.1:1", https: "http://127.0.0.1:1" }, docker: { pull: { method: "registry-client" } } }, {})) });
     const requestCount = f.requests.length;
     expect(await offline(f.reference, "linux/amd64", signal)).toEqual(imported);
     expect(await resolvePinnedTaskImage(command, f.reference, "linux/amd64", scope, signal, undefined, offline)).toEqual(first);

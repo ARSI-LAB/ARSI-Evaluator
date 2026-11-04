@@ -16,7 +16,7 @@ vi.mock("../../src/plugins/environments/docker-platform.js", () => ({ PlatformCa
 afterEach(() => vi.restoreAllMocks());
 
 test("doctor separates cached downloads, failed installers and FROM/RUN evidence and removes temporary files", async () => {
-  const network = new NetworkRuntime(networkDocument({ version: 1, sources: { huggingface: "https://hub.test" },
+  const network = new NetworkRuntime(networkDocument({ sources: { huggingface: "https://hub.test" },
     docker: { benchmarks: { terminalbench: { method: "archive", provider: "modelscope", baseUrl: "https://modelscope.cn/datasets/team/images/resolve/main/tb4" } } } }, {}));
   const fetch = vi.spyOn(network, "fetch").mockImplementation(async input =>
     new Response("fixture file", { headers: String(input).startsWith("https://hub.test") ? { age: "30" } : {} }));
@@ -67,7 +67,7 @@ test("doctor separates cached downloads, failed installers and FROM/RUN evidence
 });
 
 test("cancelled network diagnosis performs no download", async () => {
-  const network = new NetworkRuntime(networkDocument({ version: 1 }, {}));
+  const network = new NetworkRuntime(networkDocument({}, {}));
   const fetch = vi.spyOn(network, "fetch");
   await expect(diagnoseNetwork(network, AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
   expect(fetch).not.toHaveBeenCalled();
