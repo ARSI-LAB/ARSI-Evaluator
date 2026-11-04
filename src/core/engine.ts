@@ -114,6 +114,7 @@ async function executeRun({
         model: bound.model.name,
         api: bound.model.api,
         provider: bound.model.provider,
+        hardware: experiment.hardware ?? "npu",
         benchmark: experiment.benchmark.name,
         environment: experiment.environment.name,
         solver: experiment.solver.name,

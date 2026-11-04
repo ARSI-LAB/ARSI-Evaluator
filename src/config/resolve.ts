@@ -99,7 +99,7 @@ export function resolveInput(configPath: string, input: UserConfig, profiles: Re
     source = expectRecord(merge(source, normalized), "configuration");
     trace(normalized, "", origin, origins);
   };
-  apply({ benchmark: { name: benchmark.name, config: {}, solver: { name: "simpleagent", config: {} } },
+  apply({ hardware: "npu", benchmark: { name: benchmark.name, config: {}, solver: { name: "simpleagent", config: {} } },
     environment: { name: "docker", config: {} }, scheduler: { name: "local", config: { concurrency: DEFAULT_LOCAL_CONCURRENCY } },
     store: { name: "local", config: {} }, reporter: { name: "markdown", config: {} },
     metrics: ["success-rate", "duration", "usage"], run: { maxTasks: null, taskIds: null, timeoutSeconds: DEFAULT_TASK_TIMEOUT_SECONDS, onError: "continue" } }, "framework default");

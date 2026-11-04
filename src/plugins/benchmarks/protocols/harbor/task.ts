@@ -1,3 +1,5 @@
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
+import { gpuRequirementMessage } from "../../../../core/hardware.js";
 import { lstat, readFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { readComposeServices } from "../../../../adapters/datasets/input-readers/harbor/compose.js";
@@ -62,15 +64,26 @@ function declaredImage(value: unknown, label: string): string | undefined {
   return value;
 }
 
+function checkHardware(declaration: Record<string, unknown>, hardware: HardwareKind, label: string): void {
+  if (declaration.gpu !== undefined && typeof declaration.gpu !== "boolean") invalid(`${label}.gpu must be boolean`);
+  if (declaration.gpus !== undefined && (typeof declaration.gpus !== "number" || !Number.isSafeInteger(declaration.gpus) || declaration.gpus < 0))
+    invalid(`${label}.gpus must be a nonnegative integer`);
+  if (declaration.gpu_types !== undefined && (!Array.isArray(declaration.gpu_types) ||
+    declaration.gpu_types.some(value => typeof value !== "string" || !value.trim()))) invalid(`${label}.gpu_types must be an array of nonempty strings`);
+  const fields = [declaration.gpu === true ? "gpu" : null,
+    typeof declaration.gpus === "number" && declaration.gpus > 0 ? "gpus" : null,
+    Array.isArray(declaration.gpu_types) && declaration.gpu_types.length ? "gpu_types" : null].filter(value => value !== null);
+  if (fields.length) unsupported(gpuRequirementMessage(hardware, fields.map(field => `${label}.${field}`).join(", ")));
+}
+
 async function environment(
   declaration: Record<string, unknown>, context: string, workdir: string, visibility: "public" | "verifier",
   phase: "solve" | "verify",
+  hardware: HardwareKind, requirement: string,
   parsedServices?: EnvironmentSpec["services"],
 ): Promise<EnvironmentSpec> {
   fields(declaration, ["docker_image", "workdir", "build_timeout_sec", "cpus", "memory", "storage", "memory_mb", "storage_mb",
     "gpus", "gpu", "gpu_types", "mcp_servers", "env", "os", "platform", "allow_internet", "network_mode", "allowed_hosts", "skills_dir", "healthcheck"], "environment");
-  if ((declaration.gpus !== undefined && declaration.gpus !== 0) || (declaration.gpu !== undefined && declaration.gpu !== false)) unsupported("GPU environments are unsupported");
-  if (declaration.gpu_types !== undefined && (!Array.isArray(declaration.gpu_types) || declaration.gpu_types.length)) unsupported("GPU type requirements are unsupported");
   if (declaration.skills_dir !== undefined) {
     const skills = path(declaration.skills_dir, "environment.skills_dir");
     if (["/tests", "/solution", "/environment", "/logs/verifier", "/opt/evaluator", "/opt/evaluator-agent"].some(root => skills === root || skills.startsWith(root + "/")))
@@ -93,7 +106,7 @@ async function environment(
     }
   }
   const explicitImage = declaredImage(declaration.docker_image, "docker_image");
-  const services = parsedServices ?? await readComposeServices(context, visibility, explicitImage);
+  const services = parsedServices ?? await readComposeServices(context, visibility, explicitImage, hardware, requirement);
   const main = services?.main;
   const hostsOnly = services && Object.keys(services).length === 1 && main && !main.build &&
     Object.keys(main.properties).length === 1 && Array.isArray(main.properties.extra_hosts) &&
@@ -133,7 +146,7 @@ async function environment(
 
 export async function loadGenericHarborTask(
   taskDir: string, datasetDir: string, id: string, config: HarborConfig, verifier: Verifier, signal: AbortSignal,
-  phaseTimeouts: PhaseTimeoutOverrides = {},
+  phaseTimeouts: PhaseTimeoutOverrides = {}, hardware: HardwareKind = "npu",
 ): Promise<PreparedTask> {
   signal.throwIfAborted();
   const document = await readTomlDocument(await checkedPath(taskDir, "task.toml")).catch(error => {
@@ -143,7 +156,7 @@ export async function loadGenericHarborTask(
   fields(document, ["version", "schema_version", "task", "metadata", "environment", "verifier", "agent", "solution", "artifacts", "steps", "multi_step_reward_strategy", ...config.tasks.metadataFields], "task");
   if (document.schema_version !== undefined && (typeof document.schema_version !== "string" || !document.schema_version.trim())) invalid("schema_version must be a non-empty string");
   if (document.version !== undefined && document.version !== "1.0") unsupported(`Unsupported task version: ${String(document.version)}`);
-  if (document.steps === undefined) return prepareHarborStage(taskDir, datasetDir, id, config, verifier, signal, phaseTimeouts, document);
+  if (document.steps === undefined) return prepareHarborStage(taskDir, datasetDir, id, config, verifier, signal, phaseTimeouts, hardware, document);
   if (verifier.runtime) unsupported("Multi-step tasks currently require a shell verifier");
   if (!Array.isArray(document.steps) || !document.steps.length) invalid("steps must be a non-empty array");
   if (document.multi_step_reward_strategy !== undefined && !["mean", "final"].includes(String(document.multi_step_reward_strategy)))
@@ -163,7 +176,7 @@ export async function loadGenericHarborTask(
     if (minReward !== undefined && !(typeof minReward === "number" && Number.isFinite(minReward)) &&
       !(minReward && typeof minReward === "object" && !Array.isArray(minReward) && Object.keys(minReward).length &&
         Object.values(minReward).every(value => typeof value === "number" && Number.isFinite(value)))) invalid("Invalid step.min_reward");
-    const task = await prepareHarborStage(taskDir, datasetDir, id, config, verifier, signal, phaseTimeouts, {
+    const task = await prepareHarborStage(taskDir, datasetDir, id, config, verifier, signal, phaseTimeouts, hardware, {
       ...document,
       agent: { ...table(document.agent, "agent"), ...table(step.agent, "step.agent") },
       verifier: { ...table(document.verifier, "verifier"), ...table(step.verifier, "step.verifier"),
@@ -186,9 +199,10 @@ export async function loadGenericHarborTask(
 
 async function prepareHarborStage(
   taskDir: string, datasetDir: string, id: string, config: HarborConfig, verifier: Verifier, signal: AbortSignal,
-  phaseTimeouts: PhaseTimeoutOverrides, document: Record<string, unknown>, stepDir?: string,
+  phaseTimeouts: PhaseTimeoutOverrides, hardware: HardwareKind, document: Record<string, unknown>, stepDir?: string,
 ): Promise<PreparedTask> {
   const declaredEnvironment = table(document.environment, "environment");
+  checkHardware(declaredEnvironment, hardware, `Task ${id} environment`);
   const declaredVerifier = table(document.verifier, "verifier");
   const agent = table(document.agent, "agent");
   fields(declaredVerifier, ["timeout_sec", "type", "environment_mode", "environment", "env", "collect", "network_mode", "allowed_hosts", "import_path", "user"], "verifier");
@@ -198,7 +212,7 @@ async function prepareHarborStage(
     !(typeof value === "string" && /^[a-z_][a-z0-9_-]*$/u.test(value))) invalid(`Invalid ${phase} user`);
   if (declaredVerifier.type !== undefined && declaredVerifier.type !== "shell") unsupported("Unsupported verifier.type");
   const publicContext = join(taskDir, "environment");
-  const composeServices = await readComposeServices(publicContext, "public", declaredImage(declaredEnvironment.docker_image, "environment.docker_image"));
+  const composeServices = await readComposeServices(publicContext, "public", declaredImage(declaredEnvironment.docker_image, "environment.docker_image"), hardware, `Task ${id} environment`);
   const mainBuild = composeServices?.main?.build;
   const dockerfile = await readFile(mainBuild ? join(mainBuild.context, mainBuild.dockerfile) : join(publicContext, "Dockerfile"), "utf8").catch(error => {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
@@ -209,7 +223,7 @@ async function prepareHarborStage(
   try { inferredWorkdir = profile?.workdir ?? declaredEnvironment.workdir ?? config.defaults.workdir ?? inferDockerWorkdir(dockerfile); }
   catch (cause) { throw new HarborTaskError("BENCHMARK_UNSUPPORTED", "Cannot infer task workdir; provide defaults.workdir or a task profile", { cause }); }
   const workdir = path(inferredWorkdir, "workdir");
-  const solveEnv = await environment(declaredEnvironment, publicContext, workdir, "public", "solve", composeServices);
+  const solveEnv = await environment(declaredEnvironment, publicContext, workdir, "public", "solve", hardware, `Task ${id} environment`, composeServices);
   if (typeof users.solve === "string" || typeof users.verify === "string") solveEnv.executionUsers = {
     ...(typeof users.solve === "string" ? { solve: users.solve } : {}), ...(typeof users.verify === "string" ? { verify: users.verify } : {}) };
   const mcpServers = (declaredEnvironment.mcp_servers ?? []);
@@ -242,8 +256,9 @@ async function prepareHarborStage(
   let testsInImage = false;
   if (mode === "separate") {
     const overrides = table(declaredVerifier.environment, "verifier.environment");
+    checkHardware(overrides, hardware, `Task ${id} verifier.environment`);
     const context = join(stepDir ?? taskDir, "tests");
-    const services = await readComposeServices(context, "verifier", declaredImage(overrides.docker_image, "verifier.environment.docker_image"));
+    const services = await readComposeServices(context, "verifier", declaredImage(overrides.docker_image, "verifier.environment.docker_image"), hardware, `Task ${id} verifier.environment`);
     const dockerfile = await lstat(join(context, "Dockerfile")).catch(() => null);
     testsInImage = overrides.docker_image !== undefined || dockerfile?.isFile() === true ||
       services?.main?.build !== undefined || typeof services?.main?.image === "string";
@@ -257,14 +272,14 @@ async function prepareHarborStage(
         for (const field of [key, `${key}_mb`])
           if (declaredEnvironment[field] !== undefined) declaration[field] = declaredEnvironment[field];
     const verifyWorkdir = path(overrides.workdir ?? workdir, "verifier.environment.workdir");
-    if (testsInImage) verifyEnv = await environment(declaration, context, verifyWorkdir, "verifier", "verify", services);
+    if (testsInImage) verifyEnv = await environment(declaration, context, verifyWorkdir, "verifier", "verify", hardware, `Task ${id} verifier.environment`, services);
     else {
       const fallback = { ...declaredEnvironment, ...declaration };
       for (const key of ["memory", "storage"]) {
         if (overrides[key] !== undefined) delete fallback[`${key}_mb`];
         if (overrides[`${key}_mb`] !== undefined) delete fallback[key];
       }
-      verifyEnv = await environment(fallback, publicContext, verifyWorkdir, "public", "verify", composeServices);
+      verifyEnv = await environment(fallback, publicContext, verifyWorkdir, "public", "verify", hardware, `Task ${id} verifier.environment`, composeServices);
     }
     verifyEnv.network = phaseNetwork(declaredVerifier, table(declaredVerifier.environment ?? declaredEnvironment, "verifier.environment"));
     if (typeof users.verify === "string") verifyEnv.executionUsers = { verify: users.verify };

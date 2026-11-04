@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../../../core/contracts/hardware.js";
 import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../../config/schema.js";
 
 export type AgentXTelemetryConfig = {
@@ -38,7 +39,7 @@ function integer(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new TypeError("Invalid AgentX telemetry integer");
   return value;
 }
-export function parseTelemetryConfig(value: unknown): AgentXTelemetryConfig {
+export function parseTelemetryConfig(value: unknown, hardware: HardwareKind = "npu"): AgentXTelemetryConfig {
   const raw = expectRecord(value, "agentx-replay.telemetry");
   rejectUnknown(raw, ["vllm", "ascend"], "agentx-replay.telemetry");
   const result: AgentXTelemetryConfig = {};
@@ -48,6 +49,7 @@ export function parseTelemetryConfig(value: unknown): AgentXTelemetryConfig {
     result.vllm = { endpoint: endpoint(v.endpoint) };
   }
   if (raw.ascend !== undefined) {
+    if (hardware !== "npu") throw new TypeError("AgentX telemetry.ascend requires hardware=npu; selected hardware=gpu. GPU hardware telemetry is not implemented");
     const v = expectRecord(raw.ascend, "telemetry.ascend");
     if (v.mode === "local") {
       rejectUnknown(v, ["mode", "devices"], "telemetry.ascend");

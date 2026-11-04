@@ -33,7 +33,7 @@ function layer(value: unknown, path: string): ProfileLayer {
   }
   if (record.defaults !== undefined) {
     const defaults = expectRecord(record.defaults, `${path}.defaults`);
-    rejectUnknown(defaults, ["benchmark", "environment", "scheduler", "store", "reporter", "metrics", "run", "output"], `${path}.defaults`);
+    rejectUnknown(defaults, ["hardware", "benchmark", "environment", "scheduler", "store", "reporter", "metrics", "run", "output"], `${path}.defaults`);
     // Defaults are partial user input; the complete merged input is checked before use.
     result.defaults = defaults;
   }

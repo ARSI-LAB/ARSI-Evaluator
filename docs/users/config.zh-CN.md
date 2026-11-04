@@ -50,6 +50,27 @@ Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local
 
 默认运行全部任务，单题失败后继续其他题（`onError: continue`）。使用 `run experiment.yaml --resume [run-id]` 续跑；配置使用 `services` 与单个 `benchmark`，不接受旧 `benchmarks` 数组或顶层 `model`、`solver`。
 
+## NPU 与 GPU 选择
+
+在实验 YAML 顶层设置 `hardware`，作用于整个实验：
+
+```yaml
+hardware: npu # npu 或 gpu；省略时默认 npu
+```
+
+用户 YAML 覆盖 Profile 默认值，未指定时使用 NPU。`config explain`、`config resolve` 和保存的运行配置记录实际选择，Ray 节点接收同一值。该字段不探测本机设备，不启动或切换远端模型服务，也不将 CUDA 题目转换为 NPU 题目。无需加速卡的任务在两种选择下行为相同。
+
+| 场景 | `npu` | `gpu` |
+| --- | --- | --- |
+| AgentX API 回放、vLLM 指标 | 支持 | 支持 |
+| AgentX `telemetry.ascend` | 使用 Ascend 采集 | 配置冲突，运行前报错 |
+| Kernel 精度、计时与 profiling | 使用 NPU | 运行前报 GPU 后端尚未实现 |
+| Harbor 题目明确要求 GPU | 报题目与所选硬件不匹配 | 报 GPU 任务执行尚未实现 |
+
+普通模型 API 调用不要求 Evaluator 所在机器有 GPU/NPU。GPU 硬件采集和任务设备挂载当前不支持。硬件不匹配的题目记录为失败，后续处理遵循 `run.onError`，不会静默跳过或替换硬件。
+
+旧配置省略该字段仍按 NPU 读取；缺省与显式 `npu` 的续跑配置指纹相同，改为 `gpu` 后需要新建 run。源码、插件版本和数据来源变化仍受原有续跑检查约束。离线 `report` 不访问硬件。
+
 ## 按需增加参数
 
 ```yaml

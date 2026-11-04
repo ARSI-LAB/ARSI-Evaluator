@@ -1,16 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute, posix, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Benchmark } from "../../../../core/contracts/benchmark.js";
 import type { SourceLock, TaskRef, PreparedTask } from "../../../../core/contracts/task.js";
 import type { EnvironmentSession, EnvironmentSpec } from "../../../../core/contracts/environment.js";
 import type { SolveResult } from "../../../../core/contracts/result.js";
 import { expectRecord, expectNonEmptyString, expectPositiveInteger, rejectUnknown, type EffectiveConfig } from "../../../../config/schema.js";
-import { VerificationError } from "../../../../core/errors/verification-error.js";
-import { readProcess } from "../../../../adapters/verifiers/process.js";
 import { kernelVerdict } from "./result.js";
-import { kernelProfile } from "../../../../adapters/kernel/profile.js";
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
+import { assertKernelHardware, createKernelBackend, type KernelBackend } from "../../../../adapters/kernel/backend.js";
 
 export function relativeFile(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
@@ -82,17 +80,16 @@ export function parseKernelManifest(value: unknown) {
 export type KernelTask = ReturnType<typeof parseKernelManifest>[number];
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
-const workerPath = fileURLToPath(new URL("../../../../adapters/kernel/precision.py", import.meta.url));
-const benchPath = "src/kernel_agent/kernel_agent/triton_kernel_agent/opt_worker_component/benchmarking/bench_kernel_util.py";
-// msprof 链的编排/解析/缓存已 TS 化；打包的 py 只剩被 msprof attach 跑算子的重放脚本。
-const profilingFiles = ["msprof_replay.py"];
-
 export class KernelBenchmark implements Benchmark {
   readonly evaluationKind = "quality";
   readonly validateSourceOnCompletedResume = true;
-  constructor(private readonly config: KernelConfig) {}
+  private readonly backend: KernelBackend;
+  constructor(private readonly config: KernelConfig, hardware: HardwareKind = "npu") {
+    this.backend = createKernelBackend(hardware, config);
+  }
 
   validateRun(config: EffectiveConfig): void {
+    assertKernelHardware(config.hardware ?? "npu");
     if (config.environment.name !== "local" || config.scheduler.name !== "local" || (config.scheduler.config.concurrency ?? 1) !== 1)
       throw new TypeError("kernel requires local environment and local scheduler concurrency 1");
     if (config.solver.name !== "kernel-replay") throw new TypeError("kernel requires the locked kernel-replay solver");
@@ -120,12 +117,8 @@ export class KernelBenchmark implements Benchmark {
       const origin = await this.dataFile(path);
       files.push({ path: `data/${path}`, sha256: digest(await readFile(origin)), origin });
     }
-    for (const [path, origin] of [["runtime/precision.py", workerPath], ["runtime/timing.py", this.config.kernelRoot === undefined ? fileURLToPath(new URL("../../../../adapters/kernel/timing.py", import.meta.url)) : join(this.config.kernelRoot, benchPath)]] as const) {
+    for (const { path, origin } of this.backend.runtimeFiles()) {
       files.push({ path, origin, sha256: digest(await readFile(origin)) });
-    }
-    for (const name of profilingFiles) {
-      const origin = join(dirname(workerPath), name);
-      files.push({ path: `runtime/${name}`, origin, sha256: digest(await readFile(origin)) });
     }
     const revision = digest(JSON.stringify(files.map(({ path, sha256 }) => ({ path, sha256 }))));
     if (previous && (previous.source !== "kernel-v1" || previous.revision !== revision)) throw new Error("Kernel evaluation source changed since locking");
@@ -152,10 +145,9 @@ export class KernelBenchmark implements Benchmark {
     const candidate = file(`data/${task.candidate}`);
     const selected = [...new Set([task.problem, ...task.files])].map(path => file(`data/${path}`))
       .filter(item => item.path !== candidate.path);
-    selected.push(file("runtime/precision.py"), file("runtime/timing.py"));
-    selected.push(...profilingFiles.map(name => file(`runtime/${name}`)));
+    selected.push(...this.backend.runtimeFiles().map(item => file(item.path)));
     const env = (initialFiles: EnvironmentSpec["initialFiles"]): EnvironmentSpec => ({ workdir: ".", image: null, runtime: [], initialFiles,
-      env: { ASCEND_RT_VISIBLE_DEVICES: String(this.config.device), KERNEL_NPU_DEVICE: String(this.config.device) } });
+      env: this.backend.environment() });
     return {
       input: { id: task.id, prompt: "Submit the frozen kernel artifact for independent evaluation.", payload: { candidateSha256: candidate.sha256 } },
       verification: { schemaVersion: 1, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
@@ -183,58 +175,7 @@ export class KernelBenchmark implements Benchmark {
       if (typeof file.source !== "string" || typeof file.target !== "string") throw new Error("Invalid verifier file");
       await session.upload(file.source, file.target, active);
     }
-    const handle = await session.start({ executable: this.config.python,
-      args: ["runtime/precision.py", "--output", join(session.verifierOutputDir, "kernel-result.json")], cwd: session.workdir,
-      env: {}, input: Buffer.from(JSON.stringify(request)) }, active);
-    const process = await readProcess(handle, active);
-    if (process.code !== 0) throw new VerificationError("Kernel worker did not return a result", { exitCode: process.code, stderr: process.stderr.slice(-4000) });
-    let value: unknown;
-    try { value = JSON.parse(process.stdout); }
-    catch { throw new VerificationError("Kernel worker returned invalid JSON", { stderr: process.stderr.slice(-4000) }); }
-    const record = expectRecord(value, "kernel result");
-    if (this.config.profiling.enabled && record.status === "passed")
-      await this.collectProfiling(request, session, active, record);
+    const value = await this.backend.execute(request, session, active);
     return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), this.config.profiling.enabled);
   }
-
-  /** profiling.enabled 时接线 TS 编排（kernelProfile）采集详细硬件指标；失败降级为明确 failed 记录，不影响验收计时与评分。 */
-  private async collectProfiling(request: Record<string, unknown>, session: EnvironmentSession,
-    signal: AbortSignal, value: Record<string, unknown>): Promise<void> {
-    const fail = (error: string): void => {
-      value.profiling = { schemaVersion: 1, status: "failed", error: error.slice(0, 4000), kernels: [], metadata: {}, artifacts: [] };
-    };
-    try {
-      const stem = "kernel-profile";
-      const result = await kernelProfile({
-        problem: join(session.workdir, String(request.problem)),
-        kernel: join(session.workdir, String(request.candidate)),
-        out: join(session.verifierOutputDir, `${stem}.json`), round: this.config.profiling.roundNum,
-        ...(this.config.profiling.msprofBin === undefined ? {} : { msprofBin: this.config.profiling.msprofBin }),
-        ...(this.config.profiling.deviceName === undefined ? {} : { deviceName: this.config.profiling.deviceName }),
-      }, { python: this.config.python, signal,
-        env: { ASCEND_RT_VISIBLE_DEVICES: String(this.config.device), KERNEL_NPU_DEVICE: String(this.config.device) } });
-      if (result.error !== "") return fail(`msprof profiling failed: ${result.error}`);
-      const raw = JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8"));
-      value.profiling = prefixProfilingPaths(raw, `${stem}_profiling_root`);
-    } catch (error) {
-      fail(`profiling orchestration failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-}
-
-/** 把 profile 原子产物中的相对路径统一前缀化为 verifier-relative（供报告证据链接可见）。 */
-export function prefixProfilingPaths<T>(raw: T, prefix: string): T {
-  const prefixed = (v: unknown): unknown => typeof v === "string" && v !== "" && !v.startsWith("/") ? `${prefix}/${v}` : v;
-  const out = structuredClone(raw) as Record<string, unknown>;
-  if (Array.isArray(out.artifacts)) out.artifacts = out.artifacts.map(prefixed);
-  const metadata = out.metadata;
-  if (metadata !== null && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).profileDir === "string")
-    (metadata as Record<string, unknown>).profileDir = prefixed((metadata as Record<string, unknown>).profileDir);
-  if (Array.isArray(out.kernels)) for (const kernel of out.kernels as Record<string, unknown>[]) {
-    if (Array.isArray(kernel.artifacts)) kernel.artifacts = kernel.artifacts.map(prefixed);
-    const km = kernel.metadata;
-    if (km !== null && typeof km === "object" && typeof (km as Record<string, unknown>).profileDir === "string")
-      (km as Record<string, unknown>).profileDir = prefixed((km as Record<string, unknown>).profileDir);
-  }
-  return out as T;
 }

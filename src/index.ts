@@ -1,3 +1,4 @@
+export type * from "./core/contracts/hardware.js";
 export type * from "./core/contracts/task.js";
 export type * from "./core/contracts/result.js";
 export type * from "./core/contracts/errors.js";

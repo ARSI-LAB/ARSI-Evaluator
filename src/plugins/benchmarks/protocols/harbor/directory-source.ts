@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ function compareText(left: string, right: string): number {
 }
 
 export function createDirectoryBenchmarkSource(config: HarborConfig, verifier: Verifier, transport?: { apiBase: string; rawBase: string },
-  phaseTimeouts: PhaseTimeoutOverrides = {}): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
+  phaseTimeouts: PhaseTimeoutOverrides = {}, hardware: HardwareKind = "npu"): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
   const snapshots = new WeakMap<SourceLock, DirectorySnapshot>();
   async function snapshot(signal: AbortSignal): Promise<DirectorySnapshot> {
     if (!config.source) throw new Error("Missing directory source");
@@ -105,7 +106,7 @@ export function createDirectoryBenchmarkSource(config: HarborConfig, verifier: V
       const canonical = (files: { path: string; sha256: string }[]) => fingerprintConfig(files.sort((a, b) => compareText(a.path, b.path)) as JsonValue);
       if (canonical(actual) !== canonical(relevant.map(({ path, sha256 }) => ({ path, sha256 }))))
         throw new Error("Harbor source changed: task or shared assets differ from the source lock");
-      return loadGenericHarborTask(await checkedPath(current.directory, task.path), current.directory, ref.id, config, verifier, signal, phaseTimeouts);
+      return loadGenericHarborTask(await checkedPath(current.directory, task.path), current.directory, ref.id, config, verifier, signal, phaseTimeouts, hardware);
     },
   });
 }

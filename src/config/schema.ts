@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../core/contracts/hardware.js";
 import type { JsonValue, PhaseTimeoutOverrides } from "../core/contracts/task.js";
 
 export type CliOverrides = {
@@ -30,6 +31,8 @@ export type SolverSelection = Selection & { service: string };
 export type VerifierSelection = Selection & { service?: string };
 
 export type EffectiveConfig = {
+  /** Defaults to NPU for existing callers and saved configurations. */
+  hardware?: HardwareKind;
   /** Every declared model service. Callers bind the one they reference. */
   services: Record<string, ModelConfig>;
   benchmark: Selection;

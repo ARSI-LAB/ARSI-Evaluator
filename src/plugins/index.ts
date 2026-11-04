@@ -48,7 +48,7 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.evaluator.register("benchmark", "kernel", parseKernelConfig, (config, runtime) =>
     new KernelBenchmark({ ...config, manifest: runtime.resolvePath(config.manifest),
       profiling: { ...config.profiling, ...(config.profiling.cacheDir === undefined ? {} : { cacheDir: runtime.resolvePath(config.profiling.cacheDir) }) },
-      ...(config.kernelRoot === undefined ? {} : { kernelRoot: runtime.resolvePath(config.kernelRoot) }) }));
+      ...(config.kernelRoot === undefined ? {} : { kernelRoot: runtime.resolvePath(config.kernelRoot) }) }, runtime.hardware));
   ctx.evaluator.register("solver", "kernel-replay", (value: unknown) => {
     const config = expectRecord(value, "kernel-replay");
     rejectUnknown(config, [], "kernel-replay");
@@ -108,7 +108,7 @@ export async function apply(ctx: Context): Promise<void> {
     "harbor",
     parseHarborConfig,
     (config, runtime) => new HarborBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
-      ...(config.source?.kind === "local" ? { source: { ...config.source, path: runtime.resolvePath(config.source.path) } } : {}) }, undefined, runtime.verifier, runtime.phaseTimeouts),
+      ...(config.source?.kind === "local" ? { source: { ...config.source, path: runtime.resolvePath(config.source.path) } } : {}) }, undefined, runtime.verifier, runtime.phaseTimeouts, runtime.hardware),
     harborConfigTransport,
   );
   ctx.evaluator.register(

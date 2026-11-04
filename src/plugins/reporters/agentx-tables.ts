@@ -36,7 +36,7 @@ export function renderAgentXTables(value: JsonValue | undefined): string[] {
   for (const { taskId, summary } of summaries) {
     lines.push("", `### 测量点 ${escape(taskId)}`, "");
     if (!summary) {
-      lines.push("暂无有效测量摘要；状态见上方测量点表。推理服务与 NPU 采集状态未知。", "");
+      lines.push("暂无有效测量摘要；状态见上方测量点表。推理服务与硬件指标采集状态未知。", "");
       continue;
     }
     lines.push("| 测量点 | 指标 | 单位 | 均值 | P50 | P95 | P99 | 样本数 |",
@@ -72,7 +72,7 @@ export function renderAgentXTables(value: JsonValue | undefined): string[] {
       const npu = summary.telemetry.sources.filter(source => source.kind === "ascend");
       const status = (sources: typeof npu) => sources.length ? sources.every(source => source.status === "complete") ? "complete"
         : sources.every(source => source.status === "unavailable") ? "unavailable" : "partial" : "未启用";
-      lines.push(`采集状态：推理服务 ${status(vllm)}；NPU ${status(npu)}。`, "",
+      lines.push(`采集状态：推理服务 ${status(vllm)}；${npu.length ? `NPU ${status(npu)}` : "硬件指标未启用"}。`, "",
         "采集状态表示已保存指标的数据可用性，不要求每次监控抓取都成功；请求测评有效性以 Harness 判断为准。", "",
         `监控抓取失败次数：${summary.telemetry.collectionErrors ?? "未记录"}（全部端点合计，不能归属到某个来源）。临时失败后继续采集，保留已获得的统计。`, "",
         "Gauge 沿用上游采样统计；Counter 按各端点的采集顺序计算窗口内增量与每秒速率，不按可回拨的时间戳重排。窗口外快照不计入，可能与逐请求 token 汇总存在采样边界差额。各标签序列独立展示。硬件是指定设备与芯片的观察值，不代表单个请求独占的消耗。", "");
@@ -97,7 +97,7 @@ export function renderAgentXTables(value: JsonValue | undefined): string[] {
       }
       lines.push("监控缺失或告警不改变请求吞吐、延迟和 Harness 的测评有效性；使用硬件统计时需同时核对可用样本和采集问题。", "");
     } else {
-      lines.push("采集状态：推理服务未启用；NPU 未启用。", "");
+      lines.push("采集状态：推理服务未启用；硬件指标未启用。", "");
     }
   }
   lines.push("缺失值显示 —，不补成 0。usage 仅汇总预热与 profiling 均有统计的已知 token 数，不代表服务商账单。", "");

@@ -48,7 +48,7 @@ export async function diagnose(config: LoadedConfig, file: string, signal: Abort
       await check("AgentX Python", () => resolveAgentXPython(
         typeof config.experiment.solver.config.pythonExecutable === "string" ? config.experiment.solver.config.pythonExecutable : undefined, signal));
     if (config.experiment.solver.name === "agentx-replay" && ["local", "docker"].includes(env.name) && config.experiment.solver.config.telemetry !== undefined) {
-      const ascend = parseTelemetryConfig(config.experiment.solver.config.telemetry).ascend;
+      const ascend = parseTelemetryConfig(config.experiment.solver.config.telemetry, config.experiment.hardware).ascend;
       if (ascend && "mode" in ascend) await check("NPU host sampling control (no device queries)", () => checkHostTelemetry(signal,
         env.name === "local" && typeof config.experiment.solver.config.pythonExecutable === "string" ? config.experiment.solver.config.pythonExecutable : undefined));
     }
