@@ -66,3 +66,19 @@ test.each(["", "# default sources\n", "{}\n"])("inspect accepts an empty network
   } } });
   expect(out.join("\n")).not.toContain("fixture-secret");
 });
+
+test("inspect reports environment overrides even with an explicit network file and redacts proxy credentials", async () => {
+  const root = await mkdtemp(join(tmpdir(), "inspect-network-env-")); roots.push(root);
+  const file = join(root, "experiment.yaml"), network = join(root, "network.yaml");
+  await writeFile(file, "services:\n  default:\n    model: fixture\n    api_key: ${TEST_KEY}\n    base_url: https://model.invalid/v1\nbenchmark: gsm8k\n");
+  await writeFile(network, "proxy:\n  https: http://yaml.test\nsources:\n  huggingface: https://yaml.test\n");
+  vi.stubEnv("HTTPS_PROXY", "http://user:proxy-secret@env.test");
+  vi.stubEnv("HF_ENDPOINT", "https://env.test");
+  const out: string[] = [], errors: string[] = [];
+  expect(await runCli(["inspect", file, "--network", network], { out: text => out.push(text), error: text => errors.push(text) }), errors.join("\n")).toBe(0);
+  expect(JSON.parse(out.at(-1)!)).toMatchObject({ network: { configPath: network, settings: {
+    sources: { huggingface: "https://env.test" }, proxy: { host: { https: "http://redacted:redacted@env.test/" } },
+  } } });
+  expect(out.join("\n")).not.toContain("proxy-secret");
+  expect(diagnoseNetwork).not.toHaveBeenCalled();
+});

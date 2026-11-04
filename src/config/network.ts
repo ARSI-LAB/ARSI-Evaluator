@@ -132,24 +132,64 @@ function expand(value: unknown, env: NodeJS.ProcessEnv): JsonValue {
   throw new TypeError("Network configuration must contain JSON-compatible values");
 }
 
-/** Existing environment support lives here, not in individual downloaders. */
-export function networkEnvironmentTemplate(env: NodeJS.ProcessEnv): JsonValue {
+type NetworkTemplateObject = { [key: string]: JsonValue };
+
+function mergeNetworkTemplate(base: JsonValue | undefined, overrides: NetworkTemplateObject, label = "network"): NetworkTemplateObject {
+  let result: NetworkTemplateObject;
+  if (base === undefined || base === null && label.startsWith("network.proxy")) result = {};
+  else {
+    if (base === null || typeof base !== "object" || Array.isArray(base)) throw new TypeError(`${label} must be an object`);
+    result = { ...base };
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    result[key] = value !== null && typeof value === "object" && !Array.isArray(value)
+      ? mergeNetworkTemplate(result[key], value, `${label}.${key}`) : value;
+  }
+  return result;
+}
+
+/** Override only nonempty variables; retain references for expansion on execution nodes. */
+function applyNetworkEnvironment(template: JsonValue, env: NodeJS.ProcessEnv): JsonValue {
+  const raw = record(template, ["version", "proxy", "sources", "docker", "git"], "network");
+  const proxy: NetworkTemplateObject = {}, python: NetworkTemplateObject = {}, sources: NetworkTemplateObject = {}, docker: NetworkTemplateObject = {};
+  const reference = (names: string[]) => { const key = names.find(name => env[name]); return key ? `\${${key}}` : undefined; };
+  const assign = (target: NetworkTemplateObject, key: string, names: string[]) => {
+    const value = reference(names);
+    if (value !== undefined) target[key] = value;
+  };
+  assign(proxy, "http", ["HTTP_PROXY", "http_proxy"]);
+  assign(proxy, "https", ["HTTPS_PROXY", "https_proxy"]);
+  const noProxy = env.NO_PROXY || env.no_proxy;
+  if (noProxy) proxy.noProxy = noProxy.split(",").map(item => item.trim()).filter(Boolean);
+  assign(sources, "huggingface", ["HF_ENDPOINT"]);
+  assign(python, "index", ["UV_DEFAULT_INDEX", "UV_INDEX_URL", "PIP_INDEX_URL"]);
+  if (env.PIP_EXTRA_INDEX_URL) python.extraIndexes = env.PIP_EXTRA_INDEX_URL.split(/\s+/u).filter(Boolean);
+  assign(python, "interpreter", ["UV_PYTHON_INSTALL_MIRROR"]);
+  if (Object.keys(python).length) sources.python = python;
+  const npm = reference(["NPM_CONFIG_REGISTRY", "npm_config_registry"]);
+  if (npm) sources.npm = { registry: npm };
+  if (env.EVALUATOR_NODE_MIRROR) sources.node = { dist: "${EVALUATOR_NODE_MIRROR}" };
+  if (env.EVALUATOR_GITHUB_MIRROR) sources.github = { repository: "${EVALUATOR_GITHUB_MIRROR}" };
   const apt = env.EVALUATOR_DEBIAN_MIRROR;
-  const reference = (names: string[]) => { const key = names.find(name => env[name]); return key ? `\${${key}}` : null; };
-  return { version: 1, proxy: { http: reference(["HTTP_PROXY", "http_proxy"]), https: reference(["HTTPS_PROXY", "https_proxy"]),
-    noProxy: (env.NO_PROXY || env.no_proxy || "").split(",").map(item => item.trim()).filter(Boolean) },
-    sources: { huggingface: env.HF_ENDPOINT || "https://huggingface.co",
-      python: { index: env.UV_DEFAULT_INDEX || env.UV_INDEX_URL || env.PIP_INDEX_URL || "https://pypi.org/simple",
-        extraIndexes: (env.PIP_EXTRA_INDEX_URL || "").split(/\s+/u).filter(Boolean), interpreter: env.UV_PYTHON_INSTALL_MIRROR || null },
-      npm: { registry: env.NPM_CONFIG_REGISTRY || env.npm_config_registry || "https://registry.npmjs.org" },
-      node: { dist: env.EVALUATOR_NODE_MIRROR || "https://nodejs.org/dist" },
-      github: { repository: env.EVALUATOR_GITHUB_MIRROR || "https://github.com" },
-      apt: apt ? { debian: `${apt.replace(/\/$/u, "")}/debian`, debianSecurity: `${apt.replace(/\/$/u, "")}/debian-security`,
-        ubuntu: `${apt.replace(/\/$/u, "")}/ubuntu`, ubuntuSecurity: `${apt.replace(/\/$/u, "")}/ubuntu`, ubuntuPorts: `${apt.replace(/\/$/u, "")}/ubuntu-ports` } : {} },
-    docker: { buildNetwork: env.EVALUATOR_DOCKER_BUILD_NETWORK || "default" } };
+  if (apt) sources.apt = Object.fromEntries(Object.entries({ debian: "debian", debianSecurity: "debian-security",
+    ubuntu: "ubuntu", ubuntuSecurity: "ubuntu", ubuntuPorts: "ubuntu-ports" }).map(([key, path]) =>
+    [key, `\${EVALUATOR_DEBIAN_MIRROR}${apt.endsWith("/") ? "" : "/"}${path}`]));
+  assign(docker, "buildNetwork", ["EVALUATOR_DOCKER_BUILD_NETWORK"]);
+  const overrides: NetworkTemplateObject = {};
+  if (Object.keys(proxy).length) {
+    const common = record(raw.proxy === null ? undefined : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
+    const locationsOverride = record(common.overrides, locations, "network.proxy.overrides");
+    // Global environment routes win over every YAML location, including explicit null.
+    overrides.proxy = { ...proxy, overrides: Object.fromEntries(locations.map(location => [location,
+      locationsOverride[location] === null ? { http: null, https: null, noProxy: [], ...proxy } : { ...proxy }])) };
+  }
+  if (Object.keys(sources).length) overrides.sources = sources;
+  if (Object.keys(docker).length) overrides.docker = docker;
+  return mergeNetworkTemplate(template, overrides);
 }
 
 export function networkDocument(template: JsonValue, env: NodeJS.ProcessEnv, origin = "template"): NetworkDocument {
+  template = applyNetworkEnvironment(template, env);
   const settings = parseNetworkSettings(expand(template, env));
   return { template: structuredClone(template), settings, origin,
     digest: createHash("sha256").update(JSON.stringify(redactNetwork(settings))).digest("hex") };

@@ -32,7 +32,7 @@ $env:EVALUATOR_HTTP2 = "1"
 
 任务镜像、Solver 运行时和裁判镜像分别构建，但读取同一次运行的网络 YAML。`sources.python`、`sources.npm`、`sources.github`、`sources.apt` 指定安装源，`proxy.overrides.build` 指定构建代理，`docker.buildNetwork` 选择 `default` 或 `host`。缺省使用官方源；代理中的回环地址不自动改写，需填写容器可访问的地址。
 
-`PIP_IGNORE_INSTALLED` 是独立的安装行为选项，允许 `0/1/false/true`，默认不设置。它改变 pip 安装行为并参与构建缓存标识，不属于网络换源配置。其他网络变量需在网络 YAML 中显式引用，字段及优先级见[网络指南](../network.zh-CN.md)。使用 Docker 适配脚本时，在 `verifier.config.dockerExecutable` 中也显式选择相应脚本；Environment 与 Verifier 的执行器分别配置。
+`PIP_IGNORE_INSTALLED` 是独立的安装行为选项，允许 `0/1/false/true`，默认不设置。它改变 pip 安装行为并参与构建缓存标识，不属于网络换源配置。受支持的非空网络环境变量优先于网络 YAML，字段及优先级见[网络指南](../network.zh-CN.md)。使用 Docker 适配脚本时，在 `verifier.config.dockerExecutable` 中也显式选择相应脚本；Environment 与 Verifier 的执行器分别配置。
 
 构建成功不代表做题进程也能下载依赖。普通及 Compose 主容器从网络配置获得 `NPM_CONFIG_REGISTRY`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `UV_DEFAULT_INDEX`，任务或 Environment 显式设置的同名变量优先；`model-api` 隔离环境不继承这些部署变量。
 

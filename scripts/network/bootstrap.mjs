@@ -7532,7 +7532,66 @@ function expand(value, env2) {
   if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, env2)]));
   throw new TypeError("Network configuration must contain JSON-compatible values");
 }
+function mergeNetworkTemplate(base, overrides, label = "network") {
+  let result;
+  if (base === void 0 || base === null && label.startsWith("network.proxy")) result = {};
+  else {
+    if (base === null || typeof base !== "object" || Array.isArray(base)) throw new TypeError(`${label} must be an object`);
+    result = { ...base };
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    result[key] = value !== null && typeof value === "object" && !Array.isArray(value) ? mergeNetworkTemplate(result[key], value, `${label}.${key}`) : value;
+  }
+  return result;
+}
+function applyNetworkEnvironment(template, env2) {
+  const raw = record(template, ["version", "proxy", "sources", "docker", "git"], "network");
+  const proxy2 = {}, python = {}, sources = {}, docker = {};
+  const reference = (names) => {
+    const key = names.find((name) => env2[name]);
+    return key ? `\${${key}}` : void 0;
+  };
+  const assign = (target, key, names) => {
+    const value = reference(names);
+    if (value !== void 0) target[key] = value;
+  };
+  assign(proxy2, "http", ["HTTP_PROXY", "http_proxy"]);
+  assign(proxy2, "https", ["HTTPS_PROXY", "https_proxy"]);
+  const noProxy = env2.NO_PROXY || env2.no_proxy;
+  if (noProxy) proxy2.noProxy = noProxy.split(",").map((item) => item.trim()).filter(Boolean);
+  assign(sources, "huggingface", ["HF_ENDPOINT"]);
+  assign(python, "index", ["UV_DEFAULT_INDEX", "UV_INDEX_URL", "PIP_INDEX_URL"]);
+  if (env2.PIP_EXTRA_INDEX_URL) python.extraIndexes = env2.PIP_EXTRA_INDEX_URL.split(/\s+/u).filter(Boolean);
+  assign(python, "interpreter", ["UV_PYTHON_INSTALL_MIRROR"]);
+  if (Object.keys(python).length) sources.python = python;
+  const npm = reference(["NPM_CONFIG_REGISTRY", "npm_config_registry"]);
+  if (npm) sources.npm = { registry: npm };
+  if (env2.EVALUATOR_NODE_MIRROR) sources.node = { dist: "${EVALUATOR_NODE_MIRROR}" };
+  if (env2.EVALUATOR_GITHUB_MIRROR) sources.github = { repository: "${EVALUATOR_GITHUB_MIRROR}" };
+  const apt = env2.EVALUATOR_DEBIAN_MIRROR;
+  if (apt) sources.apt = Object.fromEntries(Object.entries({
+    debian: "debian",
+    debianSecurity: "debian-security",
+    ubuntu: "ubuntu",
+    ubuntuSecurity: "ubuntu",
+    ubuntuPorts: "ubuntu-ports"
+  }).map(([key, path]) => [key, `\${EVALUATOR_DEBIAN_MIRROR}${apt.endsWith("/") ? "" : "/"}${path}`]));
+  assign(docker, "buildNetwork", ["EVALUATOR_DOCKER_BUILD_NETWORK"]);
+  const overrides = {};
+  if (Object.keys(proxy2).length) {
+    const common = record(raw.proxy === null ? void 0 : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
+    const locationsOverride = record(common.overrides, locations, "network.proxy.overrides");
+    overrides.proxy = { ...proxy2, overrides: Object.fromEntries(locations.map((location) => [
+      location,
+      locationsOverride[location] === null ? { http: null, https: null, noProxy: [], ...proxy2 } : { ...proxy2 }
+    ])) };
+  }
+  if (Object.keys(sources).length) overrides.sources = sources;
+  if (Object.keys(docker).length) overrides.docker = docker;
+  return mergeNetworkTemplate(template, overrides);
+}
 function networkDocument(template, env2, origin = "template") {
+  template = applyNetworkEnvironment(template, env2);
   const settings = parseNetworkSettings(expand(template, env2));
   return {
     template: structuredClone(template),

@@ -1,5 +1,5 @@
 import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
-import { networkDocument, networkEnvironmentTemplate } from "../../src/config/network.js";
+import { networkDocument } from "../../src/config/network.js";
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
