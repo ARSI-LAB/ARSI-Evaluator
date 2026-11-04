@@ -48,7 +48,11 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 
 ## 📦 Installation and Deployment
 
-Requires **Node.js 24.22.1 or later 24.x, pnpm 11 or 12, Git**, and read access to the private AgentBundle GitHub repository. If pnpm is missing, run `npm install --global pnpm` first.
+Requirements:
+
+1. **Node.js** >= 24.22.1 (24.x).
+2. **pnpm** >= 11 < 13. If missing, run `npm install --global pnpm` first.
+3. **Git**, required to fetch the AgentBundle dependency.
 
 Run from the Evaluator repository root:
 

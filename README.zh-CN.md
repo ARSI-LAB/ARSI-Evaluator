@@ -48,7 +48,11 @@ ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 
 ## 📦 安装部署
 
-需要 **Node.js 24.22.1 或更新的 24.x、pnpm 11 或 12、Git**，以及 AgentBundle GitHub 私仓的读取权限。没有 pnpm 时，先执行 `npm install --global pnpm`。
+环境要求：
+
+1. **Node.js** >= 24.22.1（24.x）。
+2. **pnpm** >= 11 < 13。没有 pnpm 时，先执行 `npm install --global pnpm`。
+3. **Git**，用于拉取 AgentBundle 依赖。
 
 在 Evaluator 仓库根目录执行：
 
