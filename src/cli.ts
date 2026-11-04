@@ -9,7 +9,7 @@ import { kernelBench, kernelPrecision, kernelProfile, KernelExecError, type Kern
 import { formatError, redactDiagnostic, summarizeDiagnostic } from "./core/diagnostics.js";
 import type { ProgressEvent } from "./core/progress.js";
 import type { BenchmarkComponents } from "./core/contracts/components.js";
-import { openPluginRegistry, type PluginRegistry } from "./plugin-runtime.js";
+import { openPluginRegistry, TRACER_CLI, type PluginRegistry } from "./plugin-runtime.js";
 import { enumerateSelectedTasks } from "./core/task-selection.js";
 import { classifyError, normalizeFailure } from "./core/errors/classify.js";
 import type { Phase } from "./core/contracts/result.js";
@@ -30,7 +30,7 @@ const defaultIO: CliIO = {
 };
 const help = `
 Run an experiment:
-ember-evaluator run <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
+ember-evaluator run <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--tracer [url]] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
 
 Prepare images and runtimes without evaluation:
 ember-evaluator warmup <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--task-ids-file <json>] [model overrides]
@@ -52,6 +52,12 @@ ember-evaluator config resolve <yaml> [--patch <path>] [model overrides]
 
 Generate a report:
 ember-evaluator report <run-dir>
+
+Manage the tracer plugin Collector (plugins/tracer):
+ember-evaluator tracer serve [--url <url>] [--db <path>] [--spool <path>] [--port <n>] [--timeout <ms>]
+ember-evaluator tracer stop [--url <url>] [--db <path>] [--port <n>]
+ember-evaluator tracer status [--url <url>] [--db <path>] [--port <n>]
+ember-evaluator tracer logs [--log <path>] [--lines <n>] [--follow]
 
 Run kernel measurement atoms (bridge to the kernel executor; precision and bench follow
 the original kernel verify-then-benchmark flow, profile and roofline are independent):
@@ -76,12 +82,25 @@ type Command =
   | { kind: "config-explain"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "config-resolve"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
+  | ({ kind: "tracer"; argv: string[] })
   | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; device: number; python?: string }
   | { kind: "kernel-precision"; problem: string; kernel: string; out: string; seeds: number[]; device: number; python?: string }
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
   | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string };
+
+type TracerCliResult = { ok: true; status: number } | { ok: false; error: unknown; usage: boolean };
+type TracerCli = { runTracerCli(argv: string[], io: CliIO, signal: AbortSignal): Promise<TracerCliResult> };
+
+/** The tracer subcommands are owned by the plugin; the host only owns the `tracer` verb. */
+async function loadTracerCli(): Promise<TracerCli> {
+  try {
+    return (await import(TRACER_CLI)) as TracerCli;
+  } catch (error) {
+    throw new Error(`the tracer plugin CLI is missing at ${TRACER_CLI}; build it with "pnpm --dir plugins/tracer build"`, { cause: error });
+  }
+}
 
 export function parseArgs(argv: string[]): Command {
   if (!argv.length || (argv.length === 1 && ["--help", "-h"].includes(argv[0]!))) return { kind: "help" };
@@ -102,7 +121,7 @@ export function parseArgs(argv: string[]): Command {
   }
   if (argv[0] === "warmup") {
     const parsed = parseArgs(["run", ...argv.slice(1)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined) throw new TypeError("warmup does not accept --resume or --dry-run");
+    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.overrides.tracer !== undefined) throw new TypeError("warmup does not accept --resume, --dry-run or --tracer");
     const { resume: _resume, ...options } = parsed;
     return { ...options, kind: "warmup" };
   }
@@ -140,7 +159,7 @@ export function parseArgs(argv: string[]): Command {
   }
   if (argv[0] === "doctor") {
     const parsed = parseArgs(["run", ...argv.slice(1)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined)
+    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined || parsed.overrides.tracer !== undefined)
       throw new TypeError("doctor accepts only --patch and model overrides");
     return { kind: "doctor", file: parsed.file, overrides: parsed.overrides,
       ...(parsed.patchPath === undefined ? {} : { patchPath: parsed.patchPath }) };
@@ -195,11 +214,12 @@ export function parseArgs(argv: string[]): Command {
   }
   if (argv[0] === "config" && (argv[1] === "explain" || argv[1] === "resolve")) {
     const parsed = parseArgs(["run", ...argv.slice(2)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined)
+    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined || parsed.overrides.tracer !== undefined)
       throw new TypeError("config commands accept only --patch and model overrides");
     return { kind: argv[1] === "explain" ? "config-explain" : "config-resolve", file: parsed.file,
       overrides: parsed.overrides, ...(parsed.patchPath === undefined ? {} : { patchPath: parsed.patchPath }) };
   }
+  if (argv[0] === "tracer") return { kind: "tracer", argv: argv.slice(1) };
   if (argv[0] !== "run" || !argv[1] || argv[1].startsWith("-"))
     throw new TypeError("Expected run <yaml> or report <run-dir>");
   const flags: Record<string, keyof CliOverrides> = {
@@ -243,6 +263,14 @@ export function parseArgs(argv: string[]): Command {
       const value = argv[index + 1];
       resume = value !== undefined && !value.startsWith("--") ? value : null;
       index += resume === null ? 1 : 2;
+      continue;
+    }
+    if (argv[index] === "--tracer") {
+      if (overrides.tracer !== undefined) throw new TypeError("Repeated --tracer option");
+      const value = argv[index + 1];
+      const url = value !== undefined && !value.startsWith("--") ? value : undefined;
+      overrides.tracer = url === undefined ? {} : { url };
+      index += url === undefined ? 1 : 2;
       continue;
     }
     const field = flags[argv[index]!];
@@ -362,6 +390,8 @@ async function runCliCommand(
   let networkHintShown = false;
   let debugHintShown = false;
   const writeHint = (message: string) => io.error(`[hint] ${message}`);
+  const warning = (text: string, level: "info" | "warning" = "warning") =>
+    io.error(`[${((performance.now() - started) / 1000).toFixed(1)}s] [${level}] ${text}`);
   const debugHint = () => {
     if (!debug && !debugHintShown) {
       debugHintShown = true;
@@ -430,6 +460,32 @@ async function runCliCommand(
   if (command.kind === "help") {
     io.out(help);
     return 0;
+  }
+  if (command.kind === "tracer") {
+    // Collector operations are infrastructure failures, so they must not use the task-oriented error taxonomy
+    const report = (label: string, error: unknown) => {
+      const text = formatError(error, secrets);
+      io.error(redactDiagnostic(`[tracer] ERROR during ${label}:\n${text}`, secrets));
+      hint(text);
+    };
+    let result: TracerCliResult;
+    try {
+      const { runTracerCli } = await loadTracerCli();
+      result = await runTracerCli(command.argv, io, signal);
+    } catch (error) {
+      report("loading the tracer plugin", error);
+      return signal.aborted ? 130 : 1;
+    }
+    if (result.ok) return result.status;
+    if (result.usage) {
+      phase = "arguments";
+      detail = "Parsing tracer arguments";
+      failure(result.error);
+      io.error(help);
+      return 2;
+    }
+    report("managing the tracer Collector", result.error);
+    return signal.aborted ? 130 : 1;
   }
   if (command.kind === "cleanup-images") {
     try {
@@ -546,7 +602,8 @@ async function runCliCommand(
     try {
       const taskIds = await readTaskIds(command.taskIdsFile);
       progress({ phase: "config", message: `Loading and validating ${resolve(command.file)}` });
-      registry = await openPluginRegistry(command.patchPath);
+      registry = await openPluginRegistry(command.patchPath,
+        command.overrides.tracer === undefined ? {} : { tracer: true });
       config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
       applyTaskIds(config, taskIds);
       secrets.push(...Object.values(config.auths).map(auth => auth.value));
@@ -599,6 +656,7 @@ async function runCliCommand(
       const result = await executeWarmup({ configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
         ...(execution ? { execution } : {}),
         ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
+        onWarning: warning,
         onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); } });
       io.out(JSON.stringify(result));
       return result.status === "ready" ? 0 : 1;
@@ -617,6 +675,7 @@ async function runCliCommand(
     ...(taskIds === undefined ? {} : { taskIds }),
     ...(execution === undefined ? {} : { execution }),
     onProgress: progress,
+    onWarning: warning,
     onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); },
     onDiagnostic: diagnostic => { phase = diagnostic.phase; failure(diagnostic.error); },
     onDeploymentLog: io.out,

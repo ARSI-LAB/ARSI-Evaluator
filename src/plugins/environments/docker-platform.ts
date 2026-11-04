@@ -60,7 +60,7 @@ export class PlatformCapabilityDetector {
   private readonly emulation = new DockerBuildCache<void>();
 
   constructor(private readonly command: DockerCommand,
-    private readonly onWarning: (message: string) => void = message => { process.stderr.write(`[warn] [environment] ${message}\n`); }) {}
+    private readonly onWarning: (message: string) => void = message => { process.stderr.write(`[warn] ${message}\n`); }) {}
 
   async nativePlatform(signal: AbortSignal): Promise<ContainerPlatform> {
     return this.native.get("daemon", signal, async active => {
@@ -80,7 +80,7 @@ export class PlatformCapabilityDetector {
     signal.throwIfAborted();
     if (resolution.execution === "native") return;
     await this.emulation.get(resolution.platform, signal, async active => {
-      this.onWarning(`The target platform is ${resolution.platform}, but the execution node is ${resolution.nativePlatform}. Checking and using QEMU emulation may reduce performance, especially for compilation and compute-intensive tasks, and may affect execution time, timeout decisions and evaluation results.`);
+      this.onWarning(`[environment] The target platform is ${resolution.platform}, but the execution node is ${resolution.nativePlatform}. Checking and using QEMU emulation may reduce performance, especially for compilation and compute-intensive tasks, and may affect execution time, timeout decisions and evaluation results.`);
       // Pull failures retain their registry/network classification; they do not
       // prove that emulation is unavailable.
       const image = await prepareProbeImage(active);

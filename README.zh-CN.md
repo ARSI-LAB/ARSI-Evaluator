@@ -82,6 +82,53 @@ ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 
 其他题库和运行组合见 [Playbook 示例](playbook/README.md)，续跑、报告和日常操作见[用户文档](docs/users/README.zh-CN.md)。
 
+## 🛰️ Tracer：轨迹展示、优化反馈与运维
+
+仓库内置的 `tracer` 插件会把每次 attempt 实时推送到本地 Collector：一个轻量 HTTP 服务，用于展示 Agent 轨迹与性能指标，产出确定性反馈（可选 LLM 归因），并导出文件供下游 RSI 使用。配置的 Store 始终是权威数据源，推送失败只产生告警，不会中断评测。
+
+按需为单次运行开启，插件会自动拉起 Collector：
+
+```bash
+ember run playbook/gsm8k/gsm8k-quick-start.yaml --tracer
+```
+
+插件是独立包，首次使用前需要单独构建（仓库根构建不包含它）：
+
+```bash
+pnpm --dir plugins/tracer install --ignore-workspace --ignore-scripts
+pnpm --dir plugins/tracer build
+```
+
+Collector 是 Python 服务，需要一个能 `import fastapi, uvicorn` 的解释器（Python 3.9+），首次使用前装一次依赖：
+
+```bash
+python3 -m pip install fastapi uvicorn
+```
+
+插件启动时会自动选择解释器：当前激活的 virtualenv/conda 环境 → `python3`/`python` → `python3.13`…`python3.9`，取第一个满足依赖的。只有自动探测选错时，才需要 `TRACER_PYTHON=/path/to/python` 指定。Collector 以子进程启动，环境变量在启动那一刻继承，改动后先 `ember tracer stop` 再 `ember tracer serve`。
+
+用四个子命令管理 Collector：
+
+| 命令 | 作用 |
+| --- | --- |
+| `ember tracer serve [--url <url>] [--db <path>] [--spool <path>] [--port <n>] [--timeout <ms>]` | 启动 Collector，或复用已健康的实例；在数据库同级写入 `tracer.pid` |
+| `ember tracer status [--url <url>] [--db <path>] [--port <n>]` | 输出 JSON 状态；不健康时以非零码退出 |
+| `ember tracer logs [--log <path>] [--lines <n>] [--follow]` | 输出 `collector.log` 末尾内容，可跟随新增日志 |
+| `ember tracer stop [--url <url>] [--db <path>] [--port <n>]` | 按 `tracer.pid` 停止进程（先 SIGTERM，5 秒后升级为 SIGKILL） |
+
+默认值为 `http://127.0.0.1:8787`、`plugins/tracer/trace.db`、`plugins/tracer/spool`、`plugins/tracer/collector.log`，可用 `TRACER_URL`、`TRACER_DB`、`TRACER_SPOOL`、`TRACER_COLLECTOR`、`TRACER_PYTHON`、`TRACER_TOKEN` 覆盖。
+
+LLM 分析是可选能力；未配置 provider 时 Collector 只走确定性规则，反馈页的 LLM 区块会标记为未配置。要启用，准备一个 OpenAI 兼容的 `/chat/completions` 服务：
+
+```bash
+export TRACER_LLM_BASE_URL="https://your-model-service.example/v1"
+export TRACER_LLM_MODEL="your-model-id"
+export TRACER_LLM_API_KEY="your-api-key"
+ember tracer serve
+```
+
+`TRACER_LLM_BASE_URL`、`TRACER_LLM_MODEL`、`TRACER_LLM_API_KEY` 会分别回退到 `MODEL_ENDPOINT`、`MODEL_NAME`、`MODEL_API_KEY`。`TRACER_LLM_TIMEOUT` 默认 120 秒，`TRACER_LLM_MAX_TOKENS` 默认 8000（推理模型需要更大预算）。这些变量在 Collector 启动时读取，所以要在 `ember tracer serve` 之前设置，或者改完后重启 Collector。
+
 ## 📖 使用指南
 
 按操作目标阅读对应文档：

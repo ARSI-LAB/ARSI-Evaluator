@@ -29,6 +29,8 @@ export type EvaluatorRunOptions = {
   /** true selects the only existing run; a string selects a run ID. */
   resume?: boolean | string;
   onProgress?: ProgressListener;
+  /** Component warnings must go through the CLI writer so the live progress region is erased first. */
+  onWarning?: (message: string, level?: "info" | "warning") => void;
 };
 
 export type ExecutionDiagnostic = { phase: string; error: unknown };
@@ -113,7 +115,8 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
   try {
     signal.throwIfAborted();
     progress({ phase: "config", message: `Loading and validating ${file}` });
-    registry = options.execution?.registry ?? await openPluginRegistry(patchPath);
+    registry = options.execution?.registry ?? await openPluginRegistry(patchPath,
+      overrides.tracer === undefined ? {} : { tracer: true });
     config = options.execution?.config ?? await loadConfig(file, overrides, env, { registry,
       ...(patchPath === undefined ? {} : { patchPath }) });
     secrets.push(...Object.values(config.auths).map(auth => auth.value));
@@ -152,7 +155,8 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
         diagnose(new Error(jobs.collectionError ?? jobs.reportError ?? "Ray Jobs result collection failed"));
       }
     } else {
-      components = await bootstrap(config, dirname(file), patchPath, undefined, registry);
+      components = await bootstrap(config, dirname(file), patchPath, options.onWarning, registry, undefined,
+        overrides.tracer === undefined ? {} : { tracer: overrides.tracer });
       if (resume !== undefined) progress({ phase: "resume", message: "Locating previous run" });
       const resumeDirectory = resume === undefined ? undefined : await resolveResumeRun(experiment.output.directory, resume);
       const snapshot = await runEngine({ components, config, signal, onProgress: progress,

@@ -82,6 +82,53 @@ The model service must support OpenAI Chat Completions and tool calling. When th
 
 See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for resume, reports, and daily operations.
 
+## 🛰️ Tracer: Trajectory Visualization, Feedback, and Operations
+
+The bundled `tracer` plugin streams every attempt into a local Collector: a small HTTP service that renders agent trajectories and profiling metrics, produces deterministic feedback with optional LLM attribution, and exports files for downstream RSI tooling. The configured store stays authoritative, and transport failures never block an evaluation.
+
+Enable it for a run; the plugin starts the Collector on demand:
+
+```bash
+ember run playbook/gsm8k/gsm8k-quick-start.yaml --tracer
+```
+
+The plugin is a separate package, so build it once before the first use (the repository build does not cover it):
+
+```bash
+pnpm --dir plugins/tracer install --ignore-workspace --ignore-scripts
+pnpm --dir plugins/tracer build
+```
+
+The Collector is a Python service, so the interpreter it uses needs `fastapi` and `uvicorn` once (Python 3.9+):
+
+```bash
+python3 -m pip install fastapi uvicorn
+```
+
+The plugin picks the interpreter automatically: an active virtualenv/conda environment, then `python3`/`python`, then `python3.13`…`python3.9`, taking the first one that satisfies the imports. Set `TRACER_PYTHON=/path/to/python` only when that detection picks the wrong interpreter. The Collector is a child process, so it inherits environment variables when it starts; after changing them run `ember tracer stop` and then `ember tracer serve` again.
+
+Manage the Collector with four subcommands:
+
+| Command | Purpose |
+| --- | --- |
+| `ember tracer serve [--url <url>] [--db <path>] [--spool <path>] [--port <n>] [--timeout <ms>]` | Start the Collector, or reuse a healthy one; writes `tracer.pid` next to the database |
+| `ember tracer status [--url <url>] [--db <path>] [--port <n>]` | Print JSON status; exits non-zero when the Collector is unhealthy |
+| `ember tracer logs [--log <path>] [--lines <n>] [--follow]` | Print the tail of `collector.log`, optionally following new output |
+| `ember tracer stop [--url <url>] [--db <path>] [--port <n>]` | Stop the process recorded in `tracer.pid` (SIGTERM, escalating to SIGKILL after 5 seconds) |
+
+Defaults are `http://127.0.0.1:8787`, `plugins/tracer/trace.db`, `plugins/tracer/spool`, and `plugins/tracer/collector.log`. Override them with `TRACER_URL`, `TRACER_DB`, `TRACER_SPOOL`, `TRACER_COLLECTOR`, `TRACER_PYTHON`, or `TRACER_TOKEN`.
+
+LLM analysis is optional; without a provider the Collector runs rules-only and the feedback page marks the LLM section as unconfigured. Enable it with an OpenAI-compatible `/chat/completions` service:
+
+```bash
+export TRACER_LLM_BASE_URL="https://your-model-service.example/v1"
+export TRACER_LLM_MODEL="your-model-id"
+export TRACER_LLM_API_KEY="your-api-key"
+ember tracer serve
+```
+
+`TRACER_LLM_BASE_URL`, `TRACER_LLM_MODEL`, and `TRACER_LLM_API_KEY` fall back to `MODEL_ENDPOINT`, `MODEL_NAME`, and `MODEL_API_KEY`. `TRACER_LLM_TIMEOUT` defaults to 120 seconds and `TRACER_LLM_MAX_TOKENS` to 8000, which reasoning models need. The Collector reads these variables when it starts, so set them before `ember tracer serve` or restart it afterwards.
+
 ## 📖 Guides
 
 Choose a guide for your task:

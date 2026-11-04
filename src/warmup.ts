@@ -108,6 +108,7 @@ export async function warmupSelectedTasks(components: RunComponents, config: Loa
 
 export async function executeWarmup(options: { configPath: string; patchPath?: string; overrides?: CliOverrides;
   taskIds?: string[]; signal: AbortSignal; onProgress?: ProgressListener;
+  onWarning?: (message: string, level?: "info" | "warning") => void;
   execution?: { config: LoadedConfig; registry: PluginRegistry };
   onLoaded?: (config: LoadedConfig) => void }): Promise<WarmupSummary> {
   const file = resolve(options.configPath);
@@ -147,7 +148,7 @@ export async function executeWarmup(options: { configPath: string; patchPath?: s
         log: message => progress({ phase: "deployment", message }) });
     }
     progress({ phase: "bootstrap", message: "Initializing plugins for image warmup" });
-    components = await bootstrap(config, dirname(file), options.patchPath, undefined, registry);
+    components = await bootstrap(config, dirname(file), options.patchPath, options.onWarning, registry);
     const release = components.scheduler.executionLocation === "remote" ? undefined : await components.environment.acquireImageLease?.(signal);
     let result: WarmupSummary;
     try { result = await warmupSelectedTasks(components, config, signal, progress, secrets); }

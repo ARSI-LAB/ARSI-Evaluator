@@ -13,7 +13,10 @@ import type { Verifier } from "./contracts/verifier.js";
 import { parseConfigProfile, type ConfigProfile } from "../config/profiles.js";
 import type { PluginConfigTransport } from "./contracts/config-transport.js";
 
-export type PluginRole = "benchmark" | "environment" | "solver" | "verifier" | "metrics" | "reporter" | "store" | "scheduler";
+export type PluginRole = "benchmark" | "environment" | "solver" | "verifier" | "metrics" | "reporter" | "store" | "store-decorator" | "scheduler";
+
+/** Wraps the configured store without replacing it, e.g. to mirror evidence elsewhere. */
+export type StoreDecorator = (inner: RunStore) => RunStore;
 
 export type RoleImplementations = {
   benchmark: Benchmark;
@@ -23,6 +26,7 @@ export type RoleImplementations = {
   metrics: Metrics;
   reporter: Reporter;
   store: RunStore;
+  "store-decorator": StoreDecorator;
   scheduler: TaskScheduler;
 };
 
@@ -42,7 +46,7 @@ export type PluginFactoryContext = {
   verifier?: Verifier;
   verifierService?: string;
   /** Nonfatal runtime diagnostics; never include credentials or private task data. */
-  onWarning?: (message: string) => void;
+  onWarning?: (message: string, level?: "info" | "warning") => void;
   /** All declared services. A solver applies `solverService` from this map. */
   services: Record<string, ServiceBinding>;
   solverService: string;

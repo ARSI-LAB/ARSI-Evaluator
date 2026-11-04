@@ -10,7 +10,7 @@ import type { PluginFactoryContext } from "./core/registry.js";
 import { fingerprintImageConfig } from "./core/image-config.js";
 import type { ConfigTransportLookup } from "./core/contracts/config-transport.js";
 
-export function createPluginRuntime(config: LoadedConfig, experimentDir: string, pluginPatchPath?: string, onWarning?: (message: string) => void, configTransport?: ConfigTransportLookup) {
+export function createPluginRuntime(config: LoadedConfig, experimentDir: string, pluginPatchPath?: string, onWarning?: (message: string, level?: "info" | "warning") => void, configTransport?: ConfigTransportLookup) {
   assertServiceBindings(config);
   const configDirectory = resolve(experimentDir);
   const services = Object.fromEntries(
@@ -53,13 +53,32 @@ async function createBenchmark(
   return benchmark;
 }
 
+export type BootstrapOptions = {
+  /** Mirrors evidence into the tracer service; the configured store stays authoritative. */
+  tracer?: { url?: string };
+};
+
+async function decorateStore(
+  registry: PluginRegistry,
+  inner: RunComponents["store"],
+  runtime: PluginFactoryContext,
+  tracer: { url?: string },
+): Promise<RunComponents["store"]> {
+  const createDecorator = registry.ctx.evaluator.prepare("store-decorator", {
+    name: "tracer",
+    config: tracer.url === undefined ? {} : { url: tracer.url },
+  });
+  return (await createDecorator(runtime))(inner);
+}
+
 export async function bootstrap(
   config: LoadedConfig,
   experimentDir: string,
   patchPath?: string,
-  onWarning?: (message: string) => void,
+  onWarning?: (message: string, level?: "info" | "warning") => void,
   sharedRegistry?: PluginRegistry,
   imageConfigFingerprint?: string,
+  options: BootstrapOptions = {},
 ): Promise<RunComponents> {
   const reportingSelections = [
     ...config.experiment.metrics.map(selection => ({ role: "metrics" as const, name: selection.name })),
@@ -92,6 +111,7 @@ export async function bootstrap(
     for (const createMetric of createMetrics) metrics.push(await createMetric(reportingRuntime));
     const reporter = await createReporter(reportingRuntime);
     const store = await createStore(runtime);
+    const decorated = options.tracer === undefined ? store : await decorateStore(registry, store, runtime, options.tracer);
     const scheduler = await createScheduler(runtime);
     let disposed = false;
 
@@ -101,7 +121,7 @@ export async function bootstrap(
       solver,
       metrics,
       reporter,
-      store,
+      store: decorated,
       scheduler,
       pluginVersions,
       pluginRuntime: {

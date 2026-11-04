@@ -1,5 +1,6 @@
 import type { ErrorCode } from "../../../core/errors/registry.js";
-import { open, type FileHandle } from "node:fs/promises";
+import { open, stat, type FileHandle } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type { AttemptKey } from "../../../core/contracts/result.js";
 import type { JsonValue } from "../../../core/contracts/task.js";
@@ -27,6 +28,17 @@ export function validateSequence(events: TrajectoryEvent[]): { complete: boolean
     complete: contiguous && oneEnd && events.at(-1)?.type === "end",
     missing,
   };
+}
+
+/** Match the directory owner so host-side readers can tail a trajectory written inside a container. */
+async function alignOwnerWithDirectory(handle: FileHandle, path: string): Promise<void> {
+  try {
+    const [directory, current] = await Promise.all([stat(dirname(path)), handle.stat()]);
+    if (current.uid === directory.uid && current.gid === directory.gid) return;
+    await handle.chown(directory.uid, directory.gid);
+  } catch {
+    // Non-root writers cannot chown; the file keeps the owner that created it.
+  }
 }
 
 export class TrajectoryQueueOverflowError extends Error {
@@ -59,7 +71,12 @@ export class TrajectoryWriter {
   }
 
   private async file(): Promise<FileHandle> {
-    return (this.handle ??= await open(this.path, "a", 0o600));
+    if (this.handle === null) {
+      const handle = await open(this.path, "a", 0o600);
+      await alignOwnerWithDirectory(handle, this.path);
+      this.handle = handle;
+    }
+    return this.handle;
   }
 
   append(type: string, data: JsonValue, durable = false): Promise<TrajectoryEvent> {
