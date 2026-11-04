@@ -95,13 +95,13 @@ Agent 目录的递归读取和执行权限在共享安装镜像中设置一次�
 **镜像复用与任务续跑是两回事。** 普通 `run` 会新建一次评测，复用可用镜像，再为任务创建新的容器和工作区，不会自动跳过上次已完成的题目：
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
 需要继续上次评测时，使用同一份配置增加 `--resume`：
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --resume
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
 续跑同样需要检查和准备环境。已有有效结果会跳过，未完成或无效任务按恢复规则重新执行；配置、来源、代码和插件版本需要匹配，详见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。不使用 `--resume` 的新运行也能复用镜像。

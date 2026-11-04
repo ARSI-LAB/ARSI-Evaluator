@@ -19,8 +19,8 @@ DeepSWE 用代码仓库任务评测 Agent 修改代码和通过测试的能力�
 在 Evaluator 仓库根目录检查并运行：
 
 ```bash
-node dist/cli.js doctor playbook/deepswe/deepswe-simpleagent.yaml
-node dist/cli.js run playbook/deepswe/deepswe-simpleagent.yaml
+ember-evaluator doctor playbook/deepswe/deepswe-simpleagent.yaml
+ember-evaluator run playbook/deepswe/deepswe-simpleagent.yaml
 ```
 
 首次运行先在所选 YAML 中限制 `run.maxTasks`，确认镜像、模型和验证都可用后再新建全量实验。默认题目范围、来源和版本见[内置 Profile](../../../src/plugins/benchmarks/profiles/deepswe.yaml)；选题与续跑见[日常操作](../usage.zh-CN.md)。

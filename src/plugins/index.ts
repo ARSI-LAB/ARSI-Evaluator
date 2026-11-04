@@ -16,7 +16,7 @@ import { parseRayConfig } from "./schedulers/ray-config.js";
 import { SimpleAgentSolver, parseSimpleAgentConfig } from "./solvers/simpleagent.js";
 import { ChoiceLogprobsSolver, parseChoiceLogprobsConfig } from "./solvers/choice-logprobs.js";
 import { AgentBundleSolver, agentBundleModel, parseAgentBundleConfig } from "./solvers/agentbundle.js";
-import { expectRecord, rejectUnknown, expectPositiveInteger, expectNonEmptyString } from "../config/schema.js";
+import { DEFAULT_LOCAL_CONCURRENCY, expectRecord, rejectUnknown, expectPositiveInteger, expectNonEmptyString } from "../config/schema.js";
 import { type PluginFactoryContext, bindSolverService } from "../core/registry.js";
 import { installEnvProxy } from "../adapters/net/env-proxy.js";
 import { apply as registerReporting } from "./reporting.js";
@@ -138,7 +138,7 @@ export async function apply(ctx: Context): Promise<void> {
     (value: unknown) => {
       const config = expectRecord(value, "local scheduler");
       rejectUnknown(config, ["concurrency"], "local scheduler");
-      return { concurrency: expectPositiveInteger(config.concurrency ?? 1, "concurrency") };
+      return { concurrency: expectPositiveInteger(config.concurrency ?? DEFAULT_LOCAL_CONCURRENCY, "concurrency") };
     },
     config => new LocalScheduler(config.concurrency),
   );

@@ -85,7 +85,7 @@ Resume requires matching sources, selection, model settings, code, and plugin ve
 Errors show phase, task, cause, and suggested action. Full attempt diagnostics are in `result.json`; preparation diagnostics are in `manifest.json`. For extra detail, run from the repository root:
 
 ```bash
-EVALUATOR_DEBUG=1 node dist/cli.js run playbook/gsm8k/gsm8k-simpleagent.yaml
+EVALUATOR_DEBUG=1 ember-evaluator run playbook/gsm8k/gsm8k-simpleagent.yaml
 ```
 
 `1`/`true` enables debug; unset or `0`/`false` disables it. PowerShell: `$env:EVALUATOR_DEBUG="1"`. Progress/errors use stderr; final result paths use stdout. See [error codes](../reference/errors.md) for classification and recovery.

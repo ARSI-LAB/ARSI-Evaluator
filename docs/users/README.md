@@ -63,9 +63,9 @@ These names are used by `benchmark info`, `init --benchmark`, and YAML. External
 | Operators | `kernel` | [Correctness and NPU performance of existing kernels](benchmarks/kernel-npu.md); local serial execution without model calls |
 
 ```bash
-node dist/cli.js benchmark list
-node dist/cli.js benchmark info workbuddy
-node dist/cli.js init --benchmark workbuddy --output workbuddy.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info workbuddy
+ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 ```
 
 WorkBuddy Web requires a judge; Office model scoring is optional. Store Security data and results on a native Linux filesystem. Do not extract under Windows or WSL `/mnt/c` or `/mnt/d`. See [WorkBuddy](benchmarks/workbuddy.md).

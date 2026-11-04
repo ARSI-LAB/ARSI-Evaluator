@@ -101,6 +101,8 @@ export function solverBinding(config: LoadedConfig): { service: string; model: M
   return { service, model, auth };
 }
 
+export const DEFAULT_LOCAL_CONCURRENCY = 1;
+
 export const DEFAULT_METRICS: readonly Selection[] = [
   { name: "success-rate", config: {} },
   { name: "duration", config: {} },

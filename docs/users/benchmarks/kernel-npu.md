@@ -19,8 +19,8 @@ export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
 export KERNEL_MANIFEST=/absolute/path/to/cases/tasks.json
 export KERNEL_EVAL_PLACEHOLDER=unused-local-evaluation
 pnpm build
-node dist/cli.js run playbook/kernel/existing.yaml --dry-run
-node dist/cli.js run playbook/kernel/existing.yaml
+ember-evaluator run playbook/kernel/existing.yaml --dry-run
+ember-evaluator run playbook/kernel/existing.yaml
 ```
 
 Example services are required placeholders with unusable URLs. The loader requires `api_key` to reference a nonempty variable; set `KERNEL_EVAL_PLACEHOLDER` to the ordinary text above, never a real key. Model usage is zero; offline `report` needs no variable.
@@ -171,9 +171,9 @@ Check executionStatus/scoreStatus/verdict.passed for correctness/timing and `pro
 
 ```bash
 # Use the directory printed by run; no model credentials or operator rerun needed.
-node dist/cli.js report /absolute/path/to/results/run-id
+ember-evaluator report /absolute/path/to/results/run-id
 # Resume with identical configuration; referenced environment variables are still required.
-node dist/cli.js run playbook/kernel/existing.yaml --resume
+ember-evaluator run playbook/kernel/existing.yaml --resume
 ```
 
 dry-run proves only configuration/source parsing, not NPU readiness. Missing torch/torch_npu/NPU during `run` returns nonzero with invalid records, not evidence of candidate correctness.
@@ -184,13 +184,13 @@ Besides full runs, three independent atoms support external orchestration such a
 
 ```bash
 # Precision gate: two runs per seed against problem.Model (defaults atol=1e-5 / rtol=1e-3)
-node dist/cli.js kernel precision --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel precision --problem <problem.py> --kernel <kernel.py> \
   --out <precision.json> [--seeds 0 1] [--python /usr/bin/python3]
 # Timing only: same timing module as the benchmark (see Metrics and Results); no precision check
-node dist/cli.js kernel bench --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
   --out <bench.json> [--python /usr/bin/python3]
 # msprof attaches to replay for hardware metrics, with cache/retries and roofline classification
-node dist/cli.js kernel profile --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
   --out <profile.json> [--round 0] [--python /usr/bin/python3]
 ```
 

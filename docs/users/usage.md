@@ -33,7 +33,7 @@ Identical source/seed repeats selection. After source changes, seed alone cannot
 ### Preview and Save Actual Task IDs
 
 ```bash
-node dist/cli.js run first-run.yaml --dry-run > task-ids.json
+ember-evaluator run first-run.yaml --dry-run > task-ids.json
 ```
 
 dry-run locks sources, checks caches, downloads as needed, and enumerates without Solver execution. Output uses this JSON format; example GSM8K IDs differ from other benchmarks:
@@ -45,7 +45,7 @@ dry-run locks sources, checks caches, downloads as needed, and enumerates withou
 Select those IDs explicitly later:
 
 ```bash
-node dist/cli.js run first-run.yaml --task-ids-file task-ids.json
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json
 ```
 
 CLI ID files replace YAML IDs and clear offset/maxTasks/sampling. YAML `run.taskIds` still undergoes those later filters; omit all three to fix only the listed tasks.
@@ -57,10 +57,12 @@ Use independent `warmup` with production YAML:
 ```bash
 ember warmup first-run.yaml
 # From the source directory, alternatively:
-node dist/cli.js warmup first-run.yaml --progress plain
+ember-evaluator warmup first-run.yaml --progress plain
 ```
 
 Selection follows taskIds/sampling/offset/maxTasks. It prepares solve/separate-verification/sidecar images, Evaluator runtimes, and Solver layers, using production pulls/builds/layer composition/pullProxy/concurrency/budgets. Temporary build containers may install dependencies. Warmup calls no models, starts no solve/scoring sessions, and creates no evaluation results/metrics/reports.
+
+Final output contains one ready/failed count line followed by each failed task's ID, error code, and reason. Successful task details and the full JSON are omitted. An entirely successful warmup prints only the count line; failures return exit code `1`.
 
 For fixed IDs/external plugins:
 
@@ -141,8 +143,8 @@ Preparation/cleanup budgets are separate from run.timeoutSeconds. `run.preparati
 ## Inspect and Export Configuration
 
 ```bash
-node dist/cli.js config explain first-run.yaml
-node dist/cli.js config resolve first-run.yaml > resolved.yaml
+ember-evaluator config explain first-run.yaml
+ember-evaluator config resolve first-run.yaml > resolved.yaml
 ```
 
 `explain` shows final values/origins; `resolve` exports reloadable YAML. Keys remain variable references without credentials. Set nonsensitive model/endpoint variables.
@@ -152,8 +154,8 @@ Keep `resolved.yaml` beside original YAML for bundle/certificate-relative paths.
 CLI can override the Solver-bound model service:
 
 ```bash
-node dist/cli.js doctor first-run.yaml --model your-other-model
-node dist/cli.js run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
+ember-evaluator doctor first-run.yaml --model your-other-model
+ember-evaluator run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
 ```
 
 Supports --model/--endpoint/--api-key-env or literal --api-key. Last two are mutually exclusive; prefer variables. Independent judges remain unchanged.
@@ -161,9 +163,9 @@ Supports --model/--endpoint/--api-key-env or literal --api-key. Last two are mut
 ## Resume and Rebuild Reports
 
 ```bash
-node dist/cli.js run first-run.yaml --resume
-node dist/cli.js run first-run.yaml --resume <RUN_ID>
-node dist/cli.js report results/first-run/<RUN_ID>
+ember-evaluator run first-run.yaml --resume
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+ember-evaluator report results/first-run/<RUN_ID>
 ```
 
 Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Keep sources/config/code/plugins matching. Model/selection/preparation/concurrency changes need new runs.
@@ -272,9 +274,9 @@ See [Ray config](config.md#ray-and-execution-nodes), [cluster examples](../../pl
 ## Load External Plugins
 
 ```bash
-node dist/cli.js benchmark list --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```
 
 Replace paths with actual files. Omitted `--patch` scans nothing. Discovery/init/config/doctor/run must share the patch. Patch paths use current directory; modules use patch directory; business paths use YAML directory.
@@ -294,7 +296,7 @@ See [plugin loading](../development/plugins.en.md), [benchmark development](../d
 | Resume source/version mismatch | Changed config/source/package/plugins; start new run if needed |
 | `cleanupStatus: unconfirmed` | Recover resources before global cleanup around other evaluations |
 
-Bash debug: EVALUATOR_DEBUG=1 node dist/cli.js run first-run.yaml. PowerShell sets `$env:EVALUATOR_DEBUG="1"` first. Progress/errors use stderr; final paths stdout.
+Bash debug: EVALUATOR_DEBUG=1 ember-evaluator run first-run.yaml. PowerShell sets `$env:EVALUATOR_DEBUG="1"` first. Progress/errors use stderr; final paths stdout.
 
 ### Live Execution Previews
 
@@ -303,8 +305,8 @@ Framework terminal prompts/progress/warnings/actions use English. Task/tool/thir
 run/retry default `--progress auto`: interactive terminals show task steps/elapsed time/up to 10 recent lines. Panels use at most half terminal height and20 lines, prioritizing statuses; small windows/high concurrency reduce previews. Success clears previews/leaves completion; failure retains up to 5 redacted lines. plain disables panels; tty requests them but noninteractive/TERM=dumb uses logs. CI disables panels; `NO_COLOR` only disables colors.
 
 ```bash
-node dist/cli.js run first-run.yaml --progress auto
-node dist/cli.js retry --run <run-id> --progress plain
+ember-evaluator run first-run.yaml --progress auto
+ember-evaluator retry --run <run-id> --progress plain
 ```
 
 Docker uses actual pull/build output. Pi/DSH/DeepAgents show existing model activity/tools/output; Dify workflow/nodes; AgentX harness activity. Hermes/JiuwenSwarm lack live tool details and state this. Reply/reasoning bodies/private verification are excluded. Incomplete lines report activity before displaying complete text to avoid secret leakage across chunks.
@@ -324,6 +326,6 @@ Previews create no files/results/trajectories/Ray logs. Each step stores up to 1
 |`2`|Configuration/arguments|
 |`130`|User cancellation|
 
-See [error codes](reference/errors.md) for full recovery/retry rules. `node dist/cli.js --help` lists current arguments.
+See [error codes](reference/errors.md) for full recovery/retry rules. `ember-evaluator --help` lists current arguments.
 
 [User guide](README.md) · [Quick start](quick-start.md) · [Configuration](config.md)

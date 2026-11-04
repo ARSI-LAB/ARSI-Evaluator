@@ -19,8 +19,8 @@ export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
 export KERNEL_MANIFEST=/absolute/path/to/cases/tasks.json
 export KERNEL_EVAL_PLACEHOLDER=unused-local-evaluation
 pnpm build
-node dist/cli.js run playbook/kernel/existing.yaml --dry-run
-node dist/cli.js run playbook/kernel/existing.yaml
+ember-evaluator run playbook/kernel/existing.yaml --dry-run
+ember-evaluator run playbook/kernel/existing.yaml
 ```
 
 示例 YAML 中的 service 是框架必填字段占位，地址不可用。现有配置加载器要求 `api_key` 引用非空环境变量，因此设置 `KERNEL_EVAL_PLACEHOLDER` 为上述普通文本即可，不要填写真实模型密钥。模型用量为零；离线 `report` 不需要该变量。
@@ -171,9 +171,9 @@ profiling.artifacts                        # 相对 verifier/ 的原始证据路
 
 ```bash
 # 使用 run 输出的结果目录；无需模型凭证或重新执行算子。
-node dist/cli.js report /absolute/path/to/results/run-id
+ember-evaluator report /absolute/path/to/results/run-id
 # 沿用同一配置续跑；仍须设置配置引用的环境变量。
-node dist/cli.js run playbook/kernel/existing.yaml --resume
+ember-evaluator run playbook/kernel/existing.yaml --resume
 ```
 
 `--dry-run` 通过只表示配置和任务来源可解析，不检查 NPU 是否可用。实际 `run` 缺少 torch、torch_npu 或 NPU 时会返回非零退出码，并留下无效评测记录；不能据此判断候选算子的正确性。
@@ -184,13 +184,13 @@ node dist/cli.js run playbook/kernel/existing.yaml --resume
 
 ```bash
 # 精度门：多 seed 双跑，对照 problem.Model 参照（默认容差 atol=1e-5 / rtol=1e-3）
-node dist/cli.js kernel precision --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel precision --problem <problem.py> --kernel <kernel.py> \
   --out <precision.json> [--seeds 0 1] [--python /usr/bin/python3]
 # 纯计时：与基准走同一 timing 模块（口径见上文"指标与结果"），不校验精度
-node dist/cli.js kernel bench --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
   --out <bench.json> [--python /usr/bin/python3]
 # msprof 采集：attach 重放脚本采集硬件指标，带缓存与重试；roofline 分类一体返回
-node dist/cli.js kernel profile --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
   --out <profile.json> [--round 0] [--python /usr/bin/python3]
 ```
 

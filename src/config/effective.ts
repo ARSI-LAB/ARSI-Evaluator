@@ -1,4 +1,4 @@
-import { DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS, expectRecord, rejectUnknown, expectNonEmptyString, expectPositiveInteger, parseSelection, type EffectiveConfig, type ModelConfig, type Selection, type VerifierSelection } from "./schema.js";
+import { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS, expectRecord, rejectUnknown, expectNonEmptyString, expectPositiveInteger, parseSelection, type EffectiveConfig, type ModelConfig, type Selection, type VerifierSelection } from "./schema.js";
 import { parseHardware } from "./hardware.js";
 import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/timeouts.js";
 import { preparationTimeoutMs } from "../core/preparation-timeout.js";
@@ -162,7 +162,9 @@ export function parseEffectiveConfig(source: Record<string, unknown>): Effective
   if (verifier?.service !== undefined && !Object.hasOwn(services, verifier.service)) throw new TypeError(`verifier.service references unknown service ${verifier.service}`);
   const output = expectRecord(source.output, "output");
   rejectUnknown(output, ["directory"], "output");
-  const scheduler = source.scheduler === undefined ? { name: "local", config: { concurrency: 1 } } : parseSelection(source.scheduler, "scheduler");
+  const scheduler = source.scheduler === undefined ? { name: "local", config: { concurrency: DEFAULT_LOCAL_CONCURRENCY } } : parseSelection(source.scheduler, "scheduler");
+  if (scheduler.name === "local" && scheduler.config.concurrency === undefined)
+    scheduler.config.concurrency = DEFAULT_LOCAL_CONCURRENCY;
   if (scheduler.config.concurrency !== undefined) scheduler.config.concurrency = expectPositiveInteger(scheduler.config.concurrency, "scheduler.config.concurrency");
   return {
     hardware: parseHardware(source.hardware),

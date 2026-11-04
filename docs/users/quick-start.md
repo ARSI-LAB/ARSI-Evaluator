@@ -2,20 +2,20 @@
 
 > English | [中文](./quick-start.zh-CN.md)
 
-Use your model API to solve two GSM8K questions and produce an offline report. Run commands from the Evaluator root; global CLI installation is unnecessary.
+Use your model API to solve two GSM8K questions and produce an offline report. Run commands from the Evaluator repository root.
 
 ## 1. Install and Build
 
 Complete the [installation guide](installation.md#install-from-source). This local example requires neither Docker nor Ray; the agent executes tools on your machine.
 
-Run the following `node dist/cli.js` commands from the Evaluator repository root, or replace the prefix with the registered `ember-evaluator` command.
+The following examples use the `ember-evaluator` command registered by the installation guide. Run them from the Evaluator repository root.
 
 ## 2. Choose a Benchmark and Generate Configuration
 
 ```bash
-node dist/cli.js benchmark list
-node dist/cli.js benchmark info gsm8k
-node dist/cli.js init --benchmark gsm8k --output first-run.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info gsm8k
+ember-evaluator init --benchmark gsm8k --output first-run.yaml
 ```
 
 `list` shows available names, `info` shows default components, and `init` generates configuration. `init` fails rather than overwriting an existing file.
@@ -74,8 +74,8 @@ Without `maxTokens`, SimpleAgent using an explicit Chat Completions service send
 ## 4. Check, Then Run
 
 ```bash
-node dist/cli.js doctor first-run.yaml
-node dist/cli.js run first-run.yaml
+ember-evaluator doctor first-run.yaml
+ember-evaluator run first-run.yaml
 ```
 
 `doctor` checks configuration, authentication references, and required tools for the selected path. It does not send model requests, download datasets, or build images. `not-checked` means untested, not passed. Actual execution verifies model and data access.
@@ -95,7 +95,7 @@ Open `report.md` in that directory. `metrics.json` contains the same statistics 
 To regenerate the report later:
 
 ```bash
-node dist/cli.js report results/first-run/<RUN_ID>
+ember-evaluator report results/first-run/<RUN_ID>
 ```
 
 Replace `<RUN_ID>` with the actual directory name. Offline reporting needs no model key and does not rerun questions. Keep the complete result directory, rather than copying only `result.json`.
@@ -107,7 +107,7 @@ Check completion, scores/correctness for both questions, and errors or missing e
 Keep configuration, code, and plugin versions unchanged and use the same YAML:
 
 ```bash
-node dist/cli.js run first-run.yaml --resume
+ember-evaluator run first-run.yaml --resume
 ```
 
 Use `--resume <RUN_ID>` to select a run explicitly. Resume skips valid saved results and creates new attempts for unfinished or invalid tasks; it does not continue at a conversation turn. Start a new run after changing models, tasks, concurrency, or similar settings. Keep fingerprint and version checks enabled.

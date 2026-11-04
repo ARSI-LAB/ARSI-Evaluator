@@ -95,13 +95,13 @@ Docker may still reuse build layers; its cache determines which steps rerun.
 **Image reuse and task resume are separate.** Ordinary `run` creates a new evaluation, reuses images, and creates fresh containers/workspaces without skipping previous completed tasks:
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
 To continue the previous evaluation, use identical configuration with `--resume`:
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --resume
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
 Resume still checks/prepares environments, skips valid results, and reruns unfinished/invalid tasks under matching config/source/code/plugin versions. See [resume](../usage.md#resume-and-rebuild-reports). New runs without resume also reuse images.

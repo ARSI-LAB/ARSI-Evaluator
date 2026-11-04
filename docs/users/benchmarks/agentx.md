@@ -150,8 +150,8 @@ Root `metrics.json` keeps batch machine data/subreport indexes. Point metrics re
 `upstreamSubmissionValid` preserves harness judgment; `comparable` additionally checks scenario/source/completeness. Compare identical corpus commits, scenario, tokenizer, concurrency, and deployment. Completed replay does not establish leaderboard eligibility.
 
 ```bash
-node dist/cli.js run playbook/agentx/agentx-standard.yaml --resume
-node dist/cli.js report results/agentx-standard/RUN_ID
+ember-evaluator run playbook/agentx/agentx-standard.yaml --resume
+ember-evaluator report results/agentx-standard/RUN_ID
 ```
 
 Completed points skip; failed/cancelled/timed-out points get full new attempts, not request continuation. Performance timeouts are not zeros. `report` rebuilds indexes/point reports and repairs missing/corrupt subreports from saved data/built-in plugins, without Python/model credentials/cache. Explicit resume writes `reports/resume-N/` and preserves prior reports; retry/offline `report` update current reports. See [report storage](../usage.md#resume-and-rebuild-reports).

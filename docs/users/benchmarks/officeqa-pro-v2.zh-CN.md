@@ -32,10 +32,10 @@
 从仓库根目录运行：
 
 ```bash
-node dist/cli.js benchmark info officeqa-pro-v2
-node dist/cli.js doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
+ember-evaluator benchmark info officeqa-pro-v2
+ember-evaluator doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ```
 
 `doctor` 检查配置与本机依赖，不下载题库或语料。`--dry-run` 按现有 CLI 规则查询来源、读取题目 CSV 并输出选题 ID；它需要题库访问权限，首次可能下载约 225KB 的题目 CSV，但不下载文档语料、不构建镜像、不调用模型。
@@ -43,7 +43,7 @@ node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simple
 Playbook 中的 JSON、PDF、单机和 Ray 配置均不设置题数限制，运行全部 90 题。以下命令使用[解析 JSON 全量配置](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml)：
 
 ```bash
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml
 ```
 
 需要先验证少量题目时，可自行添加 `run.maxTasks: 2`。指定题目可使用 `run.taskIds: ["0"]`，数字形式的 ID 需要加引号，保持字符串类型。限制题数不会缩减提供给 Agent 的文档集合；切换到全量时应新建 run。
@@ -87,8 +87,8 @@ Prompt 要求用 `<FINAL_ANSWER>…</FINAL_ANSWER>` 提交单行、简短答案�
 续跑与离线报告：
 
 ```bash
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --resume
-node dist/cli.js report /absolute/path/to/run-directory
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --resume
+ember-evaluator report /absolute/path/to/run-directory
 ```
 
 续跑固定原始 commit、文件清单和 SHA-256，已有完整缓存时不需要访问 HF；缓存缺失或损坏时按原始地址和摘要重新下载。YAML 显式填写 `hfToken: ${HF_TOKEN}` 时，配置加载仍要求此环境变量存在。公开构建目录被修改时明确报错，不使用被修改的文档。评分脚本和发布包变化仍遵循现有插件版本检查，不绕过续跑校验。离线报告不需要模型 key、HF token 或重跑评分容器。

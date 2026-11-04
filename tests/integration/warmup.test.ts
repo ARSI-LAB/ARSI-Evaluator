@@ -184,7 +184,7 @@ test("standalone warmup loads a patch without API keys, honors task ID overrides
   const { root, file, patch, events, stdout, stderr, io } = await cliFixture();
   const ids = join(root, "ids.json"); await writeFile(ids, JSON.stringify({ taskIds: ["b", "c"] }));
   expect(await runCli(["warmup", file, "--patch", patch, "--task-ids-file", ids, "--progress", "plain"], io), stderr.join("\n")).toBe(0);
-  expect(JSON.parse(stdout[0]!)).toMatchObject({ status: "ready", taskIds: ["b", "c"], readyTaskIds: ["b", "c"] });
+  expect(stdout).toEqual(["Image warmup: 2/2 tasks ready; 0 failed"]);
   expect(events.filter(item => item.name === "materialize").map(item => item.value).sort()).toEqual(["b", "c"]);
   expect(events.at(-1)?.name).toBe("dispose");
   expect(stderr.join("\n")).not.toMatch(/entering the solve queue|ERROR/);
@@ -197,7 +197,10 @@ test("CLI returns 1 for partial warmup and redacts source credentials from its s
   await writeFile(file, JSON.stringify({ ...experiment, run: { onError: "continue" },
     environment: { name: "warmup-fixture", config: { failTask: "b" } } }));
   expect(await runCli(["warmup", file, "--patch", patch], io)).toBe(1);
-  expect(JSON.parse(stdout[0]!)).toMatchObject({ status: "error", readyTaskIds: ["a", "c"], failures: [{ taskId: "b" }] });
+  expect(stdout[0]).toBe("Image warmup: 2/3 tasks ready; 1 failed");
+  expect(stdout).toHaveLength(2);
+  expect(stdout[1]).toMatch(/^b: .*Fixture preparation failed/);
+  expect(stdout.join("\n")).not.toMatch(/preparationRounds|durationMs|readyTaskIds/);
   expect([...stdout, ...stderr].join("\n")).not.toContain("fixture-private-token");
 });
 

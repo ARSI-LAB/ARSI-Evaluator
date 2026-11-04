@@ -1,4 +1,4 @@
-import { EnvHttpProxyAgent, install, setGlobalDispatcher } from "undici";
+import { Agent, EnvHttpProxyAgent, install, setGlobalDispatcher } from "undici";
 
 function proxyEnvPresent(): boolean {
   return Boolean(
@@ -7,12 +7,12 @@ function proxyEnvPresent(): boolean {
 }
 
 /**
- * npm undici replaces Node's startup dispatcher with a direct Agent. When a
- * proxy is configured, install that package's fetch and point its dispatcher
- * at the proxy so evaluator downloads and pi model calls share it.
+ * Install one fetch/dispatcher policy for evaluator downloads and pi model
+ * calls, including direct connections. HTTP/2 is opt-in because large proxied
+ * downloads can terminate mid-stream on that protocol path.
  */
 export function installEnvProxy(): void {
-  if (!proxyEnvPresent()) return;
-  setGlobalDispatcher(new EnvHttpProxyAgent());
+  const options = { allowH2: process.env.EVALUATOR_HTTP2 === "1" };
+  setGlobalDispatcher(proxyEnvPresent() ? new EnvHttpProxyAgent(options) : new Agent(options));
   install();
 }

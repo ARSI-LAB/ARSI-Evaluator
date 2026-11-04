@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseEffectiveConfig } from "./effective.js";
 import { parseDeployment } from "./deployment.js";
 import { profileChain, validateProfiles, type ProfileLayer, type ResolvedProfiles } from "./profiles.js";
-import { expectNonEmptyString, expectRecord, type CliOverrides, type EffectiveConfig, type Selection } from "./schema.js";
+import { DEFAULT_LOCAL_CONCURRENCY, expectNonEmptyString, expectRecord, type CliOverrides, type EffectiveConfig, type Selection } from "./schema.js";
 import { normalizeComponentSelection, normalizeSelection, parseUserConfig, type UserConfig } from "./user-schema.js";
 
 export type ConfigOrigins = Record<string, string>;
@@ -100,7 +100,7 @@ export function resolveInput(configPath: string, input: UserConfig, profiles: Re
     trace(normalized, "", origin, origins);
   };
   apply({ hardware: "npu", benchmark: { name: benchmark.name, config: {}, solver: { name: "simpleagent", config: {} } },
-    environment: { name: "docker", config: {} }, scheduler: { name: "local", config: { concurrency: 1 } },
+    environment: { name: "docker", config: {} }, scheduler: { name: "local", config: { concurrency: DEFAULT_LOCAL_CONCURRENCY } },
     store: { name: "local", config: {} }, reporter: { name: "markdown", config: {} },
     metrics: ["success-rate", "duration", "usage"], run: { maxTasks: null, taskIds: null, timeoutSeconds: DEFAULT_TASK_TIMEOUT_SECONDS, onError: "continue" } }, "framework default");
   const aliases: Record<string, Selection> = {};

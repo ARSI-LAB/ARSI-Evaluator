@@ -600,7 +600,10 @@ async function runCliCommand(
         ...(execution ? { execution } : {}),
         ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
         onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); } });
-      io.out(JSON.stringify(result));
+      io.out(`Image warmup: ${result.readyTaskIds.length}/${result.taskIds.length} tasks ready; ${result.failures.length} failed`);
+      for (const { taskId, failure } of result.failures) {
+        io.out(`${taskId}: [${failure.code}] ${failure.message}`);
+      }
       return result.status === "ready" ? 0 : 1;
     } catch (error) { failure(error); return signal.aborted ? 130 : ["arguments", "config", "bootstrap"].includes(phase) ? 2 : 1; }
   }

@@ -85,7 +85,7 @@ replay 完整执行有限 Trace，包含冷启动、等待和排空，与正式 
 错误会直接显示阶段、任务、原因和建议；完整结构化诊断保存在 attempt 的 `result.json`，准备阶段诊断保存在 `manifest.json`。需要额外细节时，在仓库根目录执行：
 
 ```bash
-EVALUATOR_DEBUG=1 node dist/cli.js run playbook/gsm8k/gsm8k-simpleagent.yaml
+EVALUATOR_DEBUG=1 ember-evaluator run playbook/gsm8k/gsm8k-simpleagent.yaml
 ```
 
 `1` / `true` 开启，未设置或 `0` / `false` 关闭。PowerShell 使用 `$env:EVALUATOR_DEBUG="1"`。进度与错误写入 stderr，最终结果路径写入 stdout；错误分类和恢复策略见[错误码参考](../reference/errors.zh-CN.md)。

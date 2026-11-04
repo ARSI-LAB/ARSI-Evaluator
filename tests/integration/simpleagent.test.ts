@@ -436,7 +436,8 @@ describe("simpleagent runner", () => {
       .rejects.toMatchObject({ code: "SOLVER_PROTOCOL_INVALID" });
   });
 
-  test("uses target POSIX paths for a non-local Linux session", async () => {
+  test.each([undefined, "0", "1"])("uses target POSIX paths without injecting HTTP/2 policy (%s) for a non-local Linux session", async value => {
+    vi.stubEnv("EVALUATOR_HTTP2", value);
     const attemptPaths = await paths("remote-paths");
     const commands: Parameters<EnvironmentSession["start"]>[0][] = [];
     const uploads: string[] = [];
@@ -452,6 +453,7 @@ describe("simpleagent runner", () => {
     expect(uploads).toEqual([]);
     expect(commands).toHaveLength(1);
     expect(commands[0]?.args).toEqual(["/opt/evaluator-agent/dist/adapters/harness/pi/runner.js"]);
+    expect(commands[0]?.env).toEqual({});
   });
 
   test("rejects a direct solve when the environment has not prepared a runtime", async () => {

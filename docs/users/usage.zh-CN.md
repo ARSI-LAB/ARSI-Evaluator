@@ -33,7 +33,7 @@ run:
 ### 查看并保存实际任务 ID
 
 ```bash
-node dist/cli.js run first-run.yaml --dry-run > task-ids.json
+ember-evaluator run first-run.yaml --dry-run > task-ids.json
 ```
 
 `--dry-run` 会锁定来源、检查缓存、按需下载和枚举题目，不执行 Solver 解题。输出格式为下面的 JSON；GSM8K 的示例 ID 如下，其他 Benchmark 使用自己的 ID：
@@ -45,7 +45,7 @@ node dist/cli.js run first-run.yaml --dry-run > task-ids.json
 以后可明确指定这批 ID：
 
 ```bash
-node dist/cli.js run first-run.yaml --task-ids-file task-ids.json
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json
 ```
 
 CLI 文件会替换配置里的选题 ID，并清除原 `offset`、`maxTasks` 和随机抽样限制。也可在 YAML 写 `run.taskIds`；它仍受同一 YAML 中 `sampling`、`offset` 和 `maxTasks` 的后续处理，因此只想固定这些题时请省略这三个参数。
@@ -57,10 +57,12 @@ CLI 文件会替换配置里的选题 ID，并清除原 `offset`、`maxTasks` �
 ```bash
 ember warmup first-run.yaml
 # 源码目录也可使用：
-node dist/cli.js warmup first-run.yaml --progress plain
+ember-evaluator warmup first-run.yaml --progress plain
 ```
 
 命令按 YAML 的 `taskIds`、`sampling`、`offset` 和 `maxTasks` 选择题目，准备解题镜像、独立验证镜像、侧车镜像，以及 Evaluator 运行时和 Solver 安装层。镜像下载、Dockerfile 构建、镜像层拼接和 `environment.config.pullProxy` 使用与正式运行相同的逻辑，准备并发和预算也沿用 YAML。构建需要的临时容器可以执行安装命令；预热不调用模型、不启动解题或评分会话，不创建评测结果目录、指标或报告。
+
+命令结束时只输出一行就绪/失败数量，以及各失败任务的 ID、错误码和原因，不再打印成功任务明细和完整 JSON。全部成功时只输出统计行；存在失败时退出码为 `1`。
 
 需要固定题目或加载外部插件时，可以使用：
 
@@ -141,8 +143,8 @@ run:
 ## 查看和导出实际配置
 
 ```bash
-node dist/cli.js config explain first-run.yaml
-node dist/cli.js config resolve first-run.yaml > resolved.yaml
+ember-evaluator config explain first-run.yaml
+ember-evaluator config resolve first-run.yaml > resolved.yaml
 ```
 
 `explain` 回答“最终用了什么，来自哪个默认值或用户配置”；`resolve` 导出可重新加载的新版用户 YAML。密钥保留为环境变量引用，不导出认证值。非敏感模型名、地址等变量仍要设置。
@@ -152,8 +154,8 @@ node dist/cli.js config resolve first-run.yaml > resolved.yaml
 命令行也可覆盖当前 Solver 绑定的模型服务：
 
 ```bash
-node dist/cli.js doctor first-run.yaml --model your-other-model
-node dist/cli.js run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
+ember-evaluator doctor first-run.yaml --model your-other-model
+ember-evaluator run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
 ```
 
 支持 `--model`、`--endpoint`、`--api-key-env`，以及直接传值的 `--api-key`；后两者不能同时使用，建议使用环境变量方式。独立 Judge 服务不会随 Solver 的覆盖一起修改。
@@ -161,9 +163,9 @@ node dist/cli.js run first-run.yaml --model your-other-model --api-key-env OTHER
 ## 续跑与重建报告
 
 ```bash
-node dist/cli.js run first-run.yaml --resume
-node dist/cli.js run first-run.yaml --resume <RUN_ID>
-node dist/cli.js report results/first-run/<RUN_ID>
+ember-evaluator run first-run.yaml --resume
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+ember-evaluator report results/first-run/<RUN_ID>
 ```
 
 不填写 ID 时由 Evaluator 查找可续跑的历史运行，明确填写可以避免选错。续跑前保持来源、配置、代码和插件版本一致；修改模型、选题、准备模式或并发后，应开始新 run。
@@ -272,9 +274,9 @@ scheduler:
 ## 加载外部插件
 
 ```bash
-node dist/cli.js benchmark list --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```
 
 把路径换成实际文件；不传 `--patch` 时不会扫描默认 patch。发现、初始化、配置检查、doctor 和运行要使用同一份 patch。patch 路径相对当前工作目录；模块路径相对 patch；实验里的业务路径相对 YAML。
@@ -294,7 +296,7 @@ node dist/cli.js run experiment.yaml --patch experiments/plugins/cordis.patch.ya
 | 续跑报来源或版本不同 | 检查是否更改了配置、来源、包或插件；需要时开始新 run |
 | `cleanupStatus: unconfirmed` | 先恢复本次资源，不要在有其他评测运行时做全局 Docker 清理 |
 
-需要更多诊断时，Bash 使用 `EVALUATOR_DEBUG=1 node dist/cli.js run first-run.yaml`；PowerShell 先设置 `$env:EVALUATOR_DEBUG="1"`，再执行原命令。进度和错误写入 stderr，最终结果路径写入 stdout。
+需要更多诊断时，Bash 使用 `EVALUATOR_DEBUG=1 ember-evaluator run first-run.yaml`；PowerShell 先设置 `$env:EVALUATOR_DEBUG="1"`，再执行原命令。进度和错误写入 stderr，最终结果路径写入 stdout。
 
 ### 实时执行预览
 
@@ -303,8 +305,8 @@ node dist/cli.js run experiment.yaml --patch experiments/plugins/cordis.patch.ya
 `run`、`retry` 默认使用 `--progress auto`：交互终端底部显示各任务当前步骤、累计耗时和最近最多 10 行活动。面板最多占终端高度的一半且不超过 20 行，先保留任务状态行，再分配预览空间；窗口较小或并发任务较多时，每个任务实际显示的预览会减少。成功步骤清除预览并留下完成记录；失败保留最多五行脱敏现场。`--progress plain` 关闭动态面板；`--progress tty` 请求动态显示，但非交互终端和 `TERM=dumb` 仍使用普通日志。CI 默认关闭动态面板；`NO_COLOR` 只关闭颜色。
 
 ```bash
-node dist/cli.js run first-run.yaml --progress auto
-node dist/cli.js retry --run <run-id> --progress plain
+ember-evaluator run first-run.yaml --progress auto
+ember-evaluator retry --run <run-id> --progress plain
 ```
 
 Docker 拉取和构建使用实际输出；Pi、DSH、DeepAgents 显示已有模型活动、工具命令和输出；Dify 显示工作流与节点活动；AgentX 显示 Harness 活动。Hermes、JiuwenSwarm 当前不提供实时工具细节，面板会说明这一限制。模型回复和思考正文、验证私有输出不进入预览。没有完整换行的输出先报告收到活动，待完整行到达后再显示文本，避免拆包泄露密钥。
@@ -324,6 +326,6 @@ Docker 拉取和构建使用实际输出；Pi、DSH、DeepAgents 显示已有模
 | `2` | 配置或命令参数错误 |
 | `130` | 用户取消 |
 
-完整错误分类、恢复和重试规则见[错误码](reference/errors.zh-CN.md)。命令参数的当前清单可随时通过 `node dist/cli.js --help` 查看。
+完整错误分类、恢复和重试规则见[错误码](reference/errors.zh-CN.md)。命令参数的当前清单可随时通过 `ember-evaluator --help` 查看。
 
 [返回用户手册](README.zh-CN.md) · [快速上手](quick-start.zh-CN.md) · [完整配置参考](config.zh-CN.md)

@@ -54,6 +54,7 @@ ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm build
 pnpm add -g .
 ember-evaluator --help
 ```
@@ -81,6 +82,19 @@ ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 | 模型服务标准性能测评 | AgentX standard | local，可选管理容器 | Python 3.11–3.13、venv、tokenizer、长上下文流式模型服务；管理镜像已提供 Python | [AgentX 性能入门](docs/users/quick-start/agentx.zh-CN.md) |
 
 其他题库和运行组合见 [Playbook 示例](playbook/README.md)，续跑、报告和日常操作见[用户文档](docs/users/README.zh-CN.md)。
+
+### 评测前提前预热镜像
+
+使用 Docker 执行任务时，可以提前用正式评测的同一份 YAML 准备镜像和依赖。例如，设置好上面的模型变量后执行：
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
+```
+
+预热按 YAML 的选题配置准备任务镜像、验证镜像、侧车镜像、Evaluator 运行时和 Solver 安装层，不调用模型，不生成评测结果或报告。预热不要求模型 API key，但模型名称、端点等配置仍需有效；与 `run --dry-run` 相比，预热会实际拉取或构建镜像。
+
+保持配置、任务版本、平台和 Docker daemon 一致，正式评测即可复用缓存。本机 Docker、Ray Client 和 Ray Jobs 均支持预热；Ray 在分配的执行节点上准备镜像。若使用 `--task-ids-file` 或 `--patch`，两条命令应传入相同参数。完整用法和前置条件见[只预热镜像，不开始测评](docs/users/usage.zh-CN.md#只预热镜像不开始测评)。
 
 ## 📖 使用指南
 

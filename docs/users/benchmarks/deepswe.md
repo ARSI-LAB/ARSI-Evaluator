@@ -19,8 +19,8 @@ Complete [installation](../installation.md) and prepare model variables, Docker,
 Check and run from the Evaluator root:
 
 ```bash
-node dist/cli.js doctor playbook/deepswe/deepswe-simpleagent.yaml
-node dist/cli.js run playbook/deepswe/deepswe-simpleagent.yaml
+ember-evaluator doctor playbook/deepswe/deepswe-simpleagent.yaml
+ember-evaluator run playbook/deepswe/deepswe-simpleagent.yaml
 ```
 
 Limit `run.maxTasks` initially. After checking images, model access, and verification, start a new full experiment. See the [profile](../../../src/plugins/benchmarks/profiles/deepswe.yaml) for default tasks, source, and version, and [daily operations](../usage.md) for selection and resume.
