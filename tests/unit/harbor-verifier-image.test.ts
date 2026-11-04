@@ -54,7 +54,9 @@ test("build configuration keeps location-specific proxy routes explicit", () => 
   const network = dockerBuildNetwork(access);
   expect(network.identity.sources.python.index).toBe("https://python.example/simple");
   expect(network.identity.proxy.https).toBe("http://host.docker.internal:7890");
-  expect(network.buildArgs.slice(2, 4)).toEqual(["--network", "host"]);
+  const networkFlag = network.buildArgs.indexOf("--network");
+  expect(networkFlag).toBeGreaterThanOrEqual(0);
+  expect(network.buildArgs[networkFlag + 1]).toBe("host");
 });
 test("the verifier build forwards mirrors and proxy settings without model credentials", async () => {
   vi.stubEnv("EVALUATOR_DEBIAN_MIRROR", "https://debian.example");

@@ -196,10 +196,10 @@ test("rejects inline YAML credentials and CLI authentication conflicts", async (
   await expect(load(await file({ services: { default: { ...services.default, api_key: "plaintext" } }, benchmark: "gsm8k" })))
     .rejects.toThrow(/api_key must reference/);
   const path = await file({ services, benchmark: "gsm8k" });
-  await expect(loadConfig(path, { apiKey: "direct", apiKeyEnv: "OTHER" }, {})).rejects.toThrow(/cannot be used together/);
-  const loaded = await loadConfig(path, { apiKey: "direct" }, {});
-  expect(JSON.stringify(loaded.persisted)).not.toContain('"direct"');
-  expect(loaded.auths.default?.value).toBe("direct");
+  await expect(loadConfig(path, { apiKey: "inline-test-secret", apiKeyEnv: "OTHER" }, {})).rejects.toThrow(/cannot be used together/);
+  const loaded = await loadConfig(path, { apiKey: "inline-test-secret" }, {});
+  expect(JSON.stringify(loaded.persisted)).not.toContain('"inline-test-secret"');
+  expect(loaded.auths.default?.value).toBe("inline-test-secret");
   const exported = await file(exportConfig(loaded));
   expect((await loadConfig(exported, {}, { EVALUATOR_API_KEY: "replacement" })).auths.default?.value).toBe("replacement");
 });

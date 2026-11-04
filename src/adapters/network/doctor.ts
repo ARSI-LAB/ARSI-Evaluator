@@ -21,7 +21,7 @@ export type NetworkProbe = {
 
 /** Explicit, disposable downloads. Never install packages into the host or infer a pass from cached layers. */
 export async function diagnoseNetwork(network: NetworkAccess, signal: AbortSignal,
-  options: { docker?: string; benchmark?: string; location?: string; progress?: (probe: NetworkProbe) => void } = {}): Promise<NetworkProbe[]> {
+  options: { docker?: string | false; benchmark?: string; datasetUrl?: string; location?: string; progress?: (probe: NetworkProbe) => void } = {}): Promise<NetworkProbe[]> {
   const directory = await mkdtemp(join(tmpdir(), "evaluator-network-doctor-"));
   const results: NetworkProbe[] = [];
   const location = options.location ?? hostname();
@@ -39,6 +39,10 @@ export async function diagnoseNetwork(network: NetworkAccess, signal: AbortSigna
       pnpm: ["sources.npm.registry"], "python-interpreter": ["sources.python.interpreter"],
     };
     const fields = sourceFields[name];
+    if (name === "dataset-archive") return { yamlFields: options.datasetUrl?.startsWith("https://huggingface.co/")
+      ? ["sources.huggingface", "proxy.overrides.host"] : options.datasetUrl?.startsWith("https://github.com/")
+        ? ["sources.github.repository", "proxy.overrides.host"] : ["proxy.overrides.host"],
+      action: "Check the selected experiment's benchmark.config.source.url and the indicated network YAML fields. Keep the pinned file and checksum; do not replace the dataset with a different release." };
     if (fields) return { yamlFields: fields, action:
       "核对上面的失败目标和原因，将所列 YAML 字段改为本机可直连的源后重跑 doctor。若提示程序不存在，先安装对应工具；认证失败应检查凭据，不要通过换源掩盖。proxy.http/https 保持 null 即不使用代理。" };
     if (name === "docker-from") return { yamlFields: [], action:
@@ -88,6 +92,21 @@ export async function diagnoseNetwork(network: NetworkAccess, signal: AbortSigna
     return output;
   };
   try {
+    if (options.datasetUrl) {
+      const target = network.sourceUrl(options.datasetUrl);
+      await probe("dataset-archive", target, hostRoute, async active => {
+        const response = await network.fetch(target, { signal: active, headers: { range: "bytes=0-1023", "cache-control": "no-cache" } });
+        if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error(`Dataset download HTTP ${response.status}`); }
+        const reader = response.body.getReader();
+        try {
+          const chunk = await reader.read();
+          if (chunk.done || !chunk.value.length) throw new Error("Empty dataset download");
+          const age = Number(response.headers.get("age") ?? "0");
+          return age > 0 ? { status: "not-checked" as const, evidence: `Received ${chunk.value.length} sample bytes; upstream cache age=${age}` }
+            : `Read ${chunk.value.length} sample bytes; HTTP ${response.status}. Use warmup for full archive validation.`;
+        } finally { await reader.cancel(); reader.releaseLock(); }
+      });
+    }
     for (const [name, target] of [
       ["huggingface", "https://huggingface.co/datasets/openai/gsm8k/resolve/main/README.md"],
       ["github-api", "https://api.github.com/repos/octocat/Hello-World"],
@@ -132,6 +151,7 @@ export async function diagnoseNetwork(network: NetworkAccess, signal: AbortSigna
         { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: `${environment.GIT_SSH_COMMAND} -o BatchMode=yes -o StrictHostKeyChecking=yes` });
       return "SSH Git remote returned HEAD through configured CONNECT route";
     });
+    if (options.docker === false) return results;
     const docker = options.docker ?? "docker";
     const command: import("../../plugins/environments/docker-runtime.js").DockerCommand = (args, opts) => runDockerCommand(docker, args, opts);
     const image = "docker.io/library/busybox:1.37.0";

@@ -378,7 +378,7 @@ ember-evaluator run experiment.yaml
 ember-evaluator report <run-dir>
 ```
 
-Use identical --patch for checks/execution. Offline reports use saved provenance without patches. `doctor` pulls/calls nothing; dry-run is not runtime acceptance.
+Use identical --patch for checks/execution. Offline reports use saved provenance without patches. `doctor` runs download/build probes without calling models; dry-run is not runtime acceptance.
 
 | Check | Pass criteria |
 | --- | --- |

@@ -267,7 +267,7 @@ scheduler:
 
 benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. These commands and doctor accept explicit --patch.
 
-doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It sends no model requests/downloads/builds/cluster starts. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
+doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It performs temporary downloads and Docker build probes without sending model requests or executing tasks. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
 
 --dry-run resolves sources, checks caches, downloads as needed, and enumerates selected IDs; its side effects differ from doctor.
 

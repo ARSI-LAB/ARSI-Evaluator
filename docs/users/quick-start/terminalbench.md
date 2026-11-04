@@ -30,7 +30,7 @@ ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-`doctor` does not call models, download tasks, or pull images. Confirm `not-checked` items through actual execution. The following preview may download task data:
+`doctor` does not call models; it probes dataset archives and performs temporary downloads and image checks. Confirm `not-checked` items through actual execution. The following preview may download task data:
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run

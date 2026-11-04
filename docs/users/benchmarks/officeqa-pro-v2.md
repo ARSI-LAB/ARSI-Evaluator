@@ -38,7 +38,7 @@ ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simplea
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ```
 
-`doctor` checks configuration/local dependencies without downloading questions/corpus. `--dry-run` queries sources, reads the question CSV, and prints task IDs under normal CLI rules. It requires access and may download approximately 225KB initially, but does not download corpus, build images, or call models.
+`doctor` checks configuration, local dependencies and network access with temporary download/build probes; it does not download the full questions/corpus. `--dry-run` queries sources, reads the question CSV, and prints task IDs under normal CLI rules. It requires access and may download approximately 225KB initially, but does not download corpus, build images, or call models.
 
 JSON/PDF, single-machine, and Ray Playbooks have no task limits and run all 90 questions. These commands use the [full parsed-JSON configuration](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml):
 

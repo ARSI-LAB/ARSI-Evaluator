@@ -156,7 +156,7 @@ ember-evaluator doctor tests/fixtures/benchmark-examples/definition.yaml --patch
 ember-evaluator run tests/fixtures/benchmark-examples/definition.yaml --patch tests/fixtures/benchmark-examples/patch.yaml
 ```
 
-将 `definition.yaml` 替换成 `protocol.yaml` 即运行完整协议示例，替换成 `harbor.yaml` 即运行 Harbor 示例。Harbor 需要可用的 Docker 和固定 Node 镜像，模型需要能调用工具并写入任务文件。`doctor` 不会拉镜像或调用模型；实际运行可能下载运行时。结果目录在仓库 `.scratch/benchmark-examples/`，将 `run` 输出的目录传给 `ember-evaluator report <run-dir>` 即可离线重建，无需认证。报告重建根据已保存的报告插件来源装配 Metrics/Reporter，命令无需重复传 patch。
+将 `definition.yaml` 替换成 `protocol.yaml` 即运行完整协议示例，替换成 `harbor.yaml` 即运行 Harbor 示例。Harbor 需要可用的 Docker 和固定 Node 镜像，模型需要能调用工具并写入任务文件。`doctor` 执行下载和构建探针，不调用模型；实际运行可能下载运行时。结果目录在仓库 `.scratch/benchmark-examples/`，将 `run` 输出的目录传给 `ember-evaluator report <run-dir>` 即可离线重建，无需认证。报告重建根据已保存的报告插件来源装配 Metrics/Reporter，命令无需重复传 patch。
 
 需要从 `init` 生成配置时，把示例数据复制到输出目录，使 Profile 的相对路径仍然成立：
 

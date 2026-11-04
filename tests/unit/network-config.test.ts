@@ -1,14 +1,39 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { getGlobalDispatcher } from "undici";
-import { loadNetworkConfig, networkDocument, networkSnapshot, parseNetworkSettings, redactNetwork, restoreNetworkTemplate } from "../../src/config/network.js";
+import { defaultNetworkConfigPath, loadNetworkConfig, networkDocument, networkSnapshot, parseNetworkSettings, redactNetwork, restoreNetworkTemplate } from "../../src/config/network.js";
 import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
 import { mirrorImageReference } from "../../src/adapters/containers/registry-image.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+test("default network YAML is created atomically, reused and overridden only by explicit paths", async () => {
+  const path = defaultNetworkConfigPath();
+  expect(path).toContain("evaluator-test-home-");
+  const documents = await Promise.all(Array.from({ length: 8 }, () => loadNetworkConfig(undefined,
+    { HTTP_PROXY: "http://user:secret@proxy.test", HF_ENDPOINT: "https://ignored.test" })));
+  for (const document of documents) {
+    expect(document.origin).toBe(path);
+    expect(document.settings.proxy.host.http).toBeNull();
+    expect(document.settings.sources.huggingface).toBe("https://huggingface.co");
+  }
+  expect(await readFile(path, "utf8")).not.toContain("secret");
+  const custom = "version: 1\nsources:\n  huggingface: https://custom.test\n";
+  await writeFile(path, custom);
+  expect((await loadNetworkConfig(undefined, {})).settings.sources.huggingface).toBe("https://custom.test");
+  expect(await readFile(path, "utf8")).toBe(custom);
+  const other = join(path, "..", "explicit.yaml");
+  await writeFile(other, "version: 1\nsources:\n  huggingface: https://explicit.test\n");
+  expect((await loadNetworkConfig(undefined, { EVALUATOR_NETWORK_CONFIG: other })).settings.sources.huggingface).toBe("https://explicit.test");
+  expect((await loadNetworkConfig(path, { EVALUATOR_NETWORK_CONFIG: other })).settings.sources.huggingface).toBe("https://custom.test");
+  await expect(loadNetworkConfig(other + ".missing", {})).rejects.toMatchObject({ code: "ENOENT" });
+  await writeFile(path, "version: invalid\n");
+  await expect(loadNetworkConfig(undefined, {})).rejects.toThrow("network.version");
+  expect(await readFile(path, "utf8")).toBe("version: invalid\n");
+});
 
 test("explicit YAML ignores inherited source/proxy settings and expands only requested variables", async () => {
   const directory = await mkdtemp(join(tmpdir(), "network-config-"));

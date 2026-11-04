@@ -156,7 +156,7 @@ ember-evaluator doctor tests/fixtures/benchmark-examples/definition.yaml --patch
 ember-evaluator run tests/fixtures/benchmark-examples/definition.yaml --patch tests/fixtures/benchmark-examples/patch.yaml
 ```
 
-Replace `definition.yaml` with `protocol.yaml` or harbor.yaml. Harbor needs Docker/pinned Node; models need tools/file writes. `doctor` pulls/calls nothing; execution may download runtimes. Results live under .scratch/benchmark-examples/. Pass output to ember-evaluator report `<run-dir>` for offline rebuild without authentication. Saved report-plugin provenance loads Metrics/Reporter; no repeated patch argument is needed.
+Replace `definition.yaml` with `protocol.yaml` or harbor.yaml. Harbor needs Docker/pinned Node; models need tools/file writes. `doctor` runs download/build probes without calling models; execution may download runtimes. Results live under .scratch/benchmark-examples/. Pass output to ember-evaluator report `<run-dir>` for offline rebuild without authentication. Saved report-plugin provenance loads Metrics/Reporter; no repeated patch argument is needed.
 
 For init-generated configurations, copy example data beside output so profile-relative paths remain valid:
 

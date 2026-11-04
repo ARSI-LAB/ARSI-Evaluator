@@ -9,7 +9,7 @@ if (separator < 0 || !args[separator + 1] || separator !== 0 && (separator !== 2
   throw new Error("Usage: node scripts/network/bootstrap.mjs [--network network.yaml] -- executable [args...]");
 const document = await loadNetworkConfig(separator === 2 ? args[1] : undefined);
 const env = networkEnvironment(document.settings, "host", process.env);
-if (document.origin !== "environment/defaults") env.EVALUATOR_NETWORK_CONFIG = document.origin;
+env.EVALUATOR_NETWORK_CONFIG = document.origin;
 let executable = args[separator + 1]!;
 const commandArgs = args.slice(separator + 2);
 // Avoid cmd.exe interpolation of arguments on Windows. npm and pnpm ship JS entry points.

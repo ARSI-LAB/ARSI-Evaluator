@@ -22,7 +22,7 @@ export type EvaluationResult =
 
 export type EvaluatorRunOptions = {
   configPath: string;
-  /** Explicit network YAML; otherwise EVALUATOR_NETWORK_CONFIG or centralized defaults. */
+  /** Explicit network YAML; otherwise EVALUATOR_NETWORK_CONFIG or ~/.ember-evaluator/network.yaml. */
   networkConfigPath?: string;
   patchPath?: string;
   overrides?: CliOverrides;

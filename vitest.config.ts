@@ -8,6 +8,7 @@ export default defineConfig({
     },
   },
   test: {
+    setupFiles: ["tests/fixtures/test-home.ts"],
     watch: false,
     // Several files spawn Node/npm processes; keep filesystem/process pressure
     // bounded instead of scaling their startup cost with every host CPU.

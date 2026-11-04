@@ -83,6 +83,6 @@ export async function diagnose(config: LoadedConfig, file: string, signal: Abort
       await check("local source", () => access(resolve(directory, path)));
     }
   }
-  checks.push({ name: "model and dataset", status: "not-checked", detail: "No model requests, dataset downloads or image builds were performed; connectivity does not guarantee valid credentials or successful execution" });
+  checks.push({ name: "model and task execution", status: "not-checked", detail: "Model calls and real tasks are not executed. Separate network probes check downloads; run warmup to validate the selected task data and images." });
   return checks;
 }

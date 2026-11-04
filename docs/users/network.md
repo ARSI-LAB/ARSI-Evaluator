@@ -2,25 +2,32 @@
 
 > English | [中文](network.zh-CN.md)
 
-Use a separate YAML with `--network`, or `EVALUATOR_NETWORK_CONFIG`. The CLI option takes precedence; no file is discovered implicitly. SDK callers use `Evaluator.run({ networkConfigPath, ... })`. An explicit file uses official sources/direct access for omitted fields and does not merge unrelated host network variables. Reference required variables explicitly as `${VARIABLE}`.
+Network YAML is separate from experiment YAML. Precedence: CLI `--network` (SDK `networkConfigPath`), then `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` (`%USERPROFILE%\.ember-evaluator\network.yaml` on Windows). The default file is created with official sources and direct connections on first use; existing content is never overwritten.
+
+An empty file, comments only, or `{}` selects default sources and direct connections. `version` is optional and must be `1` when present. Omitted fields also use defaults. Proxy/source environment variables do not silently override the file; reference them explicitly as `${VARIABLE}`. Missing or invalid explicitly selected files fail without falling back.
 
 These commands use the registered `ember-evaluator` CLI; see the [installation guide](installation.md#register-the-global-cli). Example paths are relative to the working directory; run from the repository root when using its Playbooks.
 
 ```bash
-ember-evaluator network inspect --network playbook/network/mirrors.yaml
-ember-evaluator network docker-config --network network.yaml
-ember-evaluator network doctor --network network.yaml --experiment experiment.yaml
+# Inspect the experiment and default network file without downloads
+ember-evaluator inspect experiment.yaml
+# Diagnose networks at the experiment execution locations
+ember-evaluator doctor experiment.yaml
+# Select an alternative network configuration for this call
+ember-evaluator doctor experiment.yaml --network playbook/network/mirrors.yaml
 ember-evaluator warmup experiment.yaml --network network.yaml
 ember-evaluator run experiment.yaml --network network.yaml
 ```
 
 Examples: [official sources](../../playbook/network/official.yaml), [mirrors and DockerProxy](../../playbook/network/mirrors.yaml), [task image archives](../../playbook/network/archives.yaml). The mirrors example uses `docker pull` with the `dockerproxy.net/` image prefix; it does not modify Docker daemon `registry-mirrors`.
 
+Manual recovery of a stopped run with `ember-evaluator retry --run <run-id-or-directory>` also reloads the current default network file; `--network` can override it. An already running coordinator keeps the configuration loaded at startup.
+
 ## Proxy and sources
 
 `proxy.http/https` control their respective protocols; `null` means direct. `noProxy` lists direct destinations. `proxy.overrides.host/daemon/build/runtime` select routes for Evaluator, Docker daemon, Dockerfile RUN, and runtime installation. Missing override fields inherit common settings; a null location is entirely direct. Loopback always refers to the execution location and is never silently rewritten.
 
-Use environment references for authenticated proxy URLs. Ray transports the template and expands variables on each node; literal credentials are rejected. Without a file, the central loader reads existing HTTP(S)/NO_PROXY, HF_ENDPOINT, pip/uv, npm and Evaluator mirror variables. Each run keeps its own settings and HTTP client.
+Use environment references for authenticated proxy URLs. Ray transports the template and expands variables on each node; literal credentials are rejected. Without an explicit file or EVALUATOR_NETWORK_CONFIG, edit the default file in the user directory. Each run keeps its own settings and HTTP client.
 
 | Field | Downloads |
 | --- | --- |
@@ -60,9 +67,11 @@ For archives, explicit `environment.platform` selects the download platform; `au
 
 FROM and external COPY use Docker's built-in builder and daemon network. Registry mappings affect explicit acquisition only. RUN receives configured sources/proxies through a temporary Dockerfile copy; `docker.buildNetwork` is `default` or `host`, independent of task runtime permissions.
 
-`docker-config` reports the active context/daemon and redacted merge instructions. Linux administrators preserve unrelated daemon.json fields, validate, apply and restart themselves. Docker Desktop proxies belong in Desktop settings. Remote daemon configuration must be applied on the remote host. Evaluation, warmup and diagnosis never restart Docker automatically.
+`doctor experiment.yaml` returns redacted Docker configuration suggestions in `network.dockerAdvice`; Docker probes use the active context. Linux administrators preserve unrelated daemon.json fields, validate, apply and restart themselves. Docker Desktop proxies belong in Desktop settings. Remote daemon configuration must be applied on the remote host. Evaluation, warmup and diagnosis never restart Docker automatically.
 
-`inspect` is offline. `doctor` performs temporary downloads and reports execution location, destination, route, evidence and duration. Status is passed, failed, not-checked or not-applicable; cache reuse is not a download pass, and incomplete verification exits with code 1. Required package managers must exist on the execution node; probes do not install into the host environment. Ray experiments run probes on actual execution nodes and report unavailable nodes separately. `warmup` prepares selected real tasks, including archives, without model calls. Normal runs do not execute extra probes.
+`inspect experiment.yaml` displays the experiment and the selected network file path and redacted settings without downloads. `doctor experiment.yaml` combines configuration/tool checks with temporary downloads and reports execution location, destination, route, evidence and duration. Status is passed, failed, not-checked or not-applicable; cache reuse is not a download pass, and incomplete verification exits with code 1. Required package managers must exist on the execution node; probes do not install into the host environment. Ray experiments run probes on actual execution nodes and report unavailable nodes separately. `warmup` prepares selected real tasks, including archives, without model calls. Normal runs do not execute extra probes.
+
+Each probe prints its status to stderr. The final JSON names the active `network.configPath`, `recommendedConfigPath`, `retryCommand`, and `recommendedCommand`. Edit the indicated fields and retry, or explicitly select the bundled mirror configuration; no source is changed automatically. Archive datasets such as WorkBuddy and Terminal-Bench also receive a small ranged download probe of their configured URL; full validation requires warmup.
 
 Failed probes retain the error evidence. `guidance.yamlFields` identifies the relevant YAML fields, and `guidance.action` describes the next steps. Missing tools, authentication failures, and Docker daemon connectivity may require changes outside the YAML. Insufficient cache evidence is not a network failure.
 

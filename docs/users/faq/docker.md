@@ -12,7 +12,7 @@ Pass a separate network YAML with `--network network.yaml`. `docker.pull.method`
 
 Registry API acquisition supports the built-in Node.js client and user-installed skopeo. Configure proxies under `proxy`, with separate `host`, `daemon`, `build`, and `runtime` overrides. See [network configuration](../network.md) for credentials, node addresses and fixed archive paths.
 
-`FROM` and external `COPY --from` use Docker's built-in builder and the daemon's active network settings. `network docker-config` generates application guidance without changing files or restarting Docker. After an administrator applies it, use `network doctor` to check explicit acquisition, `FROM`, and `RUN` independently.
+`FROM` and external `COPY --from` use Docker's built-in builder and the daemon's active network settings. `doctor experiment.yaml` generates application guidance without changing files or restarting Docker. After an administrator applies it, use `doctor experiment.yaml` to check explicit acquisition, `FROM`, and `RUN` independently.
 
 ## Identify and Inspect Task Images
 

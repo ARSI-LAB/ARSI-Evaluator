@@ -22,7 +22,7 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 
 模型服务需支持流式 OpenAI Chat Completions、`ignore_eos` 和 trace 指定的输出长度。默认使用官方 062126 256k 语料，服务应有至少 256k 上下文及足够余量；`full` 用于支持约 1M 上下文的服务。不会自动截断 trace 以适应较短的上下文。
 
-第一次使用按 [AgentX 性能入门](../quick-start/agentx.zh-CN.md)完成安装、模型变量和 tokenizer 设置，再按 `doctor`、`run --dry-run`、`run` 的顺序执行配置检查和正式测评。该页提供完整命令；本文说明负载、测量口径和指标采集。`doctor` 不下载、不推理；`--dry-run` 会按需下载数据并列出测量点。
+第一次使用按 [AgentX 性能入门](../quick-start/agentx.zh-CN.md)完成安装、模型变量和 tokenizer 设置，再按 `doctor`、`run --dry-run`、`run` 的顺序执行配置检查和正式测评。该页提供完整命令；本文说明负载、测量口径和指标采集。`doctor` 执行下载探针，不推理；`--dry-run` 会按需下载数据并列出测量点。
 
 按测评目标选择配置，不需要依次全部运行：
 

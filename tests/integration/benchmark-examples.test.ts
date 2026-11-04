@@ -1,8 +1,9 @@
+vi.mock("../../src/adapters/network/doctor.js", () => ({ diagnoseNetwork: async () => [] }));
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { stringify } from "yaml";
 import { loadConfig } from "../../src/config/load.js";
 import { bootstrapBenchmark } from "../../src/bootstrap.js";

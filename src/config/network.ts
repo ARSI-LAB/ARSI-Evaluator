@@ -1,6 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { createHash, randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import type { AptSources, ImageAcquisition, RegistryImageAcquisition, NetworkDocument, NetworkLocation, NetworkProxy, NetworkSettings } from "../core/contracts/network.js";
 import type { JsonValue } from "../core/contracts/task.js";
@@ -68,7 +70,7 @@ function dictionary(value: unknown, label: string): Record<string, unknown> {
 
 export function parseNetworkSettings(value: unknown): NetworkSettings {
   const raw = record(value, ["version", "proxy", "sources", "docker", "git"], "network");
-  if (raw.version !== 1) throw new TypeError("network.version must be 1");
+  if (raw.version !== undefined && raw.version !== 1) throw new TypeError("network.version must be 1");
   const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true);
   const proxyObject = record(raw.proxy === null ? undefined : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
   const overrides = record(proxyObject.overrides, locations, "network.proxy.overrides");
@@ -154,11 +156,32 @@ export function networkDocument(template: JsonValue, env: NodeJS.ProcessEnv, ori
 }
 export async function loadNetworkConfig(path?: string, env: NodeJS.ProcessEnv = process.env): Promise<NetworkDocument> {
   const selected = path ?? env.EVALUATOR_NETWORK_CONFIG;
-  if (!selected) return networkDocument(networkEnvironmentTemplate(env), env, "environment/defaults");
-  const absolute = resolve(selected);
-  const template: unknown = parse(await readFile(absolute, "utf8"), { maxAliasCount: 50, uniqueKeys: true });
+  const absolute = selected ? resolve(selected) : defaultNetworkConfigPath();
+  let content: string;
+  try { content = await readFile(absolute, "utf8"); }
+  catch (error) {
+    if (selected || !(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    await mkdir(dirname(absolute), { recursive: true });
+    const temporary = join(dirname(absolute), `.network-${randomUUID()}.yaml`);
+    try {
+      await writeFile(temporary, await readFile(new URL("../../playbook/network/official.yaml", import.meta.url)), { flag: "wx", mode: 0o600 });
+      // Publish complete bytes without replacing an existing user file, including concurrent first runs.
+      try { await link(temporary, absolute); }
+      catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
+    } finally { await rm(temporary, { force: true }); }
+    content = await readFile(absolute, "utf8");
+  }
+  const template: unknown = parse(content, { maxAliasCount: 50, uniqueKeys: true }) ?? {};
   // Validate/clone before saving a template; do not expand its references on another node.
   return networkDocument(expand(template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined })), env, absolute);
+}
+
+export function defaultNetworkConfigPath(): string {
+  return join(homedir(), ".ember-evaluator", "network.yaml");
+}
+
+export function recommendedNetworkConfigPath(): string {
+  return fileURLToPath(new URL("../../playbook/network/mirrors.yaml", import.meta.url));
 }
 
 export function redactNetwork(value: unknown): JsonValue {

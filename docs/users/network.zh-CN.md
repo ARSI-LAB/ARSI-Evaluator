@@ -2,19 +2,26 @@
 
 > [English](network.md) | 中文
 
-网络文件独立于实验 YAML。CLI 的 `--network` 优先于 `EVALUATOR_NETWORK_CONFIG`，不会自动搜索文件。SDK 在 `Evaluator.run()` 参数中使用 `networkConfigPath`。指定文件后，缺省字段采用官方源和直连，不隐式继承本机旧的网络变量；需要环境变量时在 YAML 中显式写 `${VARIABLE}`。
+网络文件独立于实验 YAML。选择顺序为：CLI 的 `--network`（SDK 的 `networkConfigPath`）→ `EVALUATOR_NETWORK_CONFIG` → 用户目录下的 `~/.ember-evaluator/network.yaml`。Windows 对应 `%USERPROFILE%\.ember-evaluator\network.yaml`。默认文件不存在时自动创建，使用官方源和直连；已有文件不会被覆盖。
+
+网络文件可以完全留空、只写注释或写 `{}`，都表示使用各下载器的默认源和直连。`version: 1` 可省略；填写时必须为 1。未填写的配置字段也使用默认值。代理和换源环境变量不再自动覆盖这份文件；需要时在 YAML 中显式写 `${VARIABLE}`。显式指定的文件不存在或格式错误时直接报错，不回退其他文件。
 
 以下命令使用已注册的 `ember-evaluator`，注册步骤见[安装指南](installation.zh-CN.md#安装全局命令)。示例路径相对当前工作目录；使用仓库中的 Playbook 时，请在仓库根目录执行。
 
 ```bash
-ember-evaluator network inspect --network playbook/network/mirrors.yaml
-ember-evaluator network docker-config --network network.yaml
-ember-evaluator network doctor --network network.yaml --experiment experiment.yaml
+# 查看实验和默认网络文件的实际设置，不下载
+ember-evaluator inspect experiment.yaml
+# 使用实验指定的执行位置检查网络
+ember-evaluator doctor experiment.yaml
+# 临时选择另一份网络配置
+ember-evaluator doctor experiment.yaml --network playbook/network/mirrors.yaml
 ember-evaluator warmup experiment.yaml --network network.yaml
 ember-evaluator run experiment.yaml --network network.yaml
 ```
 
 示例：[官方源](../../playbook/network/official.yaml)、[国内源与 DockerProxy](../../playbook/network/mirrors.yaml)、[题库镜像归档](../../playbook/network/archives.yaml)。国内源示例使用 `docker pull`，在镜像地址前添加 `dockerproxy.net/`；不会修改 Docker daemon 的 `registry-mirrors`。
+
+停止的 run 使用 `ember-evaluator retry --run <run-id-or-directory>` 手动补跑时，也会重新读取当前默认网络文件；可用 `--network` 覆盖。正在运行的协调进程继续使用启动时加载的配置。
 
 ## 代理和下载地址
 
@@ -33,7 +40,7 @@ ember-evaluator run experiment.yaml --network network.yaml
 | `sources.apt` | `debian`、`debianSecurity`、`ubuntu`、`ubuntuSecurity`、`ubuntuPorts` 各自的完整仓库根地址 |
 | `git.ssh.route` | `direct` 或 HTTP CONNECT `proxy`；不将 SSH Git 地址改成 HTTPS |
 
-未指定网络文件时，配置层读取现有 HTTP(S)/NO_PROXY、HF_ENDPOINT、pip/uv、npm 和 Evaluator 镜像变量。各下载器使用本次运行固定的设置；运行中修改进程变量不会改变已有实例。模型 endpoint、模型认证和任务网络权限仍由实验配置控制。
+未指定 `--network` 或 `EVALUATOR_NETWORK_CONFIG` 时读取用户目录中的默认文件，可直接编辑其中的对应字段。各下载器使用本次运行固定的设置；运行中修改进程变量不会改变已有实例。模型 endpoint、模型认证和任务网络权限仍由实验配置控制。
 
 ## 镜像获取方式
 
@@ -60,11 +67,13 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 `FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用 YAML 指定的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。
 
-`network docker-config` 显示当前 Docker context/daemon 和脱敏的代理合并建议。Linux Engine 管理员保留原配置其他字段，校验后应用并重启；Docker Desktop 在 Desktop 设置中应用代理，不能依赖 `daemon.json` 的代理字段。远端 daemon 的配置必须在远端主机应用。所有普通评测、预热和诊断命令均不自动重启 Docker。
+`doctor experiment.yaml` 的 `network.dockerAdvice` 提供脱敏的 Docker 代理配置建议，Docker 探针通过当前 context 访问 daemon。Linux Engine 管理员保留原配置其他字段，校验后应用并重启；Docker Desktop 在 Desktop 设置中应用代理，不能依赖 `daemon.json` 的代理字段。远端 daemon 的配置必须在远端主机应用。所有普通评测、预热和诊断命令均不自动重启 Docker。
 
-`inspect` 不发网络请求。`doctor` 显式进行临时下载，报告位置、目标、路线、证据和耗时；`passed`、`failed`、`not-checked`、`not-applicable` 分别表示通过、失败、未完成验证、不适用。缓存命中或无法证明实际下载时不计为通过，报告不完整时退出码为 1。Python/pip/uv/npm/pnpm/Git 需要在被检查的执行节点可用；不会安装到宿主系统。Ray 实验在实际执行节点运行探针；节点不可用会单独报告失败。
+`inspect experiment.yaml` 显示实验配置、网络文件绝对路径和脱敏后的实际设置，不发网络请求。`doctor experiment.yaml` 同时检查配置、工具和网络，显式进行临时下载，报告位置、目标、路线、证据和耗时；`passed`、`failed`、`not-checked`、`not-applicable` 分别表示通过、失败、未完成验证、不适用。缓存命中或无法证明实际下载时不计为通过，报告不完整时退出码为 1。Python/pip/uv/npm/pnpm/Git 需要在被检查的执行节点可用；不会安装到宿主系统。Ray 实验在实际执行节点运行探针；节点不可用会单独报告失败。
 
 `warmup` 按实验选题准备真实数据、镜像和安装依赖，可用于固定路径归档和具体任务验收。它不调用模型。正常 `run` 不执行额外诊断下载。
+
+诊断在 stderr 逐项显示状态，最终 JSON 的 `network.configPath` 标明当前文件，`recommendedConfigPath` 和 `recommendedCommand` 指向随包提供的国内源示例。先根据失败原因修改当前文件，再按 `retryCommand` 重试；也可显式选择推荐配置，程序不会自动换源。WorkBuddy、Terminal-Bench 等归档题库还会读取实际任务压缩包的一小段数据，完整校验仍使用 `warmup`。
 
 失败探针保留原始原因，并通过 `guidance.yamlFields` 列出需要核对的 YAML 字段，`guidance.action` 给出调整步骤。程序缺失、认证失败和 Docker daemon 连接问题不能一律通过换源解决；缓存证据不足也不等于网络失败。
 
@@ -77,7 +86,7 @@ node scripts/network/bootstrap.mjs --network network.yaml -- pnpm install --froz
 node scripts/network/bootstrap.mjs --network network.yaml -- pnpm ray:ensure
 ```
 
-启动器包含 YAML 解析依赖。修改相关源码后运行 `pnpm network:bundle` 更新它。toolbox 使用 `EVALUATOR_NETWORK_CONFIG`，构建副本及首次依赖安装读取该文件。Ray 部署生成节点模板和 Compose 覆盖文件，模板变量由节点环境展开；skopeo 也需在每个使用它的节点预装。
+启动器包含 YAML 解析依赖。修改相关源码后运行 `pnpm network:bundle` 更新它。toolbox 读取 `EVALUATOR_NETWORK_CONFIG` 或默认网络文件，构建副本及首次依赖安装使用该文件，并挂载到管理容器中。Ray 部署生成节点模板和 Compose 覆盖文件，模板变量由节点环境展开；skopeo 也需在每个使用它的节点预装。
 
 Docker-in-Docker 首次创建时接收 YAML 中的 daemon 代理。已有服务的网络配置发生变化时，启动器停止并要求管理员显式重建这些服务，不自动重启运行中的 daemon。直接手工运行 Compose 会绕过启动器；请使用网络启动器和生成的覆盖文件。
 

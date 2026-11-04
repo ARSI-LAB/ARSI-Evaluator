@@ -54,7 +54,9 @@ test("YAML hfToken uses SDK env and preserves references across save, export and
   vi.stubEnv("HF_ENDPOINT", hub.endpoint); vi.stubEnv("HF_TOKEN", "unrelated-host-token");
   await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${MODEL_KEY}" } },
     benchmark: { name: "officeqa-pro-v2", config: { hfToken: "${SDK_HF_TOKEN}", cacheDir: join(directory, "cache") } } }));
-  const env = { HF_ENDPOINT: hub.endpoint, MODEL_KEY: "model-secret", SDK_HF_TOKEN: "sdk-dataset-secret" };
+  const networkConfigPath = join(directory, "network.yaml");
+  await writeFile(networkConfigPath, stringify({ sources: { huggingface: hub.endpoint } }));
+  const env = { EVALUATOR_NETWORK_CONFIG: networkConfigPath, MODEL_KEY: "model-secret", SDK_HF_TOKEN: "sdk-dataset-secret" };
   const loaded = await loadConfig(file, {}, env);
   expect(loaded.experiment.benchmark.config.hfToken).toBe("sdk-dataset-secret");
   expect(JSON.stringify(loaded.persisted)).toContain("${SDK_HF_TOKEN}");

@@ -267,7 +267,7 @@ scheduler:
 
 benchmark list/info 从组件注册和 Profile 获取能力，不调用组件工厂。init --benchmark <name> --output <yaml> 生成新版最小配置，以 wx 写入，已有文件不会覆盖。上述命令及 doctor 都支持显式 --patch。
 
-doctor <yaml> 复用正式配置和 Benchmark 组合校验，检查所需 Docker/Python、本地路径及 Ray 网络连接。不会发送模型请求、下载数据、构建镜像或启动集群。通过、失败和未检查分别显示为 passed、failed、not-checked；本地连通不等于远端节点环境或模型权限有效。发现失败返回 1，配置错误返回 2，取消返回 130。
+doctor <yaml> 复用正式配置和 Benchmark 组合校验，检查所需 Docker/Python、本地路径及 Ray 网络连接。会执行临时下载和 Docker 构建探针，不发送模型请求或执行任务。通过、失败和未检查分别显示为 passed、failed、not-checked；本地连通不等于远端节点环境或模型权限有效。发现失败返回 1，配置错误返回 2，取消返回 130。
 
 --dry-run 会解析来源、检查缓存并按需下载，最终枚举所选任务 ID。与 doctor 的副作用范围不同。
 

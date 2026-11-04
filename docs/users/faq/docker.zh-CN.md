@@ -12,7 +12,7 @@
 
 Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配置在 `proxy` 中；执行进程、daemon、构建步骤和安装容器分别使用 `host`、`daemon`、`build`、`runtime` 覆盖值。完整配置、凭据、节点地址和归档固定路径说明见[网络配置](../network.zh-CN.md)。
 
-`FROM` 和外部 `COPY --from` 由 Docker 自带构建器下载，使用 daemon 已生效的网络设置。`network docker-config` 只生成应用建议，不修改配置或重启 Docker；管理员应用后用 `network doctor` 分别检查镜像获取、`FROM` 和 `RUN`。
+`FROM` 和外部 `COPY --from` 由 Docker 自带构建器下载，使用 daemon 已生效的网络设置。`doctor experiment.yaml` 检查镜像获取、`FROM` 和 `RUN`，并生成配置建议，不修改配置或重启 Docker；管理员应用建议后再次运行诊断。
 
 ## 如何按任务区分和查看镜像？
 

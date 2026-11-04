@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { networkSecrets } from "./config/network.js";
+import { redactNetwork, networkSecrets } from "./config/network.js";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve, dirname, join } from "node:path";
@@ -31,7 +31,7 @@ const defaultIO: CliIO = {
 };
 const help = `
 Network configuration and explicit download diagnostics:
-ember-evaluator network inspect|doctor|docker-config [experiment.yaml] [--network <yaml>]
+ember-evaluator inspect <yaml> [--network <yaml>] [--patch <path>]
 
 Run an experiment:
 ember-evaluator run <yaml> [--network <yaml>] [--progress <auto|tty|plain>] [--patch <path>] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
@@ -43,12 +43,12 @@ Preview or remove evaluator image references:
 ember-evaluator cleanup images [<yaml>] [--all] [--yes] [--patch <path>]
 
 Retry network failures in the same run:
-ember retry --run <run-id-or-directory> [--progress <auto|tty|plain>] [--task-id <id>] [--request-id <id>] [--reason <text>]
+ember-evaluator retry --run <run-id-or-directory> [--network <yaml>] [--progress <auto|tty|plain>] [--task-id <id>] [--request-id <id>] [--reason <text>]
 Discover and initialize:
 ember-evaluator benchmark list [--patch <path>]
 ember-evaluator benchmark info <name> [--patch <path>]
 ember-evaluator init --benchmark <name> --output <yaml> [--patch <path>]
-ember-evaluator doctor <yaml> [--patch <path>] [model overrides]
+ember-evaluator doctor <yaml> [--network <yaml>] [--patch <path>] [model overrides]
 
 Inspect configuration:
 ember-evaluator config explain <yaml> [--patch <path>] [model overrides]
@@ -70,7 +70,6 @@ ember-evaluator --help
 `;
 
 type Command = (
-  | { kind: "network"; action: "inspect" | "doctor" | "docker-config"; file?: string }
   | { kind: "cleanup-images"; file?: string; all: boolean; execute: boolean; patchPath?: string }
   | { kind: "retry"; run: string; taskIds: string[]; requestId?: string; reason?: string }
   | { kind: "help" }
@@ -78,6 +77,7 @@ type Command = (
   | { kind: "benchmark-info"; name: string; patchPath?: string }
   | { kind: "init"; name: string; output: string; patchPath?: string }
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
+  | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "config-explain"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "config-resolve"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
@@ -92,20 +92,13 @@ type Command = (
 export function parseArgs(argv: string[]): Command {
   const networkIndex = argv.indexOf("--network");
   if (networkIndex >= 0) {
-    if (!["run", "warmup", "retry", "doctor", "config", "network"].includes(argv[0] ?? "") || networkIndex === 0 ||
+    if (!["run", "warmup", "retry", "doctor", "config", "inspect"].includes(argv[0] ?? "") || networkIndex === 0 ||
         argv.lastIndexOf("--network") !== networkIndex || !argv[networkIndex + 1] || argv[networkIndex + 1]!.startsWith("-"))
       throw new TypeError("Invalid --network option");
     const rest = [...argv]; rest.splice(networkIndex, 2);
     return { ...parseArgs(rest), networkConfigPath: resolve(argv[networkIndex + 1]!) };
   }
-  if (argv[0] === "network") {
-    if (argv[2] === "--experiment" && argv.length === 4 && !argv[3]?.startsWith("-"))
-      return parseArgs(["network", argv[1]!, argv[3]!]);
-    const action = argv[1];
-    if ((action !== "inspect" && action !== "doctor" && action !== "docker-config") || argv.length > 3 || argv[2]?.startsWith("-"))
-      throw new TypeError("Expected network inspect|doctor|docker-config [experiment.yaml] [--network network.yaml]");
-    return { kind: "network", action, ...(argv[2] ? { file: argv[2] } : {}) };
-  }
+  if (argv[0] === "network") throw new TypeError("Use ember-evaluator doctor <yaml> or ember-evaluator inspect <yaml>; --network <yaml> remains supported");
   if (!argv.length || (argv.length === 1 && ["--help", "-h"].includes(argv[0]!))) return { kind: "help" };
   if (argv[0] === "cleanup") {
     if (argv[1] !== "images") throw new TypeError("Expected cleanup images [yaml] [--all] [--yes]");
@@ -160,11 +153,11 @@ export function parseArgs(argv: string[]): Command {
     if (!options["--output"]) throw new TypeError("init requires --output <yaml>");
     return { kind, name, output: resolve(options["--output"]), ...patch };
   }
-  if (argv[0] === "doctor") {
+  if (argv[0] === "doctor" || argv[0] === "inspect") {
     const parsed = parseArgs(["run", ...argv.slice(1)]);
     if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined)
-      throw new TypeError("doctor accepts only --patch and model overrides");
-    return { kind: "doctor", file: parsed.file, overrides: parsed.overrides,
+      throw new TypeError(`${argv[0]} accepts only an experiment YAML, --network, --patch and model overrides`);
+    return { kind: argv[0], file: parsed.file, overrides: parsed.overrides,
       ...(parsed.patchPath === undefined ? {} : { patchPath: parsed.patchPath }) };
   }
   if (argv[0] === "report" && argv.length === 2 && !argv[1]!.startsWith("-"))
@@ -450,12 +443,6 @@ async function runCliCommand(
     return 2;
   }
   const networkOptions = command.networkConfigPath === undefined ? {} : { networkConfigPath: command.networkConfigPath };
-  if (command.kind === "network") {
-    try {
-      const { networkCommand } = await import("./commands/network.js");
-      return await networkCommand(command.action, { ...networkOptions, ...(command.file ? { configPath: command.file } : {}) }, signal, io.out);
-    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  }
   if (command.kind === "help") {
     io.out(help);
     return 0;
@@ -495,6 +482,7 @@ async function runCliCommand(
     let registry: PluginRegistry | undefined;
     secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
     try {
+      const { diagnoseDownloads } = await import("./commands/network-diagnosis.js");
       registry = await openPluginRegistry(command.patchPath);
       const { loadConfig } = await import("./config/load.js");
       const { bootstrapBenchmark } = await import("./bootstrap.js");
@@ -503,8 +491,11 @@ async function runCliCommand(
       secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
       await bootstrapBenchmark(config, dirname(resolve(command.file)), command.patchPath, registry);
       const checks = await diagnose(config, command.file, signal);
-      io.out(JSON.stringify({ checks }, null, 2));
-      return signal.aborted ? 130 : checks.some(check => check.status === "failed") ? 1 : 0;
+      const network = await diagnoseDownloads({ config, configPath: command.file,
+        ...(command.patchPath ? { patchPath: command.patchPath } : {}) }, signal, io.error);
+      io.out(JSON.stringify({ checks, network }, null, 2));
+      const networkPassed = network.status === "passed";
+      return signal.aborted ? 130 : checks.some(check => check.status === "failed") || !networkPassed ? 1 : 0;
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
     finally { await registry?.dispose(); }
   }
@@ -540,7 +531,7 @@ async function runCliCommand(
       return signal.aborted ? 130 : 2;
     }
   }
-  if (command.kind === "config-explain" || command.kind === "config-resolve") {
+  if (command.kind === "config-explain" || command.kind === "config-resolve" || command.kind === "inspect") {
     const { loadConfig } = await import("./config/load.js");
     const { stringify } = await import("yaml");
     const { explainConfig } = await import("./config/explain.js");
@@ -551,7 +542,9 @@ async function runCliCommand(
         allowMissingAuth: true, validatePlugins: true, ...networkOptions,
         ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
       });
-      io.out(command.kind === "config-explain" ? explainConfig(config) : stringify(exportConfig(config)).trimEnd());
+      io.out(command.kind === "inspect" ? JSON.stringify({ experiment: exportConfig(config),
+        network: { configPath: config.network!.origin, digest: config.network!.digest, settings: redactNetwork(config.network!.settings) } }, null, 2)
+        : command.kind === "config-explain" ? explainConfig(config) : stringify(exportConfig(config)).trimEnd());
       if (JSON.stringify(config.persisted).includes("[runtime-provided]"))
         io.error("Runtime credentials were replaced with an EVALUATOR_API_KEY environment reference. Provide credentials through that variable or the CLI when running the exported configuration.");
       return 0;

@@ -58,14 +58,12 @@ if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]] && command -v python3 >/dev
 fi
 
 proxy_env=()
-if [[ -n "${EVALUATOR_NETWORK_CONFIG:-}" ]]; then
-  network_file="$(realpath -- "$EVALUATOR_NETWORK_CONFIG")"
-  proxy_env+=(--mount "type=bind,source=$network_file,target=/etc/ember/network.yaml,readonly" --env "EVALUATOR_NETWORK_CONFIG=/etc/ember/network.yaml")
-  network_variables="$(node scripts/network/variables.mjs)"
-  while IFS= read -r variable; do
-    if [[ -n "$variable" ]]; then proxy_env+=(--env "$variable"); fi
-  done <<< "$network_variables"
-fi
+network_file="$(node scripts/network/variables.mjs --path)"
+proxy_env+=(--mount "type=bind,source=$network_file,target=/etc/ember/network.yaml,readonly" --env "EVALUATOR_NETWORK_CONFIG=/etc/ember/network.yaml")
+network_variables="$(node scripts/network/variables.mjs)"
+while IFS= read -r variable; do
+  if [[ -n "$variable" ]]; then proxy_env+=(--env "$variable"); fi
+done <<< "$network_variables"
 for variable in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy HF_ENDPOINT; do
   if [[ -n "${!variable:-}" ]]; then proxy_env+=(--env "$variable"); fi
 done

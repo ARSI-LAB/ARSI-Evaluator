@@ -378,7 +378,7 @@ ember-evaluator run experiment.yaml
 ember-evaluator report <run-dir>
 ```
 
-外部插件在检查和执行时都传相同 `--patch <path>`。离线报告根据已保存插件来源装配，不要求再次提供 patch。`doctor` 不拉镜像、不调用模型，dry-run 也不能代替实际运行验收。
+外部插件在检查和执行时都传相同 `--patch <path>`。离线报告根据已保存插件来源装配，不要求再次提供 patch。`doctor` 执行下载和构建探针，不调用模型，dry-run 也不能代替实际运行验收。
 
 | 验收项 | 通过标准 |
 | --- | --- |

@@ -30,7 +30,7 @@ ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-`doctor` 不调用模型、不下载任务、不拉取镜像；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
+`doctor` 不调用模型，会读取任务归档样本并执行下载和镜像探针；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run

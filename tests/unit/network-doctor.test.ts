@@ -73,3 +73,26 @@ test("cancelled network diagnosis performs no download", async () => {
   expect(fetch).not.toHaveBeenCalled();
   await network.dispose();
 });
+
+test("doctor reports the actual dataset archive and the source field when its download fails", async () => {
+  const network = new NetworkRuntime(networkDocument({ sources: { huggingface: "https://hub.test" } }, {}));
+  vi.spyOn(network, "fetch").mockResolvedValue(new Response("denied", { status: 403 }));
+  vi.mocked(networkCommand).mockResolvedValue({ stdout: "", stderr: "tool unavailable", exitCode: 1 });
+  const probes = await diagnoseNetwork(network, AbortSignal.timeout(5000), { docker: false,
+    datasetUrl: "https://huggingface.co/datasets/team/bench/resolve/pinned/tasks.tar.gz" });
+  expect(probes[0]).toMatchObject({ name: "dataset-archive", target: "https://hub.test/datasets/team/bench/resolve/pinned/tasks.tar.gz",
+    status: "failed", evidence: expect.stringContaining("403"), guidance: { yamlFields: ["sources.huggingface", "proxy.overrides.host"] } });
+  expect(probes.some(probe => probe.name.startsWith("docker-"))).toBe(false);
+  await network.dispose();
+});
+
+test.each([["0", "passed"], ["30", "not-checked"]])("dataset archive samples report cache age %s as %s", async (age, status) => {
+  const network = new NetworkRuntime(networkDocument({}, {}));
+  const fetch = vi.spyOn(network, "fetch").mockImplementation(async () => new Response("sample", { headers: { age: age! } }));
+  vi.mocked(networkCommand).mockResolvedValue({ stdout: "", stderr: "tool unavailable", exitCode: 1 });
+  try {
+    const probes = await diagnoseNetwork(network, AbortSignal.timeout(5000), { docker: false, datasetUrl: "https://example.test/tasks.tar.gz" });
+    expect(probes[0]).toMatchObject({ name: "dataset-archive", status });
+    expect(fetch.mock.calls[0]?.[1]?.headers).toMatchObject({ range: "bytes=0-1023" });
+  } finally { await network.dispose(); }
+});
