@@ -36,7 +36,7 @@ Select hardware at the experiment YAML root:
 hardware: npu # npu or gpu; defaults to npu
 ```
 
-User YAML overrides profile defaults; the framework default is NPU. `config explain`, `config resolve`, saved configurations, and Ray workers carry the effective choice. This setting does not detect devices, start or switch remote model servers, or port CUDA tasks to NPU. Tasks without accelerator requirements behave the same under either choice.
+User YAML overrides profile defaults; the framework default is NPU. `inspect`, saved configurations, and Ray workers carry the effective choice. This setting does not detect devices, start or switch remote model servers, or port CUDA tasks to NPU. Tasks without accelerator requirements behave the same under either choice.
 
 | Scenario | `npu` | `gpu` |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ Historical configurations without this field mean NPU. Omitted hardware and expl
 | environment | Agent execution location | Host `local` or isolated `docker` |
 | scheduler | Concurrent task count and Ray use | `local`, `ray` |
 
-A benchmark profile supplies defaults. WorkBuddy `office`, for example, supplies sources, verifiers, and budgets. Start with defaults and override as needed; `config explain` shows final values.
+A benchmark profile supplies defaults. WorkBuddy `office`, for example, supplies sources, verifiers, and budgets. Start with defaults and override as needed; `inspect` shows final values.
 
 Defaults: Docker Environment, Local Scheduler concurrency 1, Local Store, Markdown Reporter. Omitted `output`/`output.directory` uses repository-root `results/<benchmark-name>/<YAML-basename>/<runId>/`. `playbook/gsm8k/gsm8k-agentbundle.yaml` maps to `results/gsm8k/gsm8k-agentbundle/<runId>/`. Names come from configuration; all WorkBuddy scenarios use workbuddy. This default is independent of YAML/current directories; installed packages use the Evaluator package root.
 
@@ -201,12 +201,11 @@ Default metrics: harbor-score, success-rate, duration, usage; DeepSWE adds f2p/p
 ## Inspect Effective Configuration
 
 ```bash
-ember-evaluator config explain experiment.yaml
-ember-evaluator config resolve experiment.yaml > resolved.yaml
-ember-evaluator config explain experiment.yaml --patch ./patch.yaml --model my-model
+ember-evaluator inspect experiment.yaml
+ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-explain shows values/origins; resolve emits full new-format user YAML. Both share production registration/validation without factories, downloads, enumeration, containers, or model calls. Supply nonsensitive model/endpoint variables; key variables may be missing. Output retains key references; literal CLI keys become ${EVALUATOR_API_KEY}, requiring that variable or new CLI credentials when running exports. Keep exports in the original experiment directory for bundle-relative paths.
+`inspect` prints JSON containing the effective experiment and network settings, with credential references preserved. It validates configuration without factories, downloads, task enumeration, containers, or model calls. Model settings come from YAML; model override flags are supported only by run.
 
 Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume requires matching package/plugin versions.
 
@@ -265,7 +264,7 @@ scheduler:
 
 ## Discovery, Initialization, and Diagnostics
 
-benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. These commands and doctor accept explicit --patch.
+init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. init, inspect, and doctor accept explicit --patch.
 
 doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It performs temporary downloads and Docker build probes without sending model requests or executing tasks. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
 

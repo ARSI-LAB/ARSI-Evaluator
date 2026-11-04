@@ -43,7 +43,7 @@
 
 ## 现在能测哪些 Benchmark
 
-下表中的名称用于 `benchmark info`、`init --benchmark` 和 YAML。安装外部插件后可能增加其他名称，以 `benchmark list` 输出为准。
+下表中的名称用于 `init --benchmark` 和 YAML。外部插件可以注册其他 Benchmark Profile。
 
 | 类型 | 配置名称 | 内容与使用条件 |
 | --- | --- | --- |
@@ -64,8 +64,6 @@
 | 算子 | `kernel` | [已有 kernel 的正确性与 NPU 性能评测](benchmarks/kernel-npu.zh-CN.md)；本地串行，不调用模型 |
 
 ```bash
-ember-evaluator benchmark list
-ember-evaluator benchmark info workbuddy
 ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 ```
 

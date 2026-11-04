@@ -140,25 +140,23 @@ run:
 
 环境准备和清理有自己的预算，增加 `run.timeoutSeconds` 不会自动延长它们。需要本地准备流水线时使用 `run.preparation`，当前不支持 Ray 流水线，见[准备与并发](concurrency.zh-CN.md)。
 
-## 查看和导出实际配置
+## 查看实际配置
 
 ```bash
-ember-evaluator config explain first-run.yaml
-ember-evaluator config resolve first-run.yaml > resolved.yaml
+ember-evaluator inspect first-run.yaml
 ```
 
-`explain` 回答“最终用了什么，来自哪个默认值或用户配置”；`resolve` 导出可重新加载的新版用户 YAML。密钥保留为环境变量引用，不导出认证值。非敏感模型名、地址等变量仍要设置。
+`inspect` 输出实际实验配置和网络设置的 JSON，保留密钥环境变量引用。输出用于检查，不是独立的实验 YAML；结果目录里的 `config.yaml` 仍是内部执行记录。
 
-把 `resolved.yaml` 放在原 YAML 同一目录，避免改变 Bundle、证书等相对路径的含义。结果目录里的 `config.yaml` 是内部执行记录，不是给用户修改后重新运行的模板。
-
-命令行也可覆盖当前 Solver 绑定的模型服务：
+`run` 命令可覆盖当前 Solver 绑定的模型服务：
 
 ```bash
-ember-evaluator doctor first-run.yaml --model your-other-model
 ember-evaluator run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
 ```
 
 支持 `--model`、`--endpoint`、`--api-key-env`，以及直接传值的 `--api-key`；后两者不能同时使用，建议使用环境变量方式。独立 Judge 服务不会随 Solver 的覆盖一起修改。
+
+`warmup`、`doctor` 和 `inspect` 从 YAML 读取模型设置，不接受上述覆盖参数。检查或准备其他配置时，请修改 YAML 或其中引用的环境变量。
 
 ## 续跑与重建报告
 
@@ -274,7 +272,6 @@ scheduler:
 ## 加载外部插件
 
 ```bash
-ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```
@@ -329,3 +326,16 @@ Docker 拉取和构建使用实际输出；Pi、DSH、DeepAgents 显示已有模
 完整错误分类、恢复和重试规则见[错误码](reference/errors.zh-CN.md)。命令参数的当前清单可随时通过 `ember-evaluator --help` 查看。
 
 [返回用户手册](README.zh-CN.md) · [快速上手](quick-start.zh-CN.md) · [完整配置参考](config.zh-CN.md)
+
+## 查询 Benchmark
+
+`ember-evaluator benchmark list` 默认显示表格，包含名称、版本（括号内为配置相同的别名）、默认版本、场景、默认场景和底层实现。未声明版本的插件显示 `undeclared`。信息来自当前注册表与 Profile，不检查数据集或镜像是否已下载。
+
+```bash
+ember-evaluator benchmark list
+ember-evaluator benchmark list --json
+ember-evaluator benchmark info terminalbench
+ember-evaluator benchmark list --patch ./patch.yaml
+```
+
+`list --json` 保留全部版本名称及别名分组；`info` 输出 JSON，包含各版本的展开配置。外部插件通过显式 `--patch` 加载。单独输入 `benchmark` 显示该层帮助。

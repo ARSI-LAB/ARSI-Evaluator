@@ -26,7 +26,7 @@ Set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY` in the execution termina
 Use [terminalbench-4.0.yaml](../../../playbook/terminalbench/terminalbench-4.0.yaml) to inspect expanded configuration and prerequisites:
 
 ```bash
-ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator inspect playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 

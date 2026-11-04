@@ -38,11 +38,11 @@ Terminal-Bench 的版本、任务镜像与支持条件见 [Terminal-Bench 指南
 | environment | Agent 在哪里运行 | 当前机器的 `local`，或隔离的 `docker` |
 | scheduler | 同时跑多少任务、是否使用 Ray 节点 | `local`、`ray` |
 
-Benchmark 的 Profile 是一组默认配置。例如选 `workbuddy` 的 `office` 场景后，会自动带上对应数据来源、验证器和默认预算。先使用默认组合，有需要再改；用 `config explain` 查看最终用了什么。
+Benchmark 的 Profile 是一组默认配置。例如选 `workbuddy` 的 `office` 场景后，会自动带上对应数据来源、验证器和默认预算。先使用默认组合，有需要再改；用 `inspect` 查看最终用了什么。
 
 Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local，Reporter 默认 Markdown。省略 `output` 或 `output.directory` 时，结果保存在仓库根目录的 `results/<Benchmark 名>/<YAML 文件名（不含扩展名）>/<runId>/`。例如 `playbook/gsm8k/gsm8k-agentbundle.yaml` 对应 `results/gsm8k/gsm8k-agentbundle/<runId>/`；Benchmark 名使用配置中的名称，WorkBuddy 的各场景均归入 `workbuddy`。默认路径不受 YAML 所在目录或命令启动目录影响；安装包运行时，以 Evaluator 包根目录代替源码仓库根目录。
 
-显式填写 `output.directory` 可以覆盖默认位置；此时相对路径仍相对实验 YAML。已有运行需要续跑时，应保留原来的输出目录配置；`config resolve` 导出和运行保存的配置会记录实际输出目录，重载时不因文件改名而重新生成。Harbor 缓存默认使用系统用户缓存目录，可通过 EVALUATOR_CACHE_DIR 或 benchmark.config.cacheDir 覆盖；Security 必须使用 Linux 原生目录，不能解压到 Windows 或 /mnt/c、/mnt/d。
+显式填写 `output.directory` 可以覆盖默认位置；此时相对路径仍相对实验 YAML。已有运行需要续跑时，应保留原来的输出目录配置；`inspect` 输出和运行保存的配置会记录实际输出目录。Harbor 缓存默认使用系统用户缓存目录，可通过 EVALUATOR_CACHE_DIR 或 benchmark.config.cacheDir 覆盖；Security 必须使用 Linux 原生目录，不能解压到 Windows 或 /mnt/c、/mnt/d。
 
 本地默认使用环境准备流水线，准备并发跟随 `scheduler.concurrency`；每题求解和验证依赖都就绪后，有空闲执行位置即可开始解题。需要等整批准备完再执行时，设置 `run.preparation.mode: batch`；需要单独限制准备并发时，设置 `run.preparation.concurrency`。Ray 保留整批模式，AgentX Profile 保留串行整批准备。规则及示例见[并发与环境准备](concurrency.zh-CN.md)。
 
@@ -58,7 +58,7 @@ Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local
 hardware: npu # npu 或 gpu；省略时默认 npu
 ```
 
-用户 YAML 覆盖 Profile 默认值，未指定时使用 NPU。`config explain`、`config resolve` 和保存的运行配置记录实际选择，Ray 节点接收同一值。该字段不探测本机设备，不启动或切换远端模型服务，也不将 CUDA 题目转换为 NPU 题目。无需加速卡的任务在两种选择下行为相同。
+用户 YAML 覆盖 Profile 默认值，未指定时使用 NPU。`inspect` 和保存的运行配置记录实际选择，Ray 节点接收同一值。该字段不探测本机设备，不启动或切换远端模型服务，也不将 CUDA 题目转换为 NPU 题目。无需加速卡的任务在两种选择下行为相同。
 
 | 场景 | `npu` | `gpu` |
 | --- | --- | --- |
@@ -201,12 +201,11 @@ Web 必须使用裁判模型，最简配置默认绑定默认服务。增加 ser
 ## 查看实际配置
 
 ```bash
-ember-evaluator config explain experiment.yaml
-ember-evaluator config resolve experiment.yaml > resolved.yaml
-ember-evaluator config explain experiment.yaml --patch ./patch.yaml --model my-model
+ember-evaluator inspect experiment.yaml
+ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-explain 逐项显示最终值及来源；resolve 输出完整的新版用户 YAML。两者使用正式运行相同的注册与校验路径，不调用工厂，不下载数据、枚举题目、启动容器或访问模型。模型名和地址等非敏感环境变量仍需提供，密钥变量可以未设置。输出保留密钥环境变量引用；CLI 直接提供的密钥替换为 ${EVALUATOR_API_KEY} 引用，运行导出文件时需设置该变量或通过 CLI 重新提供认证。将导出文件放在原实验目录，保证 Bundle 等相对路径含义一致。
+`inspect` 输出包含实际实验配置与网络设置的 JSON，保留密钥环境变量引用。它校验配置，不启动组件工厂、下载、任务枚举、容器或模型调用。模型设置从 YAML 读取；模型覆盖参数仅由 run 支持。
 
 优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑要求运行包和插件版本与原 run 匹配。
 
@@ -265,7 +264,7 @@ scheduler:
 
 ## 发现、初始化与诊断
 
-benchmark list/info 从组件注册和 Profile 获取能力，不调用组件工厂。init --benchmark <name> --output <yaml> 生成新版最小配置，以 wx 写入，已有文件不会覆盖。上述命令及 doctor 都支持显式 --patch。
+init --benchmark <name> --output <yaml> 生成新版最小配置，以 wx 写入，已有文件不会覆盖。init、inspect 和 doctor 都支持显式 --patch。
 
 doctor <yaml> 复用正式配置和 Benchmark 组合校验，检查所需 Docker/Python、本地路径及 Ray 网络连接。会执行临时下载和 Docker 构建探针，不发送模型请求或执行任务。通过、失败和未检查分别显示为 passed、failed、not-checked；本地连通不等于远端节点环境或模型权限有效。发现失败返回 1，配置错误返回 2，取消返回 130。
 

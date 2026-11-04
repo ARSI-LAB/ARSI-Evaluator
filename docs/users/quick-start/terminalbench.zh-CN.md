@@ -26,7 +26,7 @@ ember-evaluator --help
 使用 [terminalbench-4.0.yaml](../../../playbook/terminalbench/terminalbench-4.0.yaml)，先查看展开后的配置并检查运行条件：
 
 ```bash
-ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator inspect playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 

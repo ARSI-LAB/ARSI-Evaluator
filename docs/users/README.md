@@ -43,7 +43,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 
 ## Supported Benchmarks
 
-These names are used by `benchmark info`, `init --benchmark`, and YAML. External plugins may add names; use `benchmark list` as the authoritative list.
+These names are used by `init --benchmark` and YAML. External plugins may register additional benchmark profiles.
 
 | Category | Configuration name | Content and requirements |
 | --- | --- | --- |
@@ -64,8 +64,6 @@ These names are used by `benchmark info`, `init --benchmark`, and YAML. External
 | Operators | `kernel` | [Correctness and NPU performance of existing kernels](benchmarks/kernel-npu.md); local serial execution without model calls |
 
 ```bash
-ember-evaluator benchmark list
-ember-evaluator benchmark info workbuddy
 ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 ```
 
