@@ -1,0 +1,84 @@
+# 网络下载配置
+
+> [English](network.md) | 中文
+
+网络文件独立于实验 YAML。CLI 的 `--network` 优先于 `EVALUATOR_NETWORK_CONFIG`，不会自动搜索文件。SDK 在 `Evaluator.run()` 参数中使用 `networkConfigPath`。指定文件后，缺省字段采用官方源和直连，不隐式继承本机旧的网络变量；需要环境变量时在 YAML 中显式写 `${VARIABLE}`。
+
+以下命令使用已注册的 `ember-evaluator`，注册步骤见[安装指南](installation.zh-CN.md#安装全局命令)。示例路径相对当前工作目录；使用仓库中的 Playbook 时，请在仓库根目录执行。
+
+```bash
+ember-evaluator network inspect --network playbook/network/mirrors.yaml
+ember-evaluator network docker-config --network network.yaml
+ember-evaluator network doctor --network network.yaml --experiment experiment.yaml
+ember-evaluator warmup experiment.yaml --network network.yaml
+ember-evaluator run experiment.yaml --network network.yaml
+```
+
+示例：[官方源](../../playbook/network/official.yaml)、[国内源与 DockerProxy](../../playbook/network/mirrors.yaml)、[题库镜像归档](../../playbook/network/archives.yaml)。国内源示例使用 `docker pull`，在镜像地址前添加 `dockerproxy.net/`；不会修改 Docker daemon 的 `registry-mirrors`。
+
+## 代理和下载地址
+
+`proxy.http`、`proxy.https` 分别控制 HTTP 和 HTTPS；`null` 表示直连，`noProxy` 为直连域名列表。`proxy.overrides.host/daemon/build/runtime` 分别覆盖 Evaluator 进程、Docker daemon、Dockerfile 的 `RUN`、运行时安装命令。覆盖对象中未填写的字段继承公共代理；整个位置设为 `null` 表示该位置直连。
+
+`127.0.0.1` 始终指执行位置自身，不自动改成 `host.docker.internal`。容器或 Ray 节点需要填写它实际能访问的地址。认证代理使用 `${NODE_PROXY}` 等引用，避免将明文凭据保存在实验结果中；Ray 拒绝传输字面认证地址，节点在自己的环境中展开变量。
+
+| 字段 | 用途 |
+| --- | --- |
+| `sources.huggingface` | 数据集、任务文件、tokenizer 的 Hub 地址 |
+| `sources.python.index/extraIndexes` | pip 和 uv 包索引 |
+| `sources.python.interpreter` | uv 的 Python 解释器下载镜像；`null` 使用工具默认地址 |
+| `sources.npm.registry` | npm、pnpm 和 Corepack 包源 |
+| `sources.node.dist` | Node.js 发行文件地址 |
+| `sources.github.api/raw/repository` | GitHub API、文件和 HTTPS Git 仓库地址 |
+| `sources.apt` | `debian`、`debianSecurity`、`ubuntu`、`ubuntuSecurity`、`ubuntuPorts` 各自的完整仓库根地址 |
+| `git.ssh.route` | `direct` 或 HTTP CONNECT `proxy`；不将 SSH Git 地址改成 HTTPS |
+
+未指定网络文件时，配置层读取现有 HTTP(S)/NO_PROXY、HF_ENDPOINT、pip/uv、npm 和 Evaluator 镜像变量。各下载器使用本次运行固定的设置；运行中修改进程变量不会改变已有实例。模型 endpoint、模型认证和任务网络权限仍由实验配置控制。
+
+## 镜像获取方式
+
+`docker.pull` 是默认方式，任务基础镜像可由 `docker.benchmarks.<实验选择的 benchmark 标识>` 覆盖。Node 等共享镜像始终使用默认方式。
+
+| 配置 | 行为 |
+| --- | --- |
+| `method: docker` | 默认；执行 `docker pull --platform`，HTTP 代理由 daemon 决定 |
+| `method: registry-client`，`backend: nodejs` | Evaluator 下载并验证 Manifest、Config 和 Layers，再导入 Docker |
+| `method: registry-client`，`backend: skopeo` | 调用预装 skopeo；可设置 `skopeoExecutable`，不会自动安装或切换后端 |
+| `method: archive` | 仅用于 benchmark 覆盖；按 `provider` 和 `baseUrl` 从固定路径下载任务镜像 |
+
+`docker.mirrors` 按原 registry 精确匹配，例如 `docker.io: https://dockerproxy.net/` 将 `ubuntu:24.04` 的主动下载地址变成 `dockerproxy.net/library/ubuntu:24.04`，保留 tag/digest，不改 GHCR 等其他 registry。失败不轮换、不回退。
+
+本地已验证镜像可以复用。Registry API 读取当前执行用户的 Docker 登录凭据，跨域重定向不转发 registry 认证。导入后检查镜像 ID 和平台，固定 digest 必须有完整来源证明。skopeo 必须支持 `copy --preserve-digests`（已验证 1.13.3；Ubuntu 22.04 自带的 1.4.1 不支持）。skopeo 将原始内容写入临时 OCI layout；内容校验、打包和 Docker 导入与 Node.js 下载器相同。
+
+归档配置只需 `provider: modelscope` 或 `huggingface`，以及 benchmark 目录的下载根地址 `baseUrl`。例如 `terminal-bench/vf2-speedup-networkx` 使用 `vf2-speedup-networkx` 目录。主镜像按 `<baseUrl>/<去掉命名空间的任务路径>/<linux/amd64 或 linux/arm64>/<solve 或 verify>.tar.gz` 下载；服务镜像使用 `<阶段>/services/<服务名>.tar.gz`。每个文件由 `docker save` 导出一个镜像并 gzip 压缩，不使用 `docker export`。无需 catalog.json、SHA256SUMS 或原始 Registry Manifest。
+
+归档下载后直接执行 `docker load` 并添加 Evaluator 标签；不解析归档、不比较文件 SHA-256、原 Registry 摘要或镜像平台，也不做导入后的身份校验。Docker 返回失败时正常报错，不回退到其他来源。原始镜像标签可能由 Docker load 恢复或覆盖。运行时读取镜像 ID 等元数据用于后续构建。
+
+归档方式下，`environment.platform` 显式选择下载平台，`auto` 使用执行节点原生平台；不采用任务内原 Registry 镜像的平台声明。本机对应 URL 的 Evaluator 镜像标签存在时复用；覆盖远端同名文件后需清理对应镜像缓存，或使用新的版本目录/revision。操作和迁移说明见[任务镜像归档](../development/image-archives.md)。
+
+## Docker 构建与诊断
+
+`FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用 YAML 指定的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。
+
+`network docker-config` 显示当前 Docker context/daemon 和脱敏的代理合并建议。Linux Engine 管理员保留原配置其他字段，校验后应用并重启；Docker Desktop 在 Desktop 设置中应用代理，不能依赖 `daemon.json` 的代理字段。远端 daemon 的配置必须在远端主机应用。所有普通评测、预热和诊断命令均不自动重启 Docker。
+
+`inspect` 不发网络请求。`doctor` 显式进行临时下载，报告位置、目标、路线、证据和耗时；`passed`、`failed`、`not-checked`、`not-applicable` 分别表示通过、失败、未完成验证、不适用。缓存命中或无法证明实际下载时不计为通过，报告不完整时退出码为 1。Python/pip/uv/npm/pnpm/Git 需要在被检查的执行节点可用；不会安装到宿主系统。Ray 实验在实际执行节点运行探针；节点不可用会单独报告失败。
+
+`warmup` 按实验选题准备真实数据、镜像和安装依赖，可用于固定路径归档和具体任务验收。它不调用模型。正常 `run` 不执行额外诊断下载。
+
+失败探针保留原始原因，并通过 `guidance.yamlFields` 列出需要核对的 YAML 字段，`guidance.action` 给出调整步骤。程序缺失、认证失败和 Docker daemon 连接问题不能一律通过换源解决；缓存证据不足也不等于网络失败。
+
+## 源码启动与部署
+
+首次安装前即可使用仓库附带的启动器（需符合 `package.json` 的 Node.js/pnpm 版本）：
+
+```bash
+node scripts/network/bootstrap.mjs --network network.yaml -- pnpm install --frozen-lockfile
+node scripts/network/bootstrap.mjs --network network.yaml -- pnpm ray:ensure
+```
+
+启动器包含 YAML 解析依赖。修改相关源码后运行 `pnpm network:bundle` 更新它。toolbox 使用 `EVALUATOR_NETWORK_CONFIG`，构建副本及首次依赖安装读取该文件。Ray 部署生成节点模板和 Compose 覆盖文件，模板变量由节点环境展开；skopeo 也需在每个使用它的节点预装。
+
+Docker-in-Docker 首次创建时接收 YAML 中的 daemon 代理。已有服务的网络配置发生变化时，启动器停止并要求管理员显式重建这些服务，不自动重启运行中的 daemon。直接手工运行 Compose 会绕过启动器；请使用网络启动器和生成的覆盖文件。
+
+第三方脚本若在命令行写死其他源，环境变量不能保证覆盖。诊断只能验证实际运行的路径；具体任务仍需 `warmup`。工具安装权限、私有 Git SSH 认证、远端 Docker 和真实归档服务需要在目标部署环境验收。

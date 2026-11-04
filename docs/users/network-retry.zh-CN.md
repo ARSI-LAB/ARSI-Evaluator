@@ -1,7 +1,7 @@
 # 网络操作重试与手动补测
 
 > [English](./network-retry.md) | 中文
-`ember retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
+`ember-evaluator retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
 
 ## 自动网络重试
 
@@ -25,8 +25,8 @@
 ## 命令
 
 ```bash
-ember retry --run <run-id>
-ember retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
+ember-evaluator retry --run <run-id>
+ember-evaluator retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
 ```
 
 `ember-evaluator` 仍可使用；两个名称指向同一个 CLI。重复传入 `--task-id` 可限制多道题。省略选题时筛选全部当前网络失败；没有符合条件的题目正常返回，不创建 Attempt。

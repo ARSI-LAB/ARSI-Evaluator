@@ -8,7 +8,7 @@ Use your model API to solve two GSM8K questions and produce an offline report. R
 
 Complete the [installation guide](installation.md#install-from-source). This local example requires neither Docker nor Ray; the agent executes tools on your machine.
 
-The following examples use the `ember-evaluator` command registered by the installation guide. Run them from the Evaluator repository root.
+Use the `ember-evaluator` command registered during installation. Run the following commands from the same working directory so the generated configuration and result paths remain valid.
 
 ## 2. Choose a Benchmark and Generate Configuration
 

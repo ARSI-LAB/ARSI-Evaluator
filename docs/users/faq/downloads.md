@@ -8,11 +8,11 @@ Set variables in the environment actually launching Evaluator or workers. Downlo
 
 ## Data Downloads, Mirrors, and Proxies
 
-HF datasets default to `https://hf-mirror.com`. Task Docker builds default to Huawei Cloud pip/apt sources and replace literal `https://nodejs.org/dist/` URLs with npmmirror Node downloads without modifying source datasets. Override with `PIP_INDEX_URL`, `EVALUATOR_DEBIAN_MIRROR`, and `EVALUATOR_NODE_MIRROR`; changes alter task image cache identities. `NPM_CONFIG_REGISTRY` changes npm sources, not Node binary URLs. Ray deployment variables may override defaults. Switch HF with `HF_ENDPOINT`, such as `https://huggingface.co`. For GitHub/other proxies set `HTTP_PROXY`/`HTTPS_PROXY`; global `fetch` and Pi model requests use them.
+Downloads use official sources by default. Select Hugging Face, GitHub, pip/uv, npm, Node and APT sources and per-location proxies with a separate [network YAML](../network.md), supplied through `--network` or `EVALUATOR_NETWORK_CONFIG`.
 
-APT mirror rewriting handles `/etc/apt/sources.list` and `.list`/`.sources` under `sources.list.d/`, mapping official Debian main/security and Ubuntu archive/security/ports to mirror `/debian`, `/debian-security`, `/ubuntu`, `/ubuntu-ports`, preserving releases, components, and signing keys. Third-party repositories remain unchanged. `EVALUATOR_DEBIAN_MIRROR` applies to both distributions; use an origin without paths and ensure required repositories exist. Newly built task images retain mirrors for agent installs; existing image references are not modified.
+APT rewriting handles `/etc/apt/sources.list` and `.list`/`.sources` under `sources.list.d/`. The `sources.apt` fields independently select complete Debian main/security and Ubuntu archive/security/ports URLs, preserving releases, components and signing keys. Third-party repositories, original task files and existing images are unchanged.
 
-Pinned Node **Docker image** downloads are separate from Node tarballs. If missing locally, read the node daemon's `RegistryConfig.Mirrors` and use its first Huawei Cloud HTTPS mirror, otherwise Docker Hub. Explicit `EVALUATOR_NODE_IMAGE_MIRROR=https://<your-huawei-cloud-mirror>` supplies an origin without repository paths/credentials. Existing official local images are preferred. Only the download address changes; pinned versions, multi-architecture digests, and platform validation remain. Runtime builds and model gateways share the source. Pull failure returns immediately without trying other sources or changing Docker globals. Local/Ray resolve on execution nodes; pass explicit variables to workers. This does not replace benchmark ECR images or toolbox Dockerfile bases.
+Pinned Node Docker images, task base images and separate verifier images use `docker.pull` and `docker.mirrors` from the network YAML. Mirrors match the original registry exactly; pinned digests and platform checks remain. Evaluator no longer automatically selects a Huawei mirror from daemon settings. `FROM` connectivity is controlled by the actual Docker daemon. See [network configuration](../network.md) for the three acquisition methods and examples.
 
 Evaluator's global `fetch` and its Pi runner use HTTP/1.1 by default for both direct and proxied connections. Set `EVALUATOR_HTTP2=1` **before starting the process** to allow HTTP/2 negotiation; unset it or set `EVALUATOR_HTTP2=0` to keep HTTP/1.1. Enabling HTTP/2 still permits HTTP/1.1 when the server does not support it. Proxy settings and TLS certificate validation remain in effect. The Pi runner reads this variable from its own environment. Configure it separately in container and worker launch environments; it does not configure browsers, Docker image pulls, external download commands, or other third-party Solver runtimes.
 
@@ -30,22 +30,11 @@ If large downloads repeatedly terminate with `UND_ERR_RES_CONTENT_LENGTH_MISMATC
 
 ## Judge Image Sources and Build Networking
 
-Task images, Solver runtimes, and judge images build separately. Host apt/Git globals do not automatically enter judge images. Judge builds use:
+Task images, Solver runtimes and judge images build separately but read the same run's network YAML. `sources.python`, `sources.npm`, `sources.github` and `sources.apt` select installation sources; `proxy.overrides.build` selects build proxies and `docker.buildNetwork` selects `default` or `host`. Defaults use official sources. Loopback proxy addresses are not rewritten; provide an address reachable from the container.
 
-| Variable | Purpose and default |
-| --- | --- |
-| EVALUATOR_DEBIAN_MIRROR | Debian main/security and Ubuntu archive/security/ports origin; default https://repo.huaweicloud.com |
-| PIP_INDEX_URL | Python index; default https://repo.huaweicloud.com/repository/pypi/simple |
-| NPM_CONFIG_REGISTRY / npm_config_registry | Optional npm source, uppercase first; otherwise task defaults. Passed to every task/sidecar/separate-judge build stage for npm/pnpm/Corepack and included in cache identity. Lock versions/hashes remain; absolute lockfile URLs are not rewritten |
-| UV_DEFAULT_INDEX / UV_INDEX_URL | When set, overrides PIP_INDEX_URL for all judge-image Python installation |
-| PIP_IGNORE_INSTALLED | Optional task build argument, unset by default; accepts `0/1/false/true`. For mixed Conda/pip distutils uninstall failures, explicit `1` installs over resolved dependencies. Changes installed packages/cache identity |
-| EVALUATOR_GITHUB_MIRROR | GitHub prefix, default https://github.com/; e.g. https://git-mirror.example/github/ receives Tencent/workbuddy-bench.git or harbor-framework/harbor.git |
-| HTTP_PROXY / HTTPS_PROXY / NO_PROXY | Explicit Docker build inputs, lowercase supported; default networking rewrites loopback proxies to host.docker.internal |
-| EVALUATOR_DOCKER_BUILD_NETWORK | default or host; default default. host means the Docker daemon host, not necessarily the CLI's WSL distribution |
+`PIP_IGNORE_INSTALLED` is a separate installation option accepting `0/1/false/true`, unset by default. It changes pip behavior and build cache identity, not network routing. Other network environment variables are read centrally only when no network file is supplied; see the [network guide](../network.md) for precedence. With Docker adapter scripts, also select the script through `verifier.config.dockerExecutable`; Environment and Verifier executables are configured separately.
 
-Export in the WSL shell/management container launching Evaluator. Source/proxy URLs must omit credentials. Settings/recipe changes create new cache keys. With Docker adapter scripts, also select the script through verifier.config.dockerExecutable; Environment and Verifier executables are separate.
-
-Successful builds do not establish runtime download access. Ordinary/Compose main containers can inherit explicit coordinator `NPM_CONFIG_REGISTRY`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, and `UV_DEFAULT_INDEX`; task/Environment values take precedence. `model-api` isolation does not inherit them.
+Successful builds do not establish runtime download access. Ordinary/Compose main containers receive `NPM_CONFIG_REGISTRY`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL` and `UV_DEFAULT_INDEX` from the network settings; task/Environment values take precedence. `model-api` isolation does not inherit them.
 
 Task builds add missing APT defaults: up to three retries per failed file; HTTP/HTTPS connection/read timeout 30 seconds; index update fails immediately after exhausted errors instead of continuing with missing-package errors. Defaults apply before CA bootstrap; image settings, later task settings, and `apt-get -o` override them. Retries occur in APT downloads. Exhaustion fails the build without retrying whole builds/attempts. Compilation/script errors are not retried; preparation deadlines remain.
 

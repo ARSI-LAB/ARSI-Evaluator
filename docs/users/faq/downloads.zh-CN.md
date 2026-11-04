@@ -8,11 +8,11 @@
 
 ## 数据下载、镜像与代理
 
-Hugging Face 数据集请求默认走 `https://hf-mirror.com` 镜像。任务 Dockerfile 构建默认使用华为云 pip/apt 源，并将字面量 `https://nodejs.org/dist/` 下载地址替换为 npmmirror Node 镜像；原始数据集文件保持不变。可设置 `PIP_INDEX_URL`、`EVALUATOR_DEBIAN_MIRROR`、`EVALUATOR_NODE_MIRROR` 分别覆盖；更换这些源会改变任务镜像缓存标识。npm 仍可通过 `NPM_CONFIG_REGISTRY` 覆盖，修改 npm registry 不会改变 Node 二进制下载地址。Ray 部署容器的预置环境变量可能覆盖这些默认值。数据集可通过 `HF_ENDPOINT`（如 `https://huggingface.co`）切换来源。GitHub 等仍需代理时，设置 `HTTP_PROXY` / `HTTPS_PROXY`。评测进程会把全局 `fetch` 换成走该代理的版本，pi 的模型请求也使用它。
+数据和依赖下载缺省使用官方源。通过独立的[网络 YAML](../network.zh-CN.md)选择 Hugging Face、GitHub、pip/uv、npm、Node、APT 源及各执行位置的代理。文件通过 `--network` 或 `EVALUATOR_NETWORK_CONFIG` 指定。
 
-APT 换源处理 `/etc/apt/sources.list` 和 `sources.list.d/` 下的 `.list`、`.sources` 文件，将 Debian 官方主仓库、安全仓库及 Ubuntu 官方 archive、security、ports 地址分别改为镜像站的 `/debian`、`/debian-security`、`/ubuntu`、`/ubuntu-ports` 路径，保留发行版、组件及签名密钥设置，第三方仓库保持原地址。`EVALUATOR_DEBIAN_MIRROR` 对 Debian 和 Ubuntu 都生效，填写不带路径的镜像站 origin，并确保它提供任务所需的仓库。新构建的任务镜像会保留换源结果，供 Agent 在任务内安装软件；已有镜像引用不会被原地修改。
+APT 换源处理 `/etc/apt/sources.list` 和 `sources.list.d/` 下的 `.list`、`.sources` 文件。`sources.apt` 分别指定 Debian 主仓库、安全仓库及 Ubuntu archive、security、ports 的完整地址，保留发行版、组件和签名密钥；第三方仓库保持原地址。原始任务文件和已有镜像不会被原地修改。
 
-Evaluator 固定 Node **Docker 镜像**的下载与上述 Node 压缩包下载独立。本地缺少固定镜像时，自动读取执行节点 Docker daemon 的 `RegistryConfig.Mirrors`，直接使用其中第一个华为云 HTTPS 镜像源；没有配置华为云时使用原 Docker Hub 引用。也可在评测进程设置 `EVALUATOR_NODE_IMAGE_MIRROR=https://<你的华为云镜像加速地址>` 显式指定 registry origin（只填域名，不含仓库路径或认证信息）。已有本地官方镜像优先复用。镜像源只替换下载地址，固定版本、多架构摘要和目标平台校验保持不变；运行时构建和模型网关使用同一来源。拉取失败立即报错，不自动重试其他源，也不修改 Docker 全局配置。Local 与 Ray 均在实际执行节点解析；显式环境变量需传入对应 worker。此规则不替换 Benchmark 的 ECR 镜像或管理容器 Dockerfile 的基础镜像。
+固定 Node Docker 镜像、任务基础镜像和独立裁判镜像使用网络 YAML 的 `docker.pull` 与 `docker.mirrors`。镜像源按原 registry 精确匹配，固定 digest 与平台校验保持不变；不再自动挑选 daemon 中的华为云镜像。`FROM` 的联网由实际 Docker daemon 配置负责。三种获取方式及配置示例见[网络下载配置](../network.zh-CN.md)。
 
 评测进程的全局 `fetch` 和 Pi runner 在直连和代理连接下均默认使用 HTTP/1.1。在**启动进程前**设置 `EVALUATOR_HTTP2=1` 才允许协商 HTTP/2；不设置或设为 `EVALUATOR_HTTP2=0` 时使用 HTTP/1.1。开启后，服务器不支持 HTTP/2 时仍可使用 HTTP/1.1。代理配置和 TLS 证书验证继续生效。Pi runner 从自身环境读取此变量；容器和 Worker 的启动环境需单独配置；它不控制浏览器、Docker 镜像拉取、外部下载命令或其他第三方 Solver 运行时。
 
@@ -30,22 +30,11 @@ $env:EVALUATOR_HTTP2 = "1"
 
 ## 裁判镜像的下载源与构建网络
 
-任务镜像、Solver 运行时、裁判镜像是独立的构建链路。宿主机 apt 或 Git 的全局配置不会自动进入裁判镜像。裁判构建使用以下设置：
+任务镜像、Solver 运行时和裁判镜像分别构建，但读取同一次运行的网络 YAML。`sources.python`、`sources.npm`、`sources.github`、`sources.apt` 指定安装源，`proxy.overrides.build` 指定构建代理，`docker.buildNetwork` 选择 `default` 或 `host`。缺省使用官方源；代理中的回环地址不自动改写，需填写容器可访问的地址。
 
-| 环境变量 | 用途与默认值 |
-| --- | --- |
-| EVALUATOR_DEBIAN_MIRROR | Debian 主仓库、安全仓库及 Ubuntu archive/security/ports 的镜像站 origin，默认 https://repo.huaweicloud.com |
-| PIP_INDEX_URL | Python 包源，默认 https://repo.huaweicloud.com/repository/pypi/simple |
-| NPM_CONFIG_REGISTRY / npm_config_registry | 可选 npm 包源；大写优先，未设置时保留任务自身的默认源。传入任务、侧车及独立裁判镜像的每个构建阶段，供 npm、pnpm 和 Corepack 使用，并纳入镜像缓存身份。不修改任务锁文件中的版本或校验摘要；锁文件固定的绝对下载 URL 不会自动改写 |
-| UV_DEFAULT_INDEX / UV_INDEX_URL | 设置后优先于 PIP_INDEX_URL，用于裁判镜像中所有 Python 包安装 |
-| PIP_IGNORE_INSTALLED | 可选任务镜像构建参数，默认不设置；允许 `0/1/false/true`。上游 Conda 与 pip 混装导致 pip 无法卸载 distutils 包时，可显式设置 `1` 让 pip 覆盖安装其解析出的依赖；会改变 Python 包安装结果，并参与镜像缓存身份 |
-| EVALUATOR_GITHUB_MIRROR | GitHub 仓库 URL 前缀，默认 https://github.com/；例如自有镜像 https://git-mirror.example/github/ 会追加 Tencent/workbuddy-bench.git 或 harbor-framework/harbor.git |
-| HTTP_PROXY / HTTPS_PROXY / NO_PROXY | 显式传给 Docker 构建，同时支持小写变量；默认网络下将回环代理地址改为 host.docker.internal |
-| EVALUATOR_DOCKER_BUILD_NETWORK | default 或 host，默认 default；host 指 Docker daemon 所在宿主的网络，不一定是运行 CLI 的 WSL 发行版 |
+`PIP_IGNORE_INSTALLED` 是独立的安装行为选项，允许 `0/1/false/true`，默认不设置。它改变 pip 安装行为并参与构建缓存标识，不属于网络换源配置。其他网络变量仅在未提供网络文件时由配置层读取，字段及优先级见[网络指南](../network.zh-CN.md)。使用 Docker 适配脚本时，在 `verifier.config.dockerExecutable` 中也显式选择相应脚本；Environment 与 Verifier 的执行器分别配置。
 
-请在启动评测器的 WSL shell 或管理容器中导出这些变量。源和代理 URL 不允许包含认证信息；配置与构建配方变化会产生新的镜像缓存键。使用 Docker 适配脚本时，在 verifier.config.dockerExecutable 中也显式选择相应脚本；Environment 与 Verifier 的执行器分别配置。
-
-构建成功不代表做题进程也能下载依赖。普通及 Compose 主容器可继承协调端显式设置的 `NPM_CONFIG_REGISTRY`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `UV_DEFAULT_INDEX`，任务或 Environment 显式设置的同名变量优先；`model-api` 隔离环境不继承这些部署变量。
+构建成功不代表做题进程也能下载依赖。普通及 Compose 主容器从网络配置获得 `NPM_CONFIG_REGISTRY`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `UV_DEFAULT_INDEX`，任务或 Environment 显式设置的同名变量优先；`model-api` 隔离环境不继承这些部署变量。
 
 任务镜像构建为未配置的 APT 选项补充缺省值：单个文件下载失败最多重试三次，HTTP/HTTPS 连接和读取超时 30 秒；索引更新重试后仍有错误时立即失败，避免继续安装后只报找不到包。配置在 CA 引导之前生效，镜像已有设置、任务后续配置及 `apt-get -o` 参数可覆盖缺省行为。重试发生在 APT 下载阶段；下载重试耗尽后构建失败，不触发整个镜像构建或 Attempt 的自动重试。编译失败和脚本错误也不重试；原有环境准备总时限仍生效。
 

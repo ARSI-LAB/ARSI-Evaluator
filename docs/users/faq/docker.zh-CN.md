@@ -6,24 +6,13 @@
 
 本页 Shell 命令在 Evaluator 仓库根目录执行，YAML 片段合入实际实验配置。
 
-## 如何只为拉取镜像指定代理？
+## 如何配置镜像下载源和代理？
 
-在 Docker 环境参数中填写 HTTP/HTTPS 代理：
+使用独立的网络 YAML，通过 `--network network.yaml` 传入。`docker.pull.method` 选择 Docker 原生拉取或 Registry API 下载，`docker.mirrors` 临时替换 registry 地址，`docker.benchmarks` 可为指定题库选择 ModelScope/Hugging Face 镜像归档。
 
-```yaml
-environment:
-  name: docker
-  config:
-    pullProxy: ${DOCKER_PULL_PROXY}
-```
+Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配置在 `proxy` 中；执行进程、daemon、构建步骤和安装容器分别使用 `host`、`daemon`、`build`、`runtime` 覆盖值。完整配置、凭据、节点地址和归档固定路径说明见[网络配置](../network.zh-CN.md)。
 
-例如本机 Clash 的 HTTP 入口可以通过环境变量设置为 `http://127.0.0.1:7890`。该地址由运行 Evaluator 的进程访问；Evaluator 在容器或 Ray 节点运行时，`127.0.0.1` 指的是该容器或节点，需填写它可访问的代理地址。支持 HTTP/HTTPS 代理及 URL 中的代理认证，不支持 SOCKS。
-
-缺少所需镜像时，Evaluator 使用该代理访问 registry 的认证、manifest 和镜像层，验证摘要及目标平台，生成归档并通过 `docker load` 导入当前 Docker daemon。Registry 登录凭据读取当前执行用户的 Docker `config.json`、`credHelpers` 或 `credsStore`；公开镜像可匿名下载。镜像归档临时占用压缩层、展开层及打包文件的磁盘空间，下载或导入失败、取消后会清理临时文件。已验证的本地镜像及来源凭据可跨运行复用。
-
-这个参数只用于框架主动获取的任务、验证、侧车和运行时镜像，不修改系统或 Docker daemon 代理，不传给 Dockerfile 构建参数、任务容器、数据集下载或模型请求。Dockerfile 中自行获取的 `FROM` 镜像仍由 Docker/BuildKit 处理；已有系统环境变量和 Docker 全局设置保持其原有作用。代理认证信息会脱敏；认证代理应使用上面的环境变量引用，以便保存配置后仍能恢复凭据。
-
-省略 `pullProxy` 时沿用原生 `docker pull`；显式配置后失败会报告错误，不静默改成直连或其他代理。HTTPS registry 使用正常 TLS 证书校验；本机 loopback registry 可使用 HTTP，不会自动继承 daemon 中任意远端不安全 registry 或跳过证书校验设置。
+`FROM` 和外部 `COPY --from` 由 Docker 自带构建器下载，使用 daemon 已生效的网络设置。`network docker-config` 只生成应用建议，不修改配置或重启 Docker；管理员应用后用 `network doctor` 分别检查镜像获取、`FROM` 和 `RUN`。
 
 ## 如何按任务区分和查看镜像？
 

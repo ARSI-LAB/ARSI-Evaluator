@@ -2,7 +2,7 @@
 
 > English | [中文](./network-retry.zh-CN.md)
 
-`ember retry` creates full new attempts for invalid tasks with explicit network failures in the original run. It preserves task set, sources, model, Solver, official limits, and scoring. Zeros, wrong answers, valid agent timeouts, and failures without network evidence are ineligible.
+`ember-evaluator retry` creates full new attempts for invalid tasks with explicit network failures in the original run. It preserves task set, sources, model, Solver, official limits, and scoring. Zeros, wrong answers, valid agent timeouts, and failures without network evidence are ineligible.
 
 ## Automatic Network Retries
 
@@ -26,8 +26,8 @@ Exhaustion returns `NETWORK_FAILURE` with `retryable: false`, `action: finalize`
 ## Commands
 
 ```bash
-ember retry --run <run-id>
-ember retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
+ember-evaluator retry --run <run-id>
+ember-evaluator retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
 ```
 
 `ember-evaluator` remains an alias for the same CLI. Repeat `--task-id` for multiple tasks. Without selection, all current network failures are considered. No eligible tasks returns normally without creating attempts.

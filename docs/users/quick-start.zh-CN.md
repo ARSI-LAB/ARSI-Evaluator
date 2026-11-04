@@ -8,7 +8,7 @@
 
 先完成[安装指南](installation.zh-CN.md#直接安装)。下面的 local 示例不需要 Docker 或 Ray，Agent 会在本机执行工具。
 
-后文统一使用安装指南中注册的 `ember-evaluator` 命令，在 Evaluator 仓库根目录执行。
+后文使用安装时注册的 `ember-evaluator` 命令；请在同一工作目录依次执行，便于使用生成的配置和结果路径。
 
 ## 2. 选择题库并生成配置
 

@@ -35,8 +35,8 @@ AgentX 的 Trace 数据集公开，现有示例不强制要求 HF_TOKEN；需要
 从仓库根目录执行：
 
 ```bash
-node dist/cli.js config explain playbook/workbuddy/workbuddy-office-ray.yaml
-node dist/cli.js run playbook/deepswe/deepswe-simpleagent.yaml
+ember-evaluator config explain playbook/workbuddy/workbuddy-office-ray.yaml
+ember-evaluator run playbook/deepswe/deepswe-simpleagent.yaml
 ```
 
 完成[安装](../docs/users/installation.zh-CN.md)后，可以在任意目录使用 YAML 的绝对路径运行，例如 Terminal-Bench 4.0：

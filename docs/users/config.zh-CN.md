@@ -117,7 +117,7 @@ run:
 
 旧字段 `benchmark.config.defaults.verifyTimeoutSeconds` 已删除，改用 `run.verifyTimeoutSeconds`，不自动兼容或迁移。更新 Ray 部署时，coordinator、worker 和 Jobs 运行包需要一起更新，确保阶段参数传递一致。
 
-Docker 可通过 `environment.config.pullProxy` 为镜像获取单独指定 HTTP/HTTPS 代理，不影响构建、容器和模型请求；配置、凭据和节点地址说明见 [Docker 代理说明](faq/docker.zh-CN.md#如何只为拉取镜像指定代理)。
+下载源、代理及镜像获取方式使用独立的 [网络 YAML](network.zh-CN.md)，由 `--network` 指定。
 
 Pi / SimpleAgent 和内置 Judge 对显式 `base_url` 的 OpenAI Chat Completions 服务遵循同一输出规则：配置 `services.<服务>.maxTokens` 时发送该上限；省略时不发送 `max_tokens` 或 `max_completion_tokens`，由 API 服务决定回复上限。SDK 必需的模型预算仍用于本地上下文管理，不构成隐含的请求输出限制。通过已注册 Provider 使用模型时保留其 SDK 协议默认值；其他外部 Agent 保留各自的模型配置机制。
 
@@ -279,6 +279,6 @@ SimpleQA/HealthBench 通过 benchmark.config.judgeService 显式选择 services 
 
 ## 网络故障补测
 
-`ember retry --run <run-id>` 为原 Run 的当前网络失败任务创建新 Attempt。有效零分、普通阶段超时和非网络错误不补测。网络访问仅在对应操作内有限重试，不自动补测整题；每次显式手动请求可为符合条件的任务追加一个 Attempt。`run.taskRetry` 已删除，旧 YAML 需要移除此字段。Ray Jobs 使用本页的独立 `deployment` 连接原网关，未注册为 Scheduler 插件。详见[网络故障补测](network-retry.zh-CN.md)。
+`ember-evaluator retry --run <run-id>` 为原 Run 的当前网络失败任务创建新 Attempt。有效零分、普通阶段超时和非网络错误不补测。网络访问仅在对应操作内有限重试，不自动补测整题；每次显式手动请求可为符合条件的任务追加一个 Attempt。`run.taskRetry` 已删除，旧 YAML 需要移除此字段。Ray Jobs 使用本页的独立 `deployment` 连接原网关，未注册为 Scheduler 插件。详见[网络故障补测](network-retry.zh-CN.md)。
 
 [返回用户手册](README.zh-CN.md) · [快速上手](quick-start.zh-CN.md)

@@ -371,11 +371,11 @@ output:
 先完成安装与构建，再在仓库根目录执行；示例文件路径按实际位置替换：
 
 ```bash
-node dist/cli.js config explain experiment.yaml
-node dist/cli.js doctor experiment.yaml
-node dist/cli.js run experiment.yaml --dry-run
-node dist/cli.js run experiment.yaml
-node dist/cli.js report <run-dir>
+ember-evaluator config explain experiment.yaml
+ember-evaluator doctor experiment.yaml
+ember-evaluator run experiment.yaml --dry-run
+ember-evaluator run experiment.yaml
+ember-evaluator report <run-dir>
 ```
 
 外部插件在检查和执行时都传相同 `--patch <path>`。离线报告根据已保存插件来源装配，不要求再次提供 patch。`doctor` 不拉镜像、不调用模型，dry-run 也不能代替实际运行验收。

@@ -71,3 +71,5 @@ ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 WorkBuddy Web requires a judge; Office model scoring is optional. Store Security data and results on a native Linux filesystem. Do not extract under Windows or WSL `/mnt/c` or `/mnt/d`. See [WorkBuddy](benchmarks/workbuddy.md).
 
 Run a small sample before increasing tasks, concurrency, or nodes. See the [FAQ](faq/README.md) for installation, scoring, resume, and resource issues.
+
+- [Network downloads, proxies and image acquisition](network.md)

@@ -55,20 +55,20 @@ CLI ID files replace YAML IDs and clear offset/maxTasks/sampling. YAML `run.task
 Use independent `warmup` with production YAML:
 
 ```bash
-ember warmup first-run.yaml
-# From the source directory, alternatively:
+ember-evaluator warmup first-run.yaml
+# Use plain-text progress output:
 ember-evaluator warmup first-run.yaml --progress plain
 ```
 
-Selection follows taskIds/sampling/offset/maxTasks. It prepares solve/separate-verification/sidecar images, Evaluator runtimes, and Solver layers, using production pulls/builds/layer composition/pullProxy/concurrency/budgets. Temporary build containers may install dependencies. Warmup calls no models, starts no solve/scoring sessions, and creates no evaluation results/metrics/reports.
+Selection follows taskIds/sampling/offset/maxTasks. It prepares solve/separate-verification/sidecar images, Evaluator runtimes, and Solver layers, using production pulls/builds/layer composition/network YAML/concurrency/budgets. Temporary build containers may install dependencies. Warmup calls no models, starts no solve/scoring sessions, and creates no evaluation results/metrics/reports.
 
 Final output contains one ready/failed count line followed by each failed task's ID, error code, and reason. Successful task details and the full JSON are omitted. An entirely successful warmup prints only the count line; failures return exit code `1`.
 
 For fixed IDs/external plugins:
 
 ```bash
-ember warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
-ember run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
 ```
 
 task-ids-file overrides selection exactly as run. Matching configuration/task versions/platform/daemon reuse caches in later evaluations; repeated warmup checks/reuses them. Model keys are unnecessary, but model names/endpoints/bundle paths must be valid. Unlike dry-run's data download/enumeration, warmup accepts neither dry-run nor resume.
@@ -87,15 +87,15 @@ External plugins require benchmark.planRun()/scheduler.prepareTasks(); local env
 
 ```bash
 # Preview task images and dependencies prepared by this configuration
-ember cleanup images first-run.yaml
-ember cleanup images first-run.yaml --yes
+ember-evaluator cleanup images first-run.yaml
+ember-evaluator cleanup images first-run.yaml --yes
 
 # All recognized evaluation images in the current Docker daemon
-ember cleanup images --all
-ember cleanup images --all --yes
+ember-evaluator cleanup images --all
+ember-evaluator cleanup images --all --yes
 
 # Connect to Ray using YAML and clean evaluation images on all target nodes
-ember cleanup images first-run.yaml --all --yes
+ember-evaluator cleanup images first-run.yaml --all --yes
 ```
 
 Supports local Docker/Ray Client/Jobs. Add --patch for external YAML plugins. Cleanup calls no models/downloads/tasks and does not start/rebuild clusters. Jobs still requires gateway authentication/TLS; update all deployment roles together.

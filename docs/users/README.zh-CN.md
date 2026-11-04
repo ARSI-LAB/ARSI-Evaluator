@@ -71,3 +71,5 @@ ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 WorkBuddy Web 需要裁判模型，Office 的模型评分可选。Security 数据和结果应放在 Linux 原生文件系统，不在 Windows 或 WSL 的 `/mnt/c`、`/mnt/d` 解压。具体限制见 [WorkBuddy 指南](benchmarks/workbuddy.zh-CN.md)。
 
 先限制样本实际运行，再增加题数、并发或节点。安装、评分、续跑和资源问题的说明见 [FAQ](faq/README.zh-CN.md)。
+
+- [网络下载、代理与镜像获取](network.zh-CN.md)

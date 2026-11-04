@@ -195,12 +195,12 @@ Select the Solver model service through `benchmark.solver.service`; a model-back
 
 ## 5. Validate loading and run
 
-Run from the plugin project. If the CLI is installed, replace `node ../Ember-Evaluator/dist/cli.js` with `ember-evaluator`:
+Register `ember-evaluator` using the [installation guide](../users/installation.md#register-the-global-cli), then run from the plugin project:
 
 ```bash
-node ../Ember-Evaluator/dist/cli.js config explain experiment.yaml --patch cordis.patch.yaml
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml --dry-run
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml
+ember-evaluator config explain experiment.yaml --patch cordis.patch.yaml
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml --dry-run
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml
 ```
 
 - `config explain` checks configuration parsing, registered names, and validators, then displays resolved configuration and field origins. It does not compute metrics.
@@ -212,8 +212,8 @@ node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yam
 Resume with the same explicit patch:
 
 ```bash
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml --resume <run-id>
-node ../Ember-Evaluator/dist/cli.js report results/<run-id>
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml --resume <run-id>
+ember-evaluator report results/<run-id>
 ```
 
 `report` does not accept `--patch`. It loads the original Metrics/Reporter providers from saved metadata without solving again. Keep the original plugin installation and resolvable paths. Moving results does not copy plugins or rewrite saved plugin paths.
