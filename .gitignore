@@ -12,3 +12,6 @@ coverage/
 .zcodeignore
 __pycache__/
 .evaluator-build.lock/
+
+!tests/fixtures/results/
+!tests/fixtures/results/**/*.ts
