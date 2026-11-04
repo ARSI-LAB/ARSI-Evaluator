@@ -5,12 +5,42 @@ import { profileChain } from "../config/profiles.js";
 import { resolveInput } from "../config/resolve.js";
 import type { UserConfig } from "../config/user-schema.js";
 import { expectRecord } from "../config/schema.js";
+import { isDeepStrictEqual } from "node:util";
 
 const service = (prefix: string) => ({ model: `\${${prefix}_NAME}`, base_url: `\${${prefix}_ENDPOINT}`, api_key: `\${${prefix}_API_KEY}` });
 
 export function benchmarkNames(registry: PluginRegistry): string[] {
   return [...new Set([...registry.ctx.evaluator.entries().filter(item => item.role === "benchmark").map(item => item.name),
     ...registry.ctx.evaluator.profiles().filter(item => item.role === "benchmark").map(item => item.id)])].sort();
+}
+
+export function benchmarkList(registry: PluginRegistry) {
+  const profiles = registry.ctx.evaluator.profiles();
+  return benchmarkNames(registry).map(name => {
+    const chain = profiles.some(item => item.role === "benchmark" && item.id === name) ? profileChain(profiles, "benchmark", name) : [];
+    const versions = [...new Set(chain.flatMap(item => Object.keys(item.versions ?? {})))];
+    const layers = Object.fromEntries(versions.map(version => [version,
+      resolveInput(`${name}.yaml`, { services: { default: service("MODEL") }, benchmark: { name, version } }, profiles).source]));
+    const versionGroups: { version: string; aliases: string[] }[] = [];
+    for (const version of versions) {
+      const group = versionGroups.find(item => isDeepStrictEqual(layers[item.version], layers[version]));
+      if (group) group.aliases.push(version);
+      else versionGroups.push({ version, aliases: [] });
+    }
+    return { name, implementation: chain.map(item => item.plugin?.name).filter(item => item !== undefined).at(-1) ?? name,
+      versions, versionGroups,
+      defaultVersion: chain.map(item => item.defaultVersion).filter(item => item !== undefined).at(-1) ?? null,
+      scenarios: [...new Set(chain.flatMap(item => Object.keys(item.scenarios ?? {})))],
+      defaultScenario: chain.map(item => item.defaultScenario).filter(item => item !== undefined).at(-1) ?? null };
+  });
+}
+
+export function formatBenchmarkTable(rows: ReturnType<typeof benchmarkList>): string {
+  const cells = [["Benchmark", "Versions (aliases)", "Default", "Scenarios", "Default scenario", "Implementation"],
+    ...rows.map(row => [row.name, row.versionGroups.map(group => group.version + (group.aliases.length ? ` (${group.aliases.join(", ")})` : "")).join(", ") || "undeclared",
+      row.defaultVersion ?? "—", row.scenarios.join(", ") || "—", row.defaultScenario ?? "—", row.implementation])];
+  const widths = (cells[0] ?? []).map((_, index) => Math.max(...cells.map(row => (row[index] ?? "").length)));
+  return cells.map(row => row.map((cell, index) => cell.padEnd(widths[index] ?? 0)).join("  ").trimEnd()).join("\n");
 }
 
 export function benchmarkInfo(registry: PluginRegistry, name: string) {
@@ -21,6 +51,8 @@ export function benchmarkInfo(registry: PluginRegistry, name: string) {
   // Info has no experiment file; preview defaults using a file named after the benchmark.
   const resolution = resolveInput(`${name}.yaml`, { services: { default: service("MODEL") }, benchmark: name }, profiles);
   return { name, implementation: expectRecord(resolution.source.benchmark, "benchmark").name,
+    versionDetails: Object.fromEntries([...new Set(chain.flatMap(item => Object.keys(item.versions ?? {})))].map(version => [version,
+      resolveInput(`${name}.yaml`, { services: { default: service("MODEL") }, benchmark: { name, version } }, profiles).source])),
     versions: [...new Set(chain.flatMap(item => Object.keys(item.versions ?? {})))],
     scenarios: [...new Set(chain.flatMap(item => Object.keys(item.scenarios ?? {})))],
     defaultVersion: chain.map(item => item.defaultVersion).filter(item => item !== undefined).at(-1) ?? null,

@@ -35,7 +35,7 @@ AgentX 的 Trace 数据集公开，现有示例不强制要求 HF_TOKEN；需要
 从仓库根目录执行：
 
 ```bash
-ember-evaluator config explain playbook/workbuddy/workbuddy-office-ray.yaml
+ember-evaluator inspect playbook/workbuddy/workbuddy-office-ray.yaml
 ember-evaluator run playbook/deepswe/deepswe-simpleagent.yaml
 ```
 

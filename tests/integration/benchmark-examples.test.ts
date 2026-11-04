@@ -12,7 +12,7 @@ import { assertSourceLock } from "../../src/index.js";
 
 const examples = fileURLToPath(new URL("../fixtures/benchmark-examples/", import.meta.url));
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 async function fixture(name: string) {
   const root = await mkdtemp(join(tmpdir(), "benchmark-examples-")); roots.push(root);
@@ -61,11 +61,12 @@ test.each(["example-definition", "example-protocol", "example-harbor"])("%s has 
 });
 
 test.each(["example-definition", "example-protocol"])("%s supports discovery, doctor, run, report and resume with an external patch", async name => {
+  vi.stubEnv("KEY", "fixture-key");
   const f = await fixture(name);
   const out: string[] = [], errors: string[] = [];
   const io = { out: (text: string) => { out.push(text); }, error: (text: string) => { errors.push(text); } };
-  for (const args of [["benchmark", "info", name], ["doctor", f.file], ["run", f.file]]) {
-    const credential = args[0] === "benchmark" ? [] : ["--api-key", "fixture-key"];
+  for (const args of [["benchmark", "list", "--json"], ["benchmark", "info", name], ["inspect", f.file], ["doctor", f.file], ["run", f.file]]) {
+    const credential = args[0] !== "run" ? [] : ["--api-key", "fixture-key"];
     expect(await runCli([...args, "--patch", f.patchPath, ...credential], io), errors.join("\n")).toBe(0);
   }
   const run = out.at(-1);

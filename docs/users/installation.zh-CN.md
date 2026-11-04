@@ -18,6 +18,8 @@ ember-evaluator --help
 
 看到帮助信息即安装成功。依赖和构建会自动完成，无需单独克隆 AgentBundle 或再次执行构建。请保留 Evaluator 目录及其依赖。
 
+顶层 `--help` 列出各命令用途。使用 `ember-evaluator run --help` 查看运行参数，使用 `ember-evaluator cleanup images --help` 查看嵌套命令；各命令的帮助会列出位置参数和选项含义。
+
 更新源码后重新执行 `pnpm install --frozen-lockfile`。使用 WSL 时，安装和运行都在同一个 WSL 环境中完成。
 
 ## 安装全局命令

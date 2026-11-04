@@ -47,8 +47,8 @@ export function apply(ctx) {
 
 test("discovery, init, doctor, run and report work through the same explicit patch", async () => {
   const f = await fixture();
-  expect(await runCli(["benchmark", "list", "--patch", f.patch], f.io)).toBe(0);
-  expect(f.out.at(-1)?.split("\n")).toContain("fixture");
+  expect(await runCli(["benchmark", "list", "--json", "--patch", f.patch], f.io)).toBe(0);
+  expect(JSON.parse(f.out.at(-1) ?? "[]")).toContainEqual(expect.objectContaining({ name: "fixture" }));
   expect(await runCli(["benchmark", "info", "fixture", "--patch", f.patch], f.io)).toBe(0);
   expect(JSON.parse(f.out.at(-1) ?? "")).toMatchObject({ name: "fixture", implementation: "fixture" });
   expect(await runCli(["init", "--benchmark", "fixture", "--output", f.file, "--patch", f.patch], f.io)).toBe(0);

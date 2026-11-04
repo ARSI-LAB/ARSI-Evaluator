@@ -140,25 +140,23 @@ Wrong answers, ordinary timeouts, and preparation failures are not all retried. 
 
 Preparation/cleanup budgets are separate from run.timeoutSeconds. `run.preparation` configures local pipelines; Ray pipelines are unsupported. See [preparation](concurrency.md).
 
-## Inspect and Export Configuration
+## Inspect Configuration
 
 ```bash
-ember-evaluator config explain first-run.yaml
-ember-evaluator config resolve first-run.yaml > resolved.yaml
+ember-evaluator inspect first-run.yaml
 ```
 
-`explain` shows final values/origins; `resolve` exports reloadable YAML. Keys remain variable references without credentials. Set nonsensitive model/endpoint variables.
+`inspect` prints JSON with effective experiment and network settings, preserving credential references. Its output is for inspection, not a standalone experiment YAML. Result `config.yaml` remains an internal execution record.
 
-Keep `resolved.yaml` beside original YAML for bundle/certificate-relative paths. Result `config.yaml` is an internal execution record, not an editable rerun template.
-
-CLI can override the Solver-bound model service:
+The `run` command can override the Solver-bound model service:
 
 ```bash
-ember-evaluator doctor first-run.yaml --model your-other-model
 ember-evaluator run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
 ```
 
 Supports --model/--endpoint/--api-key-env or literal --api-key. Last two are mutually exclusive; prefer variables. Independent judges remain unchanged.
+
+`warmup`, `doctor`, and `inspect` read model settings from YAML and do not accept these overrides. Edit the YAML or its referenced environment variables before checking or preparing a different configuration.
 
 ## Resume and Rebuild Reports
 
@@ -329,3 +327,16 @@ Previews create no files/results/trajectories/Ray logs. Each step stores up to 1
 See [error codes](reference/errors.md) for full recovery/retry rules. `ember-evaluator --help` lists current arguments.
 
 [User guide](README.md) · [Quick start](quick-start.md) · [Configuration](config.md)
+
+## Discover Benchmarks
+
+`ember-evaluator benchmark list` displays a table of names, versions (equivalent definitions grouped in parentheses), default versions, scenarios, default scenarios, and implementations. Plugins without version metadata show `undeclared`. Metadata comes from registered plugins and profiles; listing does not check dataset or image availability.
+
+```bash
+ember-evaluator benchmark list
+ember-evaluator benchmark list --json
+ember-evaluator benchmark info terminalbench
+ember-evaluator benchmark list --patch ./patch.yaml
+```
+
+`list --json` preserves all version names and alias groups. `info` prints JSON including resolved settings per version. External plugins require an explicit `--patch`. Running `benchmark` without a subcommand shows group help.

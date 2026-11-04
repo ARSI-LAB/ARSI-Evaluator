@@ -18,6 +18,8 @@ ember-evaluator --help
 
 The help output confirms installation. Dependencies and builds are handled automatically; no separate AgentBundle clone or build command is needed. Keep the Evaluator directory and its dependencies.
 
+Top-level `--help` lists command purposes. Use `ember-evaluator run --help` for run parameters, or `ember-evaluator cleanup images --help` for nested commands. Each command describes its arguments and options.
+
 After updating the source, run `pnpm install --frozen-lockfile` again. When using WSL, install and run in the same WSL environment.
 
 ## Register the Global CLI
