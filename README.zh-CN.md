@@ -74,8 +74,11 @@ export MODEL_NAME="your-model-id"
 export MODEL_ENDPOINT="https://your-model-service.example/v1"
 export MODEL_API_KEY="your-api-key"
 
+ember-evaluator inspect playbook/gsm8k/gsm8k-quick-start.yaml
 ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 ```
+
+先用 `inspect` 检查配置文件并查看展开后的实验与网络配置，确认无误后再执行 `run`。
 
 模型服务需支持 OpenAI Chat Completions 和工具调用。运行结束后，打开日志所示结果目录中的 `report.md`。PowerShell 用法及更多说明见[两题快速上手](docs/users/quick-start.zh-CN.md)。
 
@@ -92,13 +95,16 @@ ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 使用 Docker 执行任务时，可以提前用正式评测的同一份 YAML 准备镜像和依赖。例如，设置好上面的模型变量后执行：
 
 ```bash
+ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
+先用 `doctor` 诊断配置、所需工具和网络，处理失败项后再预热。诊断会执行临时下载和 Docker 构建探针，不调用模型或执行题目；`not-checked` 表示尚未检查。
+
 预热按 YAML 的选题配置准备任务镜像、验证镜像、侧车镜像、Evaluator 运行时和 Solver 安装层，不调用模型，不生成评测结果或报告。预热不要求模型 API key，但模型名称、端点等配置仍需有效；与 `run --dry-run` 相比，预热会实际拉取或构建镜像。
 
-保持配置、任务版本、平台和 Docker daemon 一致，正式评测即可复用缓存。本机 Docker、Ray Client 和 Ray Jobs 均支持预热；Ray 在分配的执行节点上准备镜像。若使用 `--task-ids-file` 或 `--patch`，两条命令应传入相同参数。完整用法和前置条件见[只预热镜像，不开始测评](docs/users/usage.zh-CN.md#只预热镜像不开始测评)。
+保持配置、任务版本、平台和 Docker daemon 一致，正式评测即可复用缓存。本机 Docker、Ray Client 和 Ray Jobs 均支持预热；Ray 在分配的执行节点上准备镜像。若使用 `--patch`，上述三条命令应加载同一份 patch；若使用 `--task-ids-file`，`warmup` 和 `run` 应传入相同参数。完整用法和前置条件见[只预热镜像，不开始测评](docs/users/usage.zh-CN.md#只预热镜像不开始测评)。
 
 ## 📖 使用指南
 
@@ -112,6 +118,16 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 - **排查问题**：[下载、日志与模型截断](docs/users/faq/README.zh-CN.md)；[错误码](docs/users/reference/errors.zh-CN.md)；[网络失败补测](docs/users/network-retry.zh-CN.md)。
 
 全部指南、Benchmark 列表和运行限制见[用户文档目录](docs/users/README.zh-CN.md)。
+
+## 🧪 支持的 Benchmark
+
+按评测功能分为三类：
+
+| 类别 | 支持的 Benchmark | 评测内容与使用说明 |
+| --- | --- | --- |
+| 模型 + Agent Harness 能力测评 | GSM8K、MATH-500、MGSM、MMLU、MMLU-Pro、GPQA、DROP、TriviaQA、SimpleQA、HealthBench、HumanEval、DeepSWE、SWE-bench Verified、Terminal-Bench、WorkBuddy、OfficeQA Pro V2，以及自有 Harbor 任务包 | 覆盖数学、知识问答、代码生成与修改、终端、办公、网页和安全任务，按各题库规则计算正确率或得分。见 [Benchmark 列表与使用条件](docs/users/README.zh-CN.md#现在能测哪些-benchmark)和 [Playbook 配置](playbook/README.md)。 |
+| 推理引擎性能测评（AgentX） | AgentX（`agentx`） | 回放 Agent Trace，测量吞吐、TTFT、ITL 和请求延迟，可选采集 vLLM 与 Ascend NPU 指标。见 [AgentX 指南](docs/users/benchmarks/agentx.zh-CN.md)。 |
+| 算子性能测评（kernel） | kernel（`kernel`） | 在 Ascend NPU 上验证已有候选算子的正确性，测量参考与候选耗时、加速比，并可采集详细硬件性能指标；本地串行执行，不调用模型。见 [kernel 指南](docs/users/benchmarks/kernel-npu.zh-CN.md)和[配置示例](playbook/kernel/existing.yaml)。 |
 
 ## 📊 评测结果
 
