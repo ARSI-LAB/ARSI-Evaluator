@@ -77,7 +77,7 @@ export class AgentXReplaySolver implements Solver {
 
   private vocabulary(signal: AbortSignal, previous?: SolverProvenance): Promise<AgentXLexicon> {
     return this.lexicon ??= lockAgentXLexicon(this.config.tokenizer ?? this.binding.model.name, this.config.tokenizerRevision,
-      this.runtime.resolvePath(this.config.cacheDir), this.runtime.resolvePath, signal, previous);
+      this.runtime.resolvePath(this.config.cacheDir), this.runtime.resolvePath, signal, previous, this.runtime.network);
   }
 
   async provenance(signal: AbortSignal, previous?: SolverProvenance): Promise<SolverProvenance> {

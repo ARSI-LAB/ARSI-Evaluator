@@ -54,11 +54,11 @@ export class AgentXBenchmark implements Benchmark {
   private readonly source: DatasetRecordSource;
   private readonly cache: DatasetCache;
   private readonly dataset: string;
-  constructor(readonly config: AgentXConfig, private readonly environmentName: string, source?: DatasetRecordSource) {
+  constructor(readonly config: AgentXConfig, private readonly environmentName: string, source?: DatasetRecordSource, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
     this.dataset = `semianalysisai/cc-traces-weka-062126${config.variant === "256k" ? "-256k" : ""}`;
-    this.cache = new DatasetCache(config.cacheDir);
+    this.cache = new DatasetCache(config.cacheDir, network);
     this.source = source ?? new HuggingFaceFilesSource(config.cacheDir, "agentx", { dataset: this.dataset, revision: "main",
-      selections: [{ key: "traces", format: "jsonl", path: "traces.jsonl" }] }, config.hfToken ?? process.env.HF_TOKEN);
+      selections: [{ key: "traces", format: "jsonl", path: "traces.jsonl" }] }, config.hfToken ?? process.env.HF_TOKEN, undefined, network);
   }
 
   validateRun(config: EffectiveConfig): void {

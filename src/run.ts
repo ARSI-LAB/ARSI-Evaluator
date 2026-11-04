@@ -1,3 +1,4 @@
+import { networkSecrets } from "./config/network.js";
 import { dirname, join, resolve } from "node:path";
 import { bootstrap, bootstrapBenchmark, createPluginRuntime } from "./bootstrap.js";
 import { loadConfig } from "./config/load.js";
@@ -21,6 +22,8 @@ export type EvaluationResult =
 
 export type EvaluatorRunOptions = {
   configPath: string;
+  /** Explicit network YAML; otherwise EVALUATOR_NETWORK_CONFIG or centralized defaults. */
+  networkConfigPath?: string;
   patchPath?: string;
   overrides?: CliOverrides;
   /** Variables used to expand YAML and bind model credentials; does not replace process.env. */
@@ -115,8 +118,9 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
     progress({ phase: "config", message: `Loading and validating ${file}` });
     registry = options.execution?.registry ?? await openPluginRegistry(patchPath);
     config = options.execution?.config ?? await loadConfig(file, overrides, env, { registry,
+      ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(patchPath === undefined ? {} : { patchPath }) });
-    secrets.push(...Object.values(config.auths).map(auth => auth.value));
+    secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
     options.onLoaded?.(config);
     if (options.taskIds !== undefined) {
       const run = { ...config.experiment.run };

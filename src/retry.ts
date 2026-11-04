@@ -24,12 +24,12 @@ async function requireCredentialReferences(path: string): Promise<void> {
     throw new Error("Original run used a runtime-only credential without an environment reference");
 }
 
-export async function retryRun(options: { run: string; taskIds: string[]; requestId?: string; reason?: string },
+export async function retryRun(options: { networkConfigPath?: string; run: string; taskIds: string[]; requestId?: string; reason?: string },
   signal: AbortSignal, log: (text: string) => void, onProgress?: ProgressListener): Promise<number> {
   const gateway = await gatewayRun(options.run);
   if (gateway) {
     await requireCredentialReferences(gateway.gatewayConfig);
-    const config = await loadSavedConfig(gateway.gatewayConfig, process.env, { configDirectory: gateway.configDirectory, ...(gateway.patchPath ? { patchPath: gateway.patchPath } : {}) });
+    const config = await loadSavedConfig(gateway.gatewayConfig, process.env, { ...(options.networkConfigPath ? { networkConfigPath: options.networkConfigPath } : {}), configDirectory: gateway.configDirectory, ...(gateway.patchPath ? { patchPath: gateway.patchPath } : {}) });
     const registry = await openPluginRegistry(gateway.patchPath);
     try {
       if (!config.deployment) throw new Error("Saved run has no Ray Jobs deployment");
@@ -50,7 +50,7 @@ export async function retryRun(options: { run: string; taskIds: string[]; reques
   const patchPath = manifest.pluginRuntime?.patchPath;
   // Rebind original service references before admitting work; no model overrides are accepted.
   const config = await loadSavedConfig(join(directory, "config.yaml"), process.env, {
-    validatePlugins: true, ...(patchPath ? { patchPath } : {}), configDirectory,
+    ...(options.networkConfigPath ? { networkConfigPath: options.networkConfigPath } : {}), validatePlugins: true, ...(patchPath ? { patchPath } : {}), configDirectory,
   });
   if (fingerprintResumeConfig(config.persisted) !== manifest.configFingerprint) throw new Error("Retry configuration differs from locked run");
   const registry = await openPluginRegistry(patchPath);

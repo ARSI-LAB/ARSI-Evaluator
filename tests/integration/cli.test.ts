@@ -347,9 +347,8 @@ test("CLI reports source preparation failures with the network cause before any 
   expect(diagnostic).toContain("cli-fixture");
   expect(diagnostic).toContain("fetch failed");
   expect(diagnostic).toContain("ECONNRESET");
-  expect(diagnostic).toContain("hf-mirror.com");
-  expect(diagnostic).toContain("HF_ENDPOINT");
-  expect(diagnostic).toContain("HTTP_PROXY/HTTPS_PROXY");
+  expect(diagnostic).toContain("huggingface.co");
+  expect(diagnostic).toContain("--network");
   expect(diagnostic).not.toContain("[solve]");
   expect(stdout).toHaveLength(1);
 });

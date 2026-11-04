@@ -1,3 +1,5 @@
+import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
+import { networkDocument } from "../../src/config/network.js";
 import type { SpawnOptions } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,7 +29,8 @@ if (process.env.EVALUATOR_TEST_COMMAND_LOG) fs.appendFileSync(process.env.EVALUA
 if (args[0] === process.env.EVALUATOR_TEST_FAILED_OPERATION) {
   console.error(process.env.EVALUATOR_TEST_DOCKER_ERROR); process.exit(17);
 }
-if (args[0] === "version") console.log(args.at(-1).includes("APIVersion") ? "1.52 1.52" : process.env.EVALUATOR_TEST_DAEMON_PLATFORM || "linux/amd64");
+if (args[0] === "load") { fs.writeFileSync(log + ".loaded", "yes"); console.log("Loaded image: fixture/archive:arm64"); }
+else if (args[0] === "version") console.log(args.at(-1).includes("APIVersion") ? "1.52 1.52" : process.env.EVALUATOR_TEST_DAEMON_PLATFORM || "linux/amd64");
 else if (args[0] === "info") console.log(args.at(-1) === "{{.ID}}" ? log : JSON.stringify([process.env.EVALUATOR_TEST_NODE_MIRROR].filter(Boolean)));
 else if (args[0] === "build") {
   if (process.env.EVALUATOR_TEST_BUILD_GATE) {
@@ -42,6 +45,7 @@ else if (args[0] === "build") {
 } else if (args[0] === "start") {
   console.log(process.env.EVALUATOR_TEST_PROBE_PLATFORM || "linux/x64");
 } else if (args[0] === "image" && args[1] === "inspect") {
+  if (args.some(arg => arg.includes("-archive-")) && !fs.existsSync(log + ".loaded")) { console.error("No such image"); process.exit(1); }
   if (process.env.EVALUATOR_TEST_SIDECAR_INDEX) {
     const reference = args[args.includes("--platform") ? 4 : 2];
     const selected = "sha256:" + "e".repeat(64);
@@ -57,6 +61,7 @@ else if (args[0] === "build") {
     }
   }
   if (args.at(-1) === "[{{json .Id}},{{json .RepoTags}},{{json .RepoDigests}}]") { console.log(JSON.stringify([digest, [], []])); process.exit(0); }
+  if (args.at(-1) === "[{{json .Id}},{{json .Os}},{{json .Architecture}}]") { console.log(JSON.stringify([digest, "linux", "amd64"])); process.exit(0); }
   if (args.at(-1) === "{{json .Config.User}}") { console.log(JSON.stringify("")); process.exit(0); }
   if (process.env.EVALUATOR_TEST_NODE_MIRROR && args[4].startsWith("node:")) process.exit(1);
   if (args[4].includes(":solve-task-") && !fs.existsSync(log)) process.exit(1);
@@ -211,18 +216,18 @@ test("sidecar preparation rejects an invalid addressable image ID", async () => 
 });
 
 test("task Dockerfile downloads inherit configured build proxy and network", async () => {
-  const { environment, spec, log } = await fixture("FROM fixture/base\nRUN curl https://github.com/example/release\n");
+  const { spec, log } = await fixture("FROM fixture/base\nRUN curl https://github.com/example/release\n");
   vi.stubEnv("EVALUATOR_DOCKER_BUILD_NETWORK", "host");
   vi.stubEnv("HTTP_PROXY", "http://127.0.0.1:7890");
   vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:7890");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
-  await environment.materialize(spec, AbortSignal.timeout(15_000));
+  await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(15_000));
   const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
   const build = calls.find(args => args[0] === "build" && args.some(arg => arg.includes(":solve-task-")));
-  expect(build).toEqual(expect.arrayContaining(["--network", "host", "HTTP_PROXY=http://127.0.0.1:7890/", "HTTPS_PROXY=http://127.0.0.1:7890/"]));
+  expect(build).toEqual(expect.arrayContaining(["--network", "host", "HTTP_PROXY", "HTTPS_PROXY"]));
   const firstTag = build?.find(arg => arg.includes(":solve-task-"));
   vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:7891");
-  await environment.materialize(spec, AbortSignal.timeout(15_000));
+  await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(15_000));
   const subsequent: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
   const tags = subsequent.filter(args => args[0] === "image" && args[1] === "inspect").flat().filter(arg => arg.includes(":solve-task-"));
   expect(new Set(tags).size).toBe(2);
@@ -231,18 +236,18 @@ test("task Dockerfile downloads inherit configured build proxy and network", asy
 
 test.each(["public", "verifier"] as const)("%s task builds inherit the npm registry in every stage and invalidate cached images", async visibility => {
   const recipe = "FROM fixture/base AS build\nRUN pnpm install --frozen-lockfile\nFROM build\nUSER node\nRUN npm ci\n";
-  const { environment, spec, log, dockerfile } = await fixture(recipe);
+  const { spec, log, dockerfile } = await fixture(recipe);
   vi.stubEnv("NPM_CONFIG_REGISTRY", "https://packages.example.test/");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   const selected = { ...spec, build: { ...spec.build, visibility } };
-  await environment.materialize(selected, AbortSignal.timeout(15_000));
+  await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(selected, AbortSignal.timeout(15_000));
   const built = await readFile(log, "utf8");
   for (const name of ["NPM_CONFIG_REGISTRY", "npm_config_registry", "COREPACK_NPM_REGISTRY"])
     expect(built.match(new RegExp("^ARG " + name + "$", "gmu"))).toHaveLength(3);
   const commands: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  expect(commands.find(args => args[0] === "build")).toContain("NPM_CONFIG_REGISTRY=https://packages.example.test/");
+  expect(commands.find(args => args[0] === "build")).toContain("NPM_CONFIG_REGISTRY=https://packages.example.test");
   vi.stubEnv("NPM_CONFIG_REGISTRY", "https://other-packages.example.test/");
-  await environment.materialize(selected, AbortSignal.timeout(15_000));
+  await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(selected, AbortSignal.timeout(15_000));
   const updated: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
   const tags = updated.filter(args => args[0] === "image" && args[1] === "inspect").flat().filter(arg => arg.includes(":solve-task-"));
   expect(new Set(tags).size).toBe(2);
@@ -273,8 +278,8 @@ test.each(["", "    ", "\t"])("builds task Dockerfiles with %j instruction inden
   expect(ready.preparationTiming?.runtimeMs).toBeGreaterThanOrEqual(0);
   expect(ready.preparationTiming?.solverMs).toBe(0);
   const built = await readFile(log, "utf8");
-  expect(built).toContain(`${indent}from fixture/base AS build\nARG PIP_INDEX_URL\nRUN if command -v apt-get`);
-  expect(built).toContain(`${indent}FROM build\nARG PIP_INDEX_URL\nRUN if command -v apt-get`);
+  expect(built).toContain(`${indent}from fixture/base AS build\nARG HF_ENDPOINT\nARG PIP_INDEX_URL`);
+  expect(built).toContain(`${indent}FROM build\nARG HF_ENDPOINT\nARG PIP_INDEX_URL`);
   expect(built.match(/^ARG PIP_INDEX_URL$/gmu)).toHaveLength(2);
   expect(built).toContain("https://debian.example.test/debian");
   expect(await readFile(dockerfile, "utf8")).toBe(recipe);
@@ -383,18 +388,18 @@ test("rewrites the Node binary URL without changing versions or public task file
 test.each(["file:///tmp/node", "https://user:secret@example.test/node", "https://example.test/node?key=secret", "https://example.test/a'$HOME"])("rejects unsafe Node mirror %s", async mirror => {
   const { environment, spec } = await fixture("FROM fixture/base\n");
   vi.stubEnv("EVALUATOR_NODE_MIRROR", mirror);
-  await expect(environment.materialize(spec, AbortSignal.timeout(10_000))).rejects.toThrow("EVALUATOR_NODE_MIRROR");
+  expect(() => new DockerEnvironment({ dockerExecutable: "fixture-docker" })).toThrow("network.sources.node.dist");
 });
 
-test("uses the configured default task download mirrors", async () => {
-  const { environment, spec, log } = await fixture('FROM fixture/base\nRUN curl "https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz"\n');
+test("uses official download sources when no mirrors are configured", async () => {
+  const { spec, log } = await fixture('FROM fixture/base\nRUN curl "https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz"\n');
   vi.stubEnv("PIP_INDEX_URL", "");
   vi.stubEnv("EVALUATOR_DEBIAN_MIRROR", "");
   vi.stubEnv("EVALUATOR_NODE_MIRROR", "");
-  await environment.materialize(spec, AbortSignal.timeout(10_000));
+  await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(10_000));
   const built = await readFile(log, "utf8");
-  expect(built).toContain("https://repo.huaweicloud.com/debian");
-  expect(built).toContain("https://npmmirror.com/mirrors/node/v20.18.1/node-v20.18.1-linux-x64.tar.xz");
+  expect(built).not.toContain("sed -i");
+  expect(built).toContain("https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.xz");
 });
 
 test.each([
@@ -444,12 +449,13 @@ test("task image mappings never replace the pinned internal model gateway", asyn
   expect(commands.some(args => args.includes(PINNED_NODE_IMAGE))).toBe(true);
 });
 
-test("the internal gateway uses the same discovered Huawei Node reference", async () => {
-  const { environment, spec, log } = await fixture("FROM fixture/base\n");
+test("the internal gateway uses the explicitly supplied Node reference", async () => {
+  const { spec, log } = await fixture("FROM fixture/base\n");
   const origin = "https://fixture.mirror.swr.myhuaweicloud.com";
   vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", "");
   vi.stubEnv("EVALUATOR_TEST_NODE_MIRROR", origin);
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
+  const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", network: new NetworkRuntime(networkDocument({ version: 1, docker: { mirrors: { "docker.io": origin } } }, {})) });
   const { build, ...prebuilt } = spec;
   const result = await environment.materialize({ ...prebuilt, image: "fixture/task", network: "model-api" }, AbortSignal.timeout(10_000));
   expect(result.prepared).toMatchObject({ gatewayDigest: "sha256:" + "a".repeat(64) });
@@ -591,3 +597,28 @@ test.skipIf(process.platform === "win32")("strict umask preserves source modes i
     expect(await readDirectoryModes(spec.build.context, new AbortController().signal)).toEqual(before);
   } finally { process.umask(previous); probe.mockRestore(); run.mockRestore(); }
 });
+
+
+test("archive selection uses the requested platform and bypasses an existing pinned registry image", async () => {
+  const { spec, log } = await fixture("FROM fixture/base\n");
+  vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
+  vi.stubEnv("EVALUATOR_TEST_DAEMON_PLATFORM", "linux/arm64");
+  const network = new NetworkRuntime(networkDocument({ version: 1, docker: { benchmarks: {
+    terminalbench: { method: "archive", provider: "modelscope", baseUrl: "https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0" },
+  } } }, {}));
+  const fetch = vi.spyOn(network, "fetch").mockResolvedValue(new Response("opaque archive bytes"));
+  try {
+    const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", benchmarkName: "terminalbench",
+      network, platform: "linux/arm64", allowEmulation: false });
+    const sourceImage = `fixture/original@sha256:${"d".repeat(64)}`;
+    const prepared = await environment.materialize({ ...spec, image: sourceImage, platform: "linux/amd64" },
+      AbortSignal.timeout(15000), undefined, undefined, { taskId: "terminal-bench/task-a", phase: "solve" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0]![0])).toBe("https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0/task-a/linux/arm64/solve.tar.gz");
+    expect(prepared.prepared).toMatchObject({ baseImage: { pinnedReference: expect.stringMatching(/:solve-archive-/u) } });
+    const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(calls.some(args => args.includes(sourceImage))).toBe(false);
+    expect(calls.filter(args => args[0] === "load")).toHaveLength(1);
+    expect(calls.some(args => args[0] === "pull")).toBe(false);
+  } finally { await network.dispose(); }
+}, 20000);

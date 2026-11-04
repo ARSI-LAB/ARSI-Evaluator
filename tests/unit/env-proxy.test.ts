@@ -5,6 +5,8 @@ import { connect, type Socket } from "node:net";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { afterEach, expect, test, vi } from "vitest";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
+import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
+import { networkDocument, networkEnvironmentTemplate } from "../../src/config/network.js";
 import { installEnvProxy } from "../../src/adapters/net/env-proxy.js";
 
 const originalFetch = globalThis.fetch;
@@ -36,7 +38,15 @@ test.each([undefined, "1"])("Pi runner installs its own protocol policy with EVA
   await checkProtocol(value, true, true);
 });
 
-async function checkProtocol(value: string | undefined, proxy: boolean, runner = false) {
+test.each([undefined, "0", "1"])("download runtime negotiates the configured direct protocol with EVALUATOR_HTTP2=%s", async value => {
+  await checkProtocol(value, false, false, true);
+});
+
+test.each([undefined, "0", "1"])("download runtime negotiates the configured proxy protocol with EVALUATOR_HTTP2=%s", async value => {
+  await checkProtocol(value, true, false, true);
+});
+
+async function checkProtocol(value: string | undefined, proxy: boolean, runner = false, download = false) {
   for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"]) vi.stubEnv(name, "");
   vi.stubEnv("EVALUATOR_HTTP2", value);
   setDefaultCACertificates([...originalCAs, cert]);
@@ -73,11 +83,16 @@ async function checkProtocol(value: string | undefined, proxy: boolean, runner =
     // Exercise lowercase Git Bash variables as well as CONNECT tunnelling.
     vi.stubEnv("https_proxy", `http://127.0.0.1:${proxyAddress.port}`);
   }
-  if (runner) {
+  let network: NetworkRuntime | undefined;
+  if (download) {
+    const runtime = new NetworkRuntime(networkDocument(networkEnvironmentTemplate(process.env), process.env));
+    network = runtime;
+    cleanup.push(() => runtime.dispose());
+  } else if (runner) {
     vi.resetModules();
     await import("../../src/adapters/harness/pi/runner.js");
   } else installEnvProxy();
-  const response = await fetch(`https://127.0.0.1:${address.port}`, { signal: AbortSignal.timeout(3000) });
+  const response = await (network?.fetch ?? fetch)(`https://127.0.0.1:${address.port}`, { signal: AbortSignal.timeout(3000) });
   expect(await response.text()).toBe(value === "1" ? "2.0" : "1.1");
   expect(tunnels).toBe(proxy ? 1 : 0);
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { networkSecrets } from "./config/network.js";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve, dirname, join } from "node:path";
@@ -29,11 +30,14 @@ const defaultIO: CliIO = {
   },
 };
 const help = `
+Network configuration and explicit download diagnostics:
+ember-evaluator network inspect|doctor|docker-config [experiment.yaml] [--network <yaml>]
+
 Run an experiment:
-ember-evaluator run <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
+ember-evaluator run <yaml> [--network <yaml>] [--progress <auto|tty|plain>] [--patch <path>] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
 
 Prepare images and runtimes without evaluation:
-ember-evaluator warmup <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--task-ids-file <json>] [model overrides]
+ember-evaluator warmup <yaml> [--network <yaml>] [--progress <auto|tty|plain>] [--patch <path>] [--task-ids-file <json>] [model overrides]
 
 Preview or remove evaluator image references:
 ember-evaluator cleanup images [<yaml>] [--all] [--yes] [--patch <path>]
@@ -65,7 +69,8 @@ ember-evaluator --help
 
 `;
 
-type Command =
+type Command = (
+  | { kind: "network"; action: "inspect" | "doctor" | "docker-config"; file?: string }
   | { kind: "cleanup-images"; file?: string; all: boolean; execute: boolean; patchPath?: string }
   | { kind: "retry"; run: string; taskIds: string[]; requestId?: string; reason?: string }
   | { kind: "help" }
@@ -81,9 +86,26 @@ type Command =
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
-  | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string };
+  | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
+) & { networkConfigPath?: string };
 
 export function parseArgs(argv: string[]): Command {
+  const networkIndex = argv.indexOf("--network");
+  if (networkIndex >= 0) {
+    if (!["run", "warmup", "retry", "doctor", "config", "network"].includes(argv[0] ?? "") || networkIndex === 0 ||
+        argv.lastIndexOf("--network") !== networkIndex || !argv[networkIndex + 1] || argv[networkIndex + 1]!.startsWith("-"))
+      throw new TypeError("Invalid --network option");
+    const rest = [...argv]; rest.splice(networkIndex, 2);
+    return { ...parseArgs(rest), networkConfigPath: resolve(argv[networkIndex + 1]!) };
+  }
+  if (argv[0] === "network") {
+    if (argv[2] === "--experiment" && argv.length === 4 && !argv[3]?.startsWith("-"))
+      return parseArgs(["network", argv[1]!, argv[3]!]);
+    const action = argv[1];
+    if ((action !== "inspect" && action !== "doctor" && action !== "docker-config") || argv.length > 3 || argv[2]?.startsWith("-"))
+      throw new TypeError("Expected network inspect|doctor|docker-config [experiment.yaml] [--network network.yaml]");
+    return { kind: "network", action, ...(argv[2] ? { file: argv[2] } : {}) };
+  }
   if (!argv.length || (argv.length === 1 && ["--help", "-h"].includes(argv[0]!))) return { kind: "help" };
   if (argv[0] === "cleanup") {
     if (argv[1] !== "images") throw new TypeError("Expected cleanup images [yaml] [--all] [--yes]");
@@ -374,7 +396,7 @@ async function runCliCommand(
       /fetch failed|\b(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR_\w+)\b/i.test(text)
     ) {
       networkHintShown = true;
-      writeHint("Check connectivity to the URL/host above (DNS, proxy, TLS). For Hugging Face, the default origin is the https://hf-mirror.com mirror; override with HF_ENDPOINT (e.g. https://huggingface.co). For GitHub and other proxied hosts, set HTTP_PROXY/HTTPS_PROXY. Model API variables do not configure dataset access.");
+      writeHint("Check connectivity to the URL/host above (DNS, proxy, TLS). Use --network network.yaml to select download sources and per-location proxies; the default Hugging Face origin is https://huggingface.co. Model API variables do not configure dataset access.");
     }
   };
   const progress = (event: ProgressEvent) => {
@@ -427,6 +449,13 @@ async function runCliCommand(
     io.error(help);
     return 2;
   }
+  const networkOptions = command.networkConfigPath === undefined ? {} : { networkConfigPath: command.networkConfigPath };
+  if (command.kind === "network") {
+    try {
+      const { networkCommand } = await import("./commands/network.js");
+      return await networkCommand(command.action, { ...networkOptions, ...(command.file ? { configPath: command.file } : {}) }, signal, io.out);
+    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
+  }
   if (command.kind === "help") {
     io.out(help);
     return 0;
@@ -438,7 +467,7 @@ async function runCliCommand(
       secrets.push(...Object.entries(process.env).filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
       const { cleanupImages } = await import("./cleanup.js");
       const result = await cleanupImages({ ...command, signal, ...(execution ? { execution } : {}),
-        onLoaded: config => secrets.push(...Object.values(config.auths).map(auth => auth.value).filter(Boolean)) });
+        onLoaded: config => secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value).filter(Boolean)) });
       io.out(JSON.stringify(result, null, 2));
       if (signal.aborted) return 130;
       return result.nodes.some(node => node.error || node.items.some(item => item.status === "failed")) ? 1 : 0;
@@ -470,8 +499,8 @@ async function runCliCommand(
       const { loadConfig } = await import("./config/load.js");
       const { bootstrapBenchmark } = await import("./bootstrap.js");
       const { diagnose } = await import("./commands/doctor.js");
-      const config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry });
-      secrets.push(...Object.values(config.auths).map(auth => auth.value));
+      const config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, ...networkOptions });
+      secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
       await bootstrapBenchmark(config, dirname(resolve(command.file)), command.patchPath, registry);
       const checks = await diagnose(config, command.file, signal);
       io.out(JSON.stringify({ checks }, null, 2));
@@ -519,7 +548,7 @@ async function runCliCommand(
     secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
     try {
       const config = await loadConfig(resolve(command.file), command.overrides, process.env, {
-        allowMissingAuth: true, validatePlugins: true,
+        allowMissingAuth: true, validatePlugins: true, ...networkOptions,
         ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
       });
       io.out(command.kind === "config-explain" ? explainConfig(config) : stringify(exportConfig(config)).trimEnd());
@@ -547,9 +576,9 @@ async function runCliCommand(
       const taskIds = await readTaskIds(command.taskIdsFile);
       progress({ phase: "config", message: `Loading and validating ${resolve(command.file)}` });
       registry = await openPluginRegistry(command.patchPath);
-      config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
+      config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...networkOptions, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
       applyTaskIds(config, taskIds);
-      secrets.push(...Object.values(config.auths).map(auth => auth.value));
+      secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
       progress({ phase: "bootstrap", message: `Initializing benchmark plugin: ${config.experiment.benchmark.name}` });
       benchmarkComponents = await bootstrapBenchmark(config, dirname(resolve(command.file)), command.patchPath, registry);
     } catch (error) {
@@ -596,10 +625,10 @@ async function runCliCommand(
       .filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
     try {
       const taskIds = await readTaskIds(command.taskIdsFile);
-      const result = await executeWarmup({ configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
+      const result = await executeWarmup({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
         ...(execution ? { execution } : {}),
         ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
-        onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); } });
+        onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); } });
       io.out(`Image warmup: ${result.readyTaskIds.length}/${result.taskIds.length} tasks ready; ${result.failures.length} failed`);
       for (const { taskId, failure } of result.failures) {
         io.out(`${taskId}: [${failure.code}] ${failure.message}`);
@@ -614,13 +643,13 @@ async function runCliCommand(
   let taskIds: string[] | undefined;
   try { taskIds = await readTaskIds(command.taskIdsFile); }
   catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  const outcome = await executeExperiment({ configPath: command.file, overrides: command.overrides, signal,
+  const outcome = await executeExperiment({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal,
     ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
     ...(command.resume === undefined ? {} : { resume: command.resume === null ? true : command.resume }),
     ...(taskIds === undefined ? {} : { taskIds }),
     ...(execution === undefined ? {} : { execution }),
     onProgress: progress,
-    onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); },
+    onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); },
     onDiagnostic: diagnostic => { phase = diagnostic.phase; failure(diagnostic.error); },
     onDeploymentLog: io.out,
   });

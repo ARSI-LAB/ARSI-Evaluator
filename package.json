@@ -24,16 +24,18 @@
   },
   "scripts": {
     "prepare": "pnpm run build",
-    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/package-runtime.mjs",
+    "build": "node scripts/build-network-bootstrap.mjs && node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/package-runtime.mjs",
     "ray:ensure": "pnpm install --frozen-lockfile && pnpm build && node scripts/ray-smoke/ensure.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest"
+    "test": "vitest",
+    "network:bundle": "node scripts/build-network-bootstrap.mjs"
   },
   "devDependencies": {
     "@types/node": "24.13.5",
     "@types/semver": "7.8.0",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "esbuild": "0.28.2"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

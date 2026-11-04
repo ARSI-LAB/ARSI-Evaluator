@@ -89,7 +89,7 @@ export async function prepareDsh(
     executable: node,
     args: [cli, "--json", ...args, "--harness-version", candidate.harness.actualVersion ?? DSH_VERSION],
     cwd: runtime.root,
-    env,
+    env: preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env,
     inheritEnv: false,
     input: null,
   });

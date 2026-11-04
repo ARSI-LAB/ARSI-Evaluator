@@ -1,9 +1,10 @@
+import { packageManagerCli } from "../../adapters/network/package-manager.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, win32 } from "node:path";
+import { dirname, isAbsolute, join, win32 } from "node:path";
 import type {
   CommandSpec,
   RuntimeInstallation,
@@ -220,29 +221,18 @@ async function tail(stream: AsyncIterable<Uint8Array>): Promise<string> {
 }
 
 async function npmCli(): Promise<string> {
-  const pathEntries = (process.env.PATH ?? "")
-    .split(delimiter)
-    .map(entry => entry.replace(/^"|"$/gu, ""))
-    .filter(Boolean);
-  const candidates = [dirname(process.execPath), ...pathEntries].map(base =>
-    join(base, "node_modules", "npm", "bin", "npm-cli.js"),
-  );
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      if ((await lstat(candidate)).isFile()) return await realpath(candidate);
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-  }
-  throw new RuntimeInstallationError("ENV_RUNTIME_INSTALL_FAILED", "cannot resolve the npm CLI beside Node or from PATH");
+  try { return await packageManagerCli("npm"); }
+  catch (cause) { throw new RuntimeInstallationError("ENV_RUNTIME_INSTALL_FAILED", "cannot resolve the npm CLI beside Node or from PATH", { cause }); }
 }
 
 export async function runRuntimeCommand(
   command: RuntimeInstallCommand,
   root: string,
   signal: AbortSignal,
+  network?: import("../../core/contracts/network.js").NetworkAccess,
 ): Promise<void> {
   const localCommand = runtimeCommand(command, root);
+  if (network) localCommand.env = network.environment("runtime", localCommand.env);
   // A portable recipe names Node; local execution uses the interpreter already
   // checked by LocalEnvironment, including Windows CreateProcess without PATH search.
   if (localCommand.executable === "node") localCommand.executable = process.execPath;
@@ -275,6 +265,7 @@ export async function prepareLocalRuntime(
   installation: RuntimeInstallation,
   cacheRoot: string,
   signal: AbortSignal,
+  network?: import("../../core/contracts/network.js").NetworkAccess,
 ): Promise<RuntimeLocation> {
   const localRoot = installation.localRoot;
   const inventory = await runtimeInventory(
@@ -282,9 +273,10 @@ export async function prepareLocalRuntime(
     `${process.platform}/${process.arch}/node-${process.versions.node}`,
     signal,
   );
+  if (network && localRoot === undefined) inventory.identity = createHash("sha256").update(JSON.stringify([inventory.identity, network.settings.sources])).digest("hex");
   if (localRoot !== undefined) {
     const root = await realpath(localRoot);
-    for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal);
+    for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal, network);
     return { root, identity: inventory.identity, persistent: true };
   }
   const name = runtimeCacheName(installation);
@@ -324,8 +316,8 @@ export async function prepareLocalRuntime(
       try {
         // Python entry points can embed absolute paths, so install at the final location.
         await copyRuntimeInventory(inventory, root, signal);
-        for (const command of inventory.commands) await runRuntimeCommand(command, root, signal);
-        for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal);
+        for (const command of inventory.commands) await runRuntimeCommand(command, root, signal, network);
+        for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal, network);
         signal.throwIfAborted();
         await writeFile(marker, inventory.identity, { flag: "wx", mode: 0o600 });
       } catch (error) {
@@ -334,7 +326,7 @@ export async function prepareLocalRuntime(
         throw error;
       }
     } else {
-      for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal);
+      for (const probe of inventory.probes) await runRuntimeCommand(probe, root, signal, network);
     }
     const stateInfo = await lstatIfPresent(stateRoot);
     if (stateInfo?.isSymbolicLink())

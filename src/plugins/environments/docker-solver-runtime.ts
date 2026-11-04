@@ -1,3 +1,6 @@
+import { dockerBuildNetwork } from "../../adapters/containers/build-network.js";
+import { NetworkRuntime } from "../../adapters/network/runtime.js";
+import type { NetworkAccess } from "../../core/contracts/network.js";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,13 +13,6 @@ import { dockerImageUser } from "./docker-image-user.js";
 import { dockerImageName, type DockerImageScope } from "./docker-image-name.js";
 
 const root = "/opt/evaluator-agent";
-// Direct egress to registry.npmjs.org / pypi.org is unreliable on CN networks,
-// Measured from the Docker Desktop WSL2 VM (2026-10-09): pypi.org 1.05 MB/s and
-// files.pythonhosted.org 1.34 MB/s vs mirrors.aliyun.com 72-78 KB/s; pypi.org
-// wins. Override with NPM_CONFIG_REGISTRY / PIP_INDEX_URL;
-// UV_PYTHON_INSTALL_MIRROR stays unset unless configured.
-const DEFAULT_NPM_REGISTRY = "https://registry.npmmirror.com";
-const DEFAULT_PIP_INDEX_URL = "https://pypi.org/simple";
 const installer = String.raw`import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { resolve, relative, isAbsolute } from "node:path";
@@ -64,34 +60,6 @@ const derivedDockerfile = (runtimeImage: string, baseImage: string, user: string
 type InstalledRuntime = { image: string; digest: string; identity: string; probes: RuntimeInstallCommand[] };
 type SolverImage = { image: string; digest: string; runtime: RuntimeLocation };
 
-function credentialFreeUrl(value: string, label: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch (cause) {
-    throw new RuntimeInstallationError("ENV_RUNTIME_INSTALL_FAILED", `${label} must be a URL`, { cause });
-  }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new RuntimeInstallationError("ENV_RUNTIME_INSTALL_FAILED", `${label} must be a credential-free HTTP(S) URL`);
-  }
-  return value;
-}
-
-function registryBuildArgs(): string[] {
-  const registry = credentialFreeUrl(process.env.NPM_CONFIG_REGISTRY || DEFAULT_NPM_REGISTRY, "NPM_CONFIG_REGISTRY");
-  const pipIndex = credentialFreeUrl(process.env.PIP_INDEX_URL || DEFAULT_PIP_INDEX_URL, "PIP_INDEX_URL");
-  const pythonMirror = process.env.UV_PYTHON_INSTALL_MIRROR
-    ? credentialFreeUrl(process.env.UV_PYTHON_INSTALL_MIRROR, "UV_PYTHON_INSTALL_MIRROR")
-    : undefined;
-  return [
-    "--build-arg",
-    `NPM_CONFIG_REGISTRY=${registry}`,
-    "--build-arg",
-    `PIP_INDEX_URL=${pipIndex}`,
-    ...(pythonMirror === undefined ? [] : ["--build-arg", `UV_PYTHON_INSTALL_MIRROR=${pythonMirror}`]),
-  ];
-}
-
 /**
  * The runtime does not depend on the task: it is installed once per Docker host
  * on the pinned Node image, and each task image copies it and reruns the probes.
@@ -102,6 +70,7 @@ export class DockerSolverRuntime {
   constructor(
     private readonly command: DockerCommand,
     private readonly node: DockerRuntime,
+    private readonly network: NetworkAccess = new NetworkRuntime(),
   ) {}
 
   private async imageId(image: string, signal: AbortSignal): Promise<string> {
@@ -119,11 +88,13 @@ export class DockerSolverRuntime {
     args: string[],
     what: string,
     signal: AbortSignal,
+    env?: NodeJS.ProcessEnv,
   ): Promise<string> {
     const context = await mkdtemp(join(tmpdir(), "evaluator-solver-image-"));
     try {
       await files(context);
       await this.command(["build", "--platform", this.node.platform, "--tag", image, ...args, context], {
+        ...(env ? { env } : {}),
         signal,
         maxBuffer: 8 * 1024 * 1024,
       });
@@ -143,9 +114,10 @@ export class DockerSolverRuntime {
   async install(installation: RuntimeInstallation, signal: AbortSignal): Promise<InstalledRuntime> {
     const inventory = await runtimeInventory(installation, this.node.platform, signal);
     const nodeDigest = await this.node.nodeImageDigest(signal);
-    const dockerfile = installationDockerfile(this.node.nodeImage, Boolean(process.env.UV_PYTHON_INSTALL_MIRROR));
+    const network = dockerBuildNetwork(this.network);
+    const dockerfile = network.recipe(installationDockerfile(this.node.nodeImage, Boolean(this.network.settings.sources.python.interpreter)));
     const key = createHash("sha256")
-      .update(JSON.stringify({ nodeDigest, platform: this.node.platform, identity: inventory.identity, installer, dockerfile }))
+      .update(JSON.stringify({ nodeDigest, platform: this.node.platform, identity: inventory.identity, installer, dockerfile, network: network.identity }))
       .digest("hex");
     const image = dockerImageName("solver-install", key);
     return this.installs.getImage(this.node.dockerExecutable, image, signal, async buildSignal => {
@@ -155,7 +127,7 @@ export class DockerSolverRuntime {
       } catch {
         buildSignal.throwIfAborted();
       }
-      const registryArgs = registryBuildArgs();
+      const registryArgs = network.buildArgs;
       const digest = await this.build(
         image,
         async context => {
@@ -173,6 +145,7 @@ export class DockerSolverRuntime {
         registryArgs,
         "solver runtime image",
         buildSignal,
+        network.environment,
       );
       return installed(digest);
     });

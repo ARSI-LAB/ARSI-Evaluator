@@ -1,4 +1,5 @@
 import { registerGatewayRun } from "../../core/retry-control.js";
+import { validateNetworkSnapshot } from "../../config/network.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -271,6 +272,7 @@ export class RayJobsDeployment {
 
   private portableConfig(config: JsonValue): Record<string, unknown> {
     const portable = structuredClone(expectRecord(config, "experiment"));
+    if (portable.network !== undefined) validateNetworkSnapshot(portable.network);
     for (const role of ["benchmark", "environment", "solver", "verifier", "store", "reporter"] as const) {
       if (role === "verifier" && portable[role] === undefined) continue;
       const selection = expectRecord(portable[role], role);

@@ -11,6 +11,3 @@ benchmark:
 # Official v4.0.0 prebuilt images target amd64. ARM64 nodes require QEMU/binfmt.
 environment:
   platform: linux/amd64
-  # Optional HTTP(S) proxy for image acquisition only. Does not proxy Dockerfile RUN or model requests.
-  # config:
-  #   pullProxy: ${DOCKER_PULL_PROXY}

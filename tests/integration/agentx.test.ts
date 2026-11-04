@@ -1,3 +1,4 @@
+import "../fixtures/network-fetch.js";
 import { safeTaskKey } from "../../src/core/artifacts.js";
 import { expectRecord } from "../../src/config/schema.js";
 import { createServer } from "node:http";

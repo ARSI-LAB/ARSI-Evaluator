@@ -18,7 +18,7 @@ export function exportConfig(config: LoadedConfig): JsonValue {
       ...(model.retry === undefined ? {} : { retry: model.retry }),
     }];
   }));
-  const { solver: _solver, verifier: _verifier, ...savedPublic } = saved;
+  const { solver: _solver, verifier: _verifier, network: _network, ...savedPublic } = saved;
   const output = {
     ...savedPublic, services,
     ...(config.deployment === undefined ? {} : { deployment: config.deployment }),

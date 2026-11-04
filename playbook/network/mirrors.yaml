@@ -1,0 +1,41 @@
+version: 1
+# Opt in to these sources; none are program defaults.
+proxy:
+  http: null
+  https: null
+  noProxy: [localhost, 127.0.0.1, "::1"]
+  # overrides:
+  #   host: {http: "${HOST_HTTP_PROXY}", https: "${HOST_HTTPS_PROXY}"}
+  #   daemon: {http: "${DAEMON_HTTP_PROXY}", https: "${DAEMON_HTTPS_PROXY}"}
+  #   build: {http: "${BUILD_HTTP_PROXY}", https: "${BUILD_HTTPS_PROXY}"}
+  #   runtime: {http: "${RUNTIME_HTTP_PROXY}", https: "${RUNTIME_HTTPS_PROXY}"}
+sources:
+  huggingface: https://hf-mirror.com
+  python:
+    index: https://mirrors.aliyun.com/pypi/simple
+    extraIndexes: []
+    interpreter: null
+  npm:
+    registry: https://registry.npmmirror.com
+  node:
+    dist: https://npmmirror.com/mirrors/node
+  github:
+    api: https://api.github.com
+    raw: https://raw.githubusercontent.com
+    repository: https://github.com
+  apt:
+    debian: https://mirrors.aliyun.com/debian
+    debianSecurity: https://mirrors.aliyun.com/debian-security
+    ubuntu: https://mirrors.aliyun.com/ubuntu
+    ubuntuSecurity: https://mirrors.aliyun.com/ubuntu
+    ubuntuPorts: https://mirrors.aliyun.com/ubuntu-ports
+docker:
+  pull:
+    method: docker
+  mirrors:
+    docker.io: https://dockerproxy.net/
+  benchmarks: {}
+  buildNetwork: default
+git:
+  ssh:
+    route: direct

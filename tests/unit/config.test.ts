@@ -166,16 +166,6 @@ test("sensitive plugin references survive nested config persistence but expanded
   for (const secret of ["dataset-secret", "nested-value", "literal-sensitive-value"]) expect(JSON.stringify(loaded.persisted)).not.toContain(secret);
 });
 
-test("pullProxy round-trips credential-free URLs and preserves authenticated proxy environment references", async () => {
-  const plain = await load(await file({ services, benchmark: "gsm8k", environment: { name: "docker", config: { pullProxy: "http://localhost:7890" } } }));
-  expect((await loadSavedConfig(await file(plain.persisted), { KEY: "secret" })).experiment.environment.config.pullProxy).toBe("http://localhost:7890");
-  const path = await file({ services, benchmark: "gsm8k", environment: { name: "docker", config: { pullProxy: "${PULL_PROXY}" } } });
-  const env = { KEY: "secret", PULL_PROXY: "http://proxy-user:proxy-secret@localhost:7890" };
-  const auth = await loadConfig(path, {}, env);
-  expect(auth.persisted).toHaveProperty("environment.config.pullProxy", "${PULL_PROXY}");
-  expect(JSON.stringify(auth.persisted)).not.toContain("proxy-secret");
-  expect((await loadSavedConfig(await file(auth.persisted), env)).experiment.environment.config.pullProxy).toBe(env.PULL_PROXY);
-});
 
 test("resolves only referenced credentials and preserves unused references", async () => {
   const loaded = await load(await file({ services: { ...services,

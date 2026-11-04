@@ -6,7 +6,6 @@ import { HttpZipJsonSource } from "../adapters/datasets/sources/http/zip-json-so
 import { dropDefinition } from "./benchmarks/definitions/drop.js";
 import { LocalEnvironment } from "./environments/local.js";
 import { DockerEnvironment, parseDockerContainerEnv, parseDockerImageOverrides } from "./environments/docker.js";
-import { parseDockerPullProxy } from "./environments/docker-image-pull.js";
 import { parseBuildPipConstraints } from "../adapters/containers/pip-constraints.js";
 import { parseDockerPlatform, parseDockerEmulation } from "./environments/docker-platform.js";
 import { PINNED_NODE_IMAGE } from "./environments/docker-runtime.js";
@@ -18,7 +17,6 @@ import { ChoiceLogprobsSolver, parseChoiceLogprobsConfig } from "./solvers/choic
 import { AgentBundleSolver, agentBundleModel, parseAgentBundleConfig } from "./solvers/agentbundle.js";
 import { DEFAULT_LOCAL_CONCURRENCY, expectRecord, rejectUnknown, expectPositiveInteger, expectNonEmptyString } from "../config/schema.js";
 import { type PluginFactoryContext, bindSolverService } from "../core/registry.js";
-import { installEnvProxy } from "../adapters/net/env-proxy.js";
 import { apply as registerReporting } from "./reporting.js";
 import { HarborShellVerifier, parseShellVerifierConfig } from "./verifiers/shell.js";
 import { HarborPythonVerifier, parsePythonVerifierConfig } from "./verifiers/python.js";
@@ -29,7 +27,6 @@ import { OfficeQAProV2Benchmark, parseOfficeQAProV2Config } from "./benchmarks/d
 import { KernelBenchmark, parseKernelConfig } from "./benchmarks/protocols/kernel/index.js";
 import { KernelReplaySolver } from "./solvers/kernel-replay.js";
 
-installEnvProxy();
 
 export const inject = ["evaluator"];
 
@@ -43,7 +40,7 @@ export async function apply(ctx: Context): Promise<void> {
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);
   });
   ctx.evaluator.register("benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
-    new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }),
+    new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }, undefined, undefined, runtime.network),
     { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"] });
   ctx.evaluator.register("benchmark", "kernel", parseKernelConfig, (config, runtime) =>
     new KernelBenchmark({ ...config, manifest: runtime.resolvePath(config.manifest),
@@ -55,7 +52,7 @@ export async function apply(ctx: Context): Promise<void> {
     return {};
   }, () => new KernelReplaySolver());
   ctx.evaluator.register("benchmark", "agentx", parseAgentXConfig, (config, runtime) =>
-    new AgentXBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }, runtime.environmentName ?? "local"),
+    new AgentXBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }, runtime.environmentName ?? "local", undefined, runtime.network),
     { nodeLocal: { cacheDir: "cache" }, secretFields: ["hfToken"] });
   ctx.evaluator.register("benchmark", "drop", value => {
     const config = expectRecord(value, "drop");
@@ -88,7 +85,7 @@ export async function apply(ctx: Context): Promise<void> {
           ...config.dify,
           ...(config.dify.registryPath === undefined ? {} : { registryPath: runtime.resolvePath(config.dify.registryPath) }),
         } }),
-      });
+      }, runtime.network);
       ctx.effect(() => () => solver.dispose(), "AgentBundle staging lifecycle");
       return solver;
     },
@@ -108,7 +105,7 @@ export async function apply(ctx: Context): Promise<void> {
     "harbor",
     parseHarborConfig,
     (config, runtime) => new HarborBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
-      ...(config.source?.kind === "local" ? { source: { ...config.source, path: runtime.resolvePath(config.source.path) } } : {}) }, undefined, runtime.verifier, runtime.phaseTimeouts, runtime.hardware),
+      ...(config.source?.kind === "local" ? { source: { ...config.source, path: runtime.resolvePath(config.source.path) } } : {}) }, undefined, runtime.verifier, runtime.phaseTimeouts, runtime.hardware, runtime.network),
     harborConfigTransport,
   );
   ctx.evaluator.register(
@@ -151,14 +148,14 @@ export async function apply(ctx: Context): Promise<void> {
       }
       return {};
     },
-    () => new LocalEnvironment(),
+    (_config, runtime) => new LocalEnvironment(undefined, undefined, runtime.network),
   );
   ctx.evaluator.register(
     "environment",
     "docker",
     (value: unknown) => {
       const config = expectRecord(value, "docker environment");
-      rejectUnknown(config, ["dockerExecutable", "nodeImage", "image", "platform", "allowEmulation", "containerEnv", "buildPipConstraints", "imageOverrides", "pullProxy"], "docker environment");
+      rejectUnknown(config, ["dockerExecutable", "nodeImage", "image", "platform", "allowEmulation", "containerEnv", "buildPipConstraints", "imageOverrides"], "docker environment");
       const nodeImage =
         config.nodeImage === undefined ? undefined : expectNonEmptyString(config.nodeImage, "nodeImage");
       if (nodeImage !== undefined && nodeImage !== PINNED_NODE_IMAGE)
@@ -169,7 +166,6 @@ export async function apply(ctx: Context): Promise<void> {
         ...(config.containerEnv === undefined ? {} : { containerEnv: parseDockerContainerEnv(config.containerEnv) }),
         ...(config.buildPipConstraints === undefined ? {} : { buildPipConstraints: parseBuildPipConstraints(config.buildPipConstraints) }),
         ...(config.imageOverrides === undefined ? {} : { imageOverrides: parseDockerImageOverrides(config.imageOverrides) }),
-        ...(config.pullProxy === undefined ? {} : { pullProxy: parseDockerPullProxy(config.pullProxy) }),
         ...(config.dockerExecutable === undefined
           ? {}
           : { dockerExecutable: expectNonEmptyString(config.dockerExecutable, "dockerExecutable") }),
@@ -179,7 +175,7 @@ export async function apply(ctx: Context): Promise<void> {
         ...(config.image === undefined ? {} : { image: expectNonEmptyString(config.image, "image") }),
       };
     },
-    (config, runtime) => new DockerEnvironment({ ...config, ...(runtime.imageConfigFingerprint ? { imageConfigFingerprint: runtime.imageConfigFingerprint } : {}), modelEndpoint: runtime.services[runtime.solverService]?.model.endpoint ?? null,
+    (config, runtime) => new DockerEnvironment({ ...config, network: runtime.network, benchmarkName: runtime.benchmarkName, ...(runtime.imageConfigFingerprint ? { imageConfigFingerprint: runtime.imageConfigFingerprint } : {}), modelEndpoint: runtime.services[runtime.solverService]?.model.endpoint ?? null,
       ...(runtime.onWarning === undefined ? {} : { onWarning: runtime.onWarning }) }),
     { nodeLocal: { dockerExecutable: "docker" } },
   );
@@ -201,8 +197,8 @@ export async function apply(ctx: Context): Promise<void> {
       (config, runtime) =>
         new DefinedBenchmark(
           definition,
-          new HuggingFaceFilesSource(runtime.resolvePath(config.cacheDir), name, source, config.hfToken ?? process.env.HF_TOKEN),
-          { dockerExecutable: config.dockerExecutable,
+          new HuggingFaceFilesSource(runtime.resolvePath(config.cacheDir), name, source, config.hfToken ?? process.env.HF_TOKEN, undefined, runtime.network),
+          { network: runtime.network, dockerExecutable: config.dockerExecutable,
             ...(config.judgeService === undefined ? {} : { judgeService: config.judgeService, judge: requireJudgeService(runtime, config.judgeService) }) },
         ),
       { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"] },

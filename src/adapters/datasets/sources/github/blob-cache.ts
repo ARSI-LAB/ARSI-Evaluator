@@ -9,8 +9,8 @@ export function gitBlobHash(bytes: Uint8Array): string {
 
 export class GitBlobCache {
   readonly bytes: DatasetCache;
-  constructor(private readonly directory: string) {
-    this.bytes = new DatasetCache(directory);
+  constructor(private readonly directory: string, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
+    this.bytes = new DatasetCache(directory, network);
   }
 
   async blob(url: string, gitSha: string, signal: AbortSignal): Promise<Uint8Array> {

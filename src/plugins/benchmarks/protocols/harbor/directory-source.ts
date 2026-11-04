@@ -20,11 +20,12 @@ function compareText(left: string, right: string): number {
 }
 
 export function createDirectoryBenchmarkSource(config: HarborConfig, verifier: Verifier, transport?: { apiBase: string; rawBase: string },
-  phaseTimeouts: PhaseTimeoutOverrides = {}, hardware: HardwareKind = "npu"): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
+  phaseTimeouts: PhaseTimeoutOverrides = {}, hardware: HardwareKind = "npu",
+  network?: import("../../../../core/contracts/network.js").NetworkAccess): Pick<Benchmark, "resolveSource" | "enumerate" | "prepare"> {
   const snapshots = new WeakMap<SourceLock, DirectorySnapshot>();
   async function snapshot(signal: AbortSignal): Promise<DirectorySnapshot> {
     if (!config.source) throw new Error("Missing directory source");
-    return materializeDirectory(config.source, config.cacheDir, signal, transport);
+    return materializeDirectory(config.source, config.cacheDir, signal, transport, network);
   }
   async function entries(directory: string, signal: AbortSignal) {
     const root = config.tasks.root === "." ? directory : await checkedPath(directory, config.tasks.root);

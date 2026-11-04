@@ -9,8 +9,6 @@ import { agentBundleRuntimeFiles, agentBundleVersionProbe, hashRuntimeSource } f
 export const HERMES_VERSION = "0.21.6";
 /** Upstream commit that builds HERMES_VERSION (the host v0.21.6 git install). */
 export const HERMES_PIN = "818c13be1dc4fd28987e1e881a9408224afd4535";
-/** Build-time PyPI mirror: stable and proxy-free (matches the v0.4.1 task-image build). */
-export const HERMES_PIP_INDEX = "https://mirrors.aliyun.com/pypi/simple/";
 
 export class HermesRuntimeError extends Error {
   constructor(
@@ -30,7 +28,7 @@ export class HermesRuntimeError extends Error {
  * host binary. The vendored agent-bundle SDK (run.mjs + agent-bundle-core) is
  * copied alongside so prepare() can drive the CLI inside the runtime root.
  */
-export async function hermesRuntimeInstallation(signal: AbortSignal): Promise<RuntimeInstallation> {
+export async function hermesRuntimeInstallation(signal: AbortSignal, network?: import("../../../core/contracts/network.js").NetworkAccess): Promise<RuntimeInstallation> {
   signal.throwIfAborted();
   if (process.platform === "win32") {
     throw new HermesRuntimeError(
@@ -51,8 +49,6 @@ export async function hermesRuntimeInstallation(signal: AbortSignal): Promise<Ru
   // and neutralize the exclude-newer quarantine + re-lock before the first `hermes` probe (R9).
   const provisionEnv = {
     HOME: "{root}",
-    PIP_INDEX_URL: HERMES_PIP_INDEX,
-    UV_INDEX_URL: HERMES_PIP_INDEX,
   };
   const relockMirror = [
     `set -e`,
@@ -75,9 +71,8 @@ export async function hermesRuntimeInstallation(signal: AbortSignal): Promise<Ru
     `  tmp="$(mktemp -d "$store/.bootstrap-uv-XXXXXX")"`,
     `  trap 'rm -rf "$tmp"' EXIT`,
     `  archive="$tmp/uv.tar.gz"`,
-    `  url="https://github.com/astral-sh/uv/releases/download/$uv_version/$tar"`,
-    `  mirror="https://hermes-assets.nousresearch.com/upstream/sha256/$sha"`,
-    `  curl -fsSL -o "$archive" "$url" || curl -fsSL -o "$archive" "$mirror" || { echo "uv download failed" >&2; exit 1; }`,
+    `  url="${network?.settings.sources.github.repository ?? "https://github.com"}/astral-sh/uv/releases/download/$uv_version/$tar"`,
+    `  curl --retry 3 -fsSL -o "$archive" "$url" || { echo "uv download failed" >&2; exit 1; }`,
     `  got="$( (sha256sum "$archive" 2>/dev/null || shasum -a 256 "$archive") | cut -d' ' -f1 )"`,
     `  [ "$got" = "$sha" ] || { echo "uv sha256 mismatch: got $got" >&2; exit 1; }`,
     `  mkdir -p "$tmp/tree"`,
@@ -115,7 +110,7 @@ export async function hermesRuntimeInstallation(signal: AbortSignal): Promise<Ru
   const recipe = {
     files,
     commands: [
-      { executable: "git", args: ["clone", "--depth", "1", "https://github.com/NousResearch/hermes-agent.git"] },
+      { executable: "git", args: ["clone", "--depth", "1", (network?.sourceUrl("https://github.com/NousResearch/hermes-agent.git") ?? "https://github.com/NousResearch/hermes-agent.git")] },
       { executable: "git", args: ["fetch", "--depth", "1", "origin", HERMES_PIN], cwd: "hermes-agent" },
       { executable: "git", args: ["fetch", "--depth", "1", "origin", `refs/tags/v${HERMES_VERSION}:refs/tags/v${HERMES_VERSION}`], cwd: "hermes-agent" },
       { executable: "git", args: ["checkout", "FETCH_HEAD"], cwd: "hermes-agent" },

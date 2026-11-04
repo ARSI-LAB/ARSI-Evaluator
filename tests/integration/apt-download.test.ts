@@ -6,7 +6,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { aptMirrorInstructions } from "../../src/plugins/environments/docker-apt-mirror.js";
+import { aptSourceInstructions } from "../../src/adapters/containers/apt-sources.js";
 
 const execute = promisify(execFile);
 const enabled = process.platform === "linux" && process.env.EVALUATOR_APT_TESTS === "1";
@@ -59,7 +59,7 @@ async function withRepository(
     await writeFile(config, `Dir::Etc "${root}/apt";\nDir::State "${root}/state";\nDir::State::status "${root}/status";\nDir::Cache "${root}/cache";\nDir::Log "${root}/logs";\nAPT::Architecture "amd64";\nAPT::Sandbox::User "${userInfo().username}";\nAcquire::Languages "none";\nAcquire::http::Proxy "DIRECT";\n`);
     const env = { ...process.env, APT_CONFIG: config, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}` };
     const apply = async () => {
-      const instruction = aptMirrorInstructions(new URL("https://mirror.example"))[0];
+      const instruction = aptSourceInstructions({ debian: String("https://mirror.example").replace(/\/$/u, "") + "/debian", debianSecurity: String("https://mirror.example").replace(/\/$/u, "") + "/debian-security", ubuntu: String("https://mirror.example").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("https://mirror.example").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("https://mirror.example").replace(/\/$/u, "") + "/ubuntu-ports" })[0];
       if (!instruction) throw new Error("Missing APT download defaults");
       await execute("sh", ["-ec", instruction.slice(4).replaceAll("/etc/apt", quote(join(root, "apt")))], { env });
     };

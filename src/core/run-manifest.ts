@@ -25,7 +25,7 @@ export function fingerprintConfig(config: JsonValue): string {
  */
 export function fingerprintResumeConfig(persisted: JsonValue): string {
   if (persisted !== null && typeof persisted === "object" && !Array.isArray(persisted)) {
-    const { output: _output, hardware, ...rest } = persisted;
+    const { output: _output, network: _network, hardware, ...rest } = persisted;
     // Preserve historical NPU fingerprints while rejecting a change to GPU.
     if (hardware !== undefined && hardware !== "npu") rest.hardware = hardware;
     return fingerprintConfig(rest as JsonValue);

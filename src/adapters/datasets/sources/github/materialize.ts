@@ -9,9 +9,9 @@ export type GitHubDirectoryTransport = { apiBase: string; rawBase: string };
 
 /** Materialize only admitted Git blobs, preserving modes and checking Git object digests. */
 export async function materializeGitHubDirectory(
-  source: GitHubDirectorySource, cacheDir: string, stage: string, signal: AbortSignal, transport: GitHubDirectoryTransport,
+  source: GitHubDirectorySource, cacheDir: string, stage: string, signal: AbortSignal, transport: GitHubDirectoryTransport, network?: import("../../../../core/contracts/network.js").NetworkAccess,
 ): Promise<void> {
-  const cache = new GitBlobCache(cacheDir);
+  const cache = new GitBlobCache(cacheDir, network);
   const descriptor = { name: "source", repository: source.repository, commit: source.revision, path: source.path === "." ? "" : source.path };
   const trees = await loadHarborTrees([descriptor], cache, transport.apiBase, signal);
   const entries = trees.entries.get(repositoryKey(descriptor));

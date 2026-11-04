@@ -68,17 +68,23 @@ test("historical NPU config fingerprint is preserved; GPU cannot resume it", asy
   expect(resumeFingerprint(historical)).toBe(fingerprint(original));
   expect(resumeFingerprint({ ...historical, hardware: "npu" })).toBe(fingerprint(original));
   expect(resumeFingerprint({ ...historical, hardware: "gpu" })).not.toBe(fingerprint(original));
+  expect(resumeFingerprint({ ...historical, hardware: "npu", network: { version: 1 } })).toBe(fingerprint(original));
+  expect(resumeFingerprint({ ...historical, hardware: "gpu", network: { version: 1 } }))
+    .toBe(resumeFingerprint({ ...historical, hardware: "gpu" }));
   const saved = join(root, "old.yaml"); await writeFile(saved, stringify(historical));
   expect((await loadSavedConfig(saved, env)).experiment.hardware).toBe("npu");
 });
 
 test.each(["npu", "gpu"] as const)("Ray job preserves %s and rejects invalid wire values", async hardware => {
   const config = resolveConfig("experiment.yaml", parseUserConfig({ services, benchmark: "fixture", hardware }), []);
-  const job = projectRemoteJob({ config,
+  const network = { benchmarkName: "fixture", template: { version: 1, sources: { huggingface: "https://hf.example" } } };
+  const job = projectRemoteJob({ config, network,
     job: { runId: "run", taskId: "task", attemptId: "attempt", ref: { id: "task", recordKey: "task" }, configFingerprint: "config" },
     run: { runId: "run", configFingerprint: "config", pluginVersions: {}, source: { source: "fixture", revision: "1", files: [], metadata: {} } },
     packageDigest: `sha256:${"a".repeat(64)}`, uploadEndpoint: "https://collector.invalid", previousAttempts: [] });
-  expect(validateRemoteJob(JSON.parse(JSON.stringify(job))).safeConfig.hardware).toBe(hardware);
+  const restored = validateRemoteJob(JSON.parse(JSON.stringify(job)));
+  expect(restored.safeConfig.hardware).toBe(hardware);
+  expect(restored.safeConfig.network).toEqual(network);
   expect(() => validateRemoteJob({ ...job, safeConfig: { ...job.safeConfig, hardware: "cuda" } })).toThrow("hardware");
   const old = structuredClone(job); delete old.safeConfig.hardware;
   expect(validateRemoteJob(old).safeConfig.hardware).toBeUndefined();

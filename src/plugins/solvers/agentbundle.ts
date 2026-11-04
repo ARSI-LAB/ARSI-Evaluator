@@ -114,6 +114,7 @@ export class AgentBundleSolver implements Solver {
     private readonly auth: RuntimeAuth,
     private readonly adapter: RuntimeAdapter | undefined = undefined,
     private readonly options: HarnessOptions = {},
+    private readonly network?: import("../../core/contracts/network.js").NetworkAccess,
   ) {}
 
   dispose(): Promise<void> { return disposePiBundleRuntime(this.piRuntime); }
@@ -123,7 +124,7 @@ export class AgentBundleSolver implements Solver {
     if (harness === "dify") return difyRuntimeInstallation(signal);
     if (harness === "deepagents") return deepagentsBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
     if (harness === "jiuwenswarm") return jiuwenswarmBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
-    if (harness === "hermes") return hermesRuntimeInstallation(signal);
+    if (harness === "hermes") return hermesRuntimeInstallation(signal, this.network);
     if (harness === "pi") return describePiBundleRuntime(this.path, this.piArtifactDigest, this.piConfigurationDigest, this.piRuntime, signal);
     this.dshRuntime = await describeDshBundleRuntime(this.options.environmentName, signal, this.dshRuntime);
     return this.dshRuntime.installation;
@@ -234,7 +235,7 @@ export class AgentBundleSolver implements Solver {
         "ENV_RUNTIME_INSTALL_FAILED",
         "agentbundle requires an environment-prepared runtime and state directory",
       );
-    const bundle = { path: this.path, model: this.model, auth: this.auth, options: this.options,
+    const bundle = { network: this.network, path: this.path, model: this.model, auth: this.auth, options: this.options,
       harnessVersion: this.harnessVersion };
     if (candidate.harness.name === "deepagents") {
       if (this.options.environmentName === "docker") return prepareDeepagentsDocker(bundle, session, context, candidate);

@@ -1,3 +1,4 @@
+import type { NetworkAccess } from "../../../../core/contracts/network.js";
 import { fetchNetworkResponse } from "../../../network/retry.js";
 import type { JsonValue, SourceLock } from "../../../../core/contracts/task.js";
 import { fingerprintConfig } from "../../../../core/run-manifest.js";
@@ -46,6 +47,7 @@ export class HuggingFaceFilesSource implements DatasetRecordSource {
     private readonly definition: DatasetFilesDefinition,
     token?: string,
     transport?: HuggingFaceTransport,
+    private readonly network?: NetworkAccess,
   ) {
     if (
       !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(definition.dataset) ||
@@ -61,8 +63,8 @@ export class HuggingFaceFilesSource implements DatasetRecordSource {
     ) {
       throw new TypeError("Invalid Hugging Face file selection");
     }
-    this.cache = new DatasetCache(cacheDir);
-    this.transport = transport ?? huggingfaceTransport();
+    this.cache = new DatasetCache(cacheDir, network);
+    this.transport = transport ?? huggingfaceTransport(undefined, network);
     this.definitionHash = fingerprintConfig(definition as unknown as JsonValue);
     this.headers = token ? { Authorization: `Bearer ${token}` } : undefined;
     this.sourceId = `huggingface:${name}:${definition.dataset}`;
@@ -119,7 +121,7 @@ export class HuggingFaceFilesSource implements DatasetRecordSource {
     const url = `${this.transport.apiBase}/api/datasets/${this.definition.dataset}/revision/${encodeURIComponent(this.definition.revision)}?blobs=true`;
     let data: { sha?: unknown; siblings?: unknown };
     try {
-      const response = await fetchNetworkResponse(url, { signal, ...(this.headers === undefined ? {} : { headers: this.headers }) });
+      const response = await fetchNetworkResponse(url, { signal, ...(this.headers === undefined ? {} : { headers: this.headers }) }, { ...(this.network ? { network: this.network } : {}) });
       if (!response.ok)
         throw new Error(
           response.status === 401 || response.status === 403

@@ -1,10 +1,12 @@
+import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
+import { networkDocument, networkEnvironmentTemplate } from "../../src/config/network.js";
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { verifierBuildNetwork, DEFAULT_DEBIAN_MIRROR, DEFAULT_PIP_INDEX_URL } from "../../src/adapters/containers/build-network.js";
+import { dockerBuildNetwork } from "../../src/adapters/containers/build-network.js";
 import { createPythonVerifierImage } from "../../src/adapters/verifiers/python/image.js";
 import { withDockerActivity } from "../../src/plugins/environments/docker-progress.js";
 
@@ -47,28 +49,12 @@ function imageFixture() {
   });
   return { image: createPythonVerifierImage("fixture", command), command, started, gate, remove: () => { present = false; } };
 }
-test("verifier builds use the same Debian and Python defaults as task builds", () => {
-  expect(verifierBuildNetwork({}).identity).toMatchObject({ debianMirror: DEFAULT_DEBIAN_MIRROR, pipIndex: DEFAULT_PIP_INDEX_URL, githubMirror: "https://github.com/", network: "default" });
-});
-test("build networking maps loopback proxies and supports explicit host networking", () => {
-  const env = { HTTPS_PROXY: "http://127.0.0.1:7890", NO_PROXY: "localhost,.example", EVALUATOR_GITHUB_MIRROR: "https://git.example/https://github.com", PIP_INDEX_URL: "https://python.example/simple" };
-  expect(verifierBuildNetwork(env)).toMatchObject({ identity: { githubMirror: "https://git.example/https://github.com/", proxy: { HTTPS_PROXY: "http://host.docker.internal:7890/", https_proxy: "http://host.docker.internal:7890/", NO_PROXY: env.NO_PROXY } } });
-  const host = verifierBuildNetwork({ ...env, EVALUATOR_DOCKER_BUILD_NETWORK: "host" });
-  expect(host.buildArgs.slice(0, 2)).toEqual(["--network", "host"]);
-  expect(host.identity.proxy.HTTPS_PROXY).toBe("http://127.0.0.1:7890/");
-});
-test("explicit uv index settings take precedence over pip settings", () => {
-  expect(verifierBuildNetwork({ PIP_INDEX_URL: "https://pip.example/simple", UV_DEFAULT_INDEX: "https://uv.example/simple" }).identity.pipIndex).toBe("https://uv.example/simple");
-});
-test.each([
-  { EVALUATOR_DEBIAN_MIRROR: "https://mirror.example/path" },
-  { PIP_INDEX_URL: "https://user:secret@python.example/simple" },
-  { EVALUATOR_GITHUB_MIRROR: "file:///tmp/mirror" },
-  { HTTPS_PROXY: "http://user:secret@proxy.example:1234" },
-  { EVALUATOR_DOCKER_BUILD_NETWORK: "unexpected" },
-])("invalid build settings fail without printing credentials", env => {
-  try { verifierBuildNetwork(env); throw new Error("accepted unsafe configuration"); }
-  catch (error) { expect(String(error)).not.toContain("secret"); expect(String(error)).not.toContain("accepted unsafe"); }
+test("build configuration keeps location-specific proxy routes explicit", () => {
+  const access = new NetworkRuntime(networkDocument({ version: 1, proxy: { https: "http://127.0.0.1:7890", overrides: { build: { https: "http://host.docker.internal:7890" } } }, sources: { python: { index: "https://python.example/simple" } }, docker: { buildNetwork: "host" } }, {}));
+  const network = dockerBuildNetwork(access);
+  expect(network.identity.sources.python.index).toBe("https://python.example/simple");
+  expect(network.identity.proxy.https).toBe("http://host.docker.internal:7890");
+  expect(network.buildArgs.slice(2, 4)).toEqual(["--network", "host"]);
 });
 test("the verifier build forwards mirrors and proxy settings without model credentials", async () => {
   vi.stubEnv("EVALUATOR_DEBIAN_MIRROR", "https://debian.example");
@@ -79,7 +65,7 @@ test("the verifier build forwards mirrors and proxy settings without model crede
   const image = createPythonVerifierImage("fixture-docker", async args => { calls.push(args); if (args[0] === "image") throw new Error("No such image"); });
   const tag = await image(new AbortController().signal);
   expect(tag).toMatch(/^ember-harbor-verifier:[a-f0-9]{24}$/u);
-  expect(calls[1]).toEqual(expect.arrayContaining(["EVALUATOR_DEBIAN_MIRROR=https://debian.example", "PIP_INDEX_URL=https://python.example/simple", "EVALUATOR_GITHUB_MIRROR=https://git.example/https://github.com/"]));
+  expect(calls[1]).toEqual(expect.arrayContaining(["PIP_INDEX_URL=https://python.example/simple", "EVALUATOR_GITHUB_MIRROR=https://git.example/https://github.com"]));
   expect(JSON.stringify(calls)).not.toContain("must-not-be-sent");
 });
 test("changing a mirror invalidates the image cache and cached images avoid rebuilding", async () => {
