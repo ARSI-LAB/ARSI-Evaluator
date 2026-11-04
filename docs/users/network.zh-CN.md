@@ -80,6 +80,26 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 归档方式下，`environment.platform` 显式选择下载平台，`auto` 使用执行节点原生平台；不采用任务内原 Registry 镜像的平台声明。本机对应 URL 的 Evaluator 镜像标签存在时复用；覆盖远端同名文件后需清理对应镜像缓存，或使用新的版本目录/revision。操作和迁移说明见[任务镜像归档](../development/image-archives.md)。
 
+### 核验 ModelScope 镜像
+
+比较同一平台下的完整镜像 ID：**ID 相同，就是同一个镜像，名称和标签可以不同。**
+
+下面以 `linux/amd64` 为例，替换镜像引用和文件路径后，按顺序执行：
+
+```bash
+# 1. 拉取官方镜像，记下输出的完整 ID
+docker pull --platform linux/amd64 '官方镜像:标签'
+docker image inspect --platform linux/amd64 --format '{{.Id}}' '官方镜像:标签'
+
+# 2. 加载 ModelScope 下载的归档
+docker load --input solve.tar.gz
+
+# 3. 使用上一步 Loaded image 输出的引用，查看 ID，与第 1 步比较
+docker image inspect --platform linux/amd64 --format '{{.Id}}' '导入后的镜像引用'
+```
+
+先记下官方 ID，再加载归档，避免同名标签被覆盖。若 ID 不同，检查是否使用了相同版本和平台，或误打包了 Runtime/Agent 镜像；官方 tag 更新也会导致 ID 不同。
+
 ## Docker 构建与诊断
 
 `FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用应用环境变量覆盖后的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。
