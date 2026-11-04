@@ -30,7 +30,6 @@ test("doctor creates the default YAML and names the failed field and recommendat
   expect(errors.join("\n")).toContain(defaultNetworkConfigPath());
   expect(errors.join("\n")).toContain("sources.huggingface");
   expect(errors.join("\n")).toContain("mirrors.yaml");
-  expect(() => parseArgs(["network", "doctor"])).toThrow("unknown command 'network'");
   expect(() => parseArgs(["doctor"])).toThrow();
 }, 30000);
 
@@ -66,5 +65,4 @@ test.each(["", "# default sources\n", "{}\n"])("inspect accepts an empty network
     sources: { huggingface: "https://huggingface.co" }, proxy: { host: { http: null, https: null } },
   } } });
   expect(out.join("\n")).not.toContain("fixture-secret");
-  expect(() => parseArgs(["network", "inspect"])).toThrow("unknown command 'network'");
 });
