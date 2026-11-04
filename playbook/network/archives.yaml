@@ -5,5 +5,5 @@ docker:
     terminalbench:
       method: archive
       provider: modelscope
-      # Replace with your benchmark directory's download URL.
-      baseUrl: https://modelscope.cn/datasets/your-org/task-images/resolve/master/terminalbench4.0
+      # Official image repository; adjust the benchmark directory as needed.
+      baseUrl: https://modelscope.cn/datasets/evolving-foundry/ember-evaluator/resolve/master/terminalbench4.0

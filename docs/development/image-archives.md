@@ -18,7 +18,7 @@ docker:
     terminalbench:
       method: archive
       provider: modelscope
-      baseUrl: https://modelscope.cn/datasets/your-org/task-images/resolve/master/terminalbench4.0
+      baseUrl: https://modelscope.cn/datasets/evolving-foundry/ember-evaluator/resolve/master/terminalbench4.0
 ```
 
 Hugging Face 使用 `provider: huggingface`，根地址示例为 `https://huggingface.co/datasets/your-org/task-images/resolve/main/terminalbench4.0`。`baseUrl` 必须是文件下载根地址，不是仓库预览页面；建议使用固定的仓库 revision 或发布目录。
