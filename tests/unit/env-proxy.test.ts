@@ -6,7 +6,7 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { afterEach, expect, test, vi } from "vitest";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
-import { networkDocument, networkEnvironmentTemplate } from "../../src/config/network.js";
+import { networkDocument } from "../../src/config/network.js";
 import { installEnvProxy } from "../../src/adapters/net/env-proxy.js";
 
 const originalFetch = globalThis.fetch;
@@ -85,7 +85,7 @@ async function checkProtocol(value: string | undefined, proxy: boolean, runner =
   }
   let network: NetworkRuntime | undefined;
   if (download) {
-    const runtime = new NetworkRuntime(networkDocument(networkEnvironmentTemplate(process.env), process.env));
+    const runtime = new NetworkRuntime(networkDocument({}, process.env));
     network = runtime;
     cleanup.push(() => runtime.dispose());
   } else if (runner) {

@@ -2,9 +2,9 @@
 
 > English | [中文](network.zh-CN.md)
 
-Network YAML is separate from experiment YAML. Precedence: CLI `--network` (SDK `networkConfigPath`), then `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` (`%USERPROFILE%\.ember-evaluator\network.yaml` on Windows). The default file is created with official sources and direct connections on first use; existing content is never overwritten.
+Network YAML is separate from experiment YAML. File selection: CLI `--network` (SDK `networkConfigPath`), then `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` (`%USERPROFILE%\.ember-evaluator\network.yaml` on Windows). The default file is created with official sources and direct connections on first use; existing content is never overwritten.
 
-An empty file, comments only, or `{}` selects default sources and direct connections. `version` is optional and must be `1` when present. Omitted fields also use defaults. Proxy/source environment variables do not silently override the file; reference them explicitly as `${VARIABLE}`. Missing or invalid explicitly selected files fail without falling back.
+Field precedence is **nonempty supported environment variables → YAML → built-in defaults**, including files selected with `--network`. An empty file, comments only, or `{}` uses default sources and direct connections only when no corresponding environment variables are set. `version` is optional and must be `1` when present. YAML still supports `${VARIABLE}` references; overridden fields do not expand their original references. Empty environment values are treated as unset and do not clear YAML values. Invalid environment values fail instead of falling back to YAML. Missing or invalid explicitly selected files fail without falling back.
 
 These commands use the registered `ember-evaluator` CLI; see the [installation guide](installation.md#register-the-global-cli). Example paths are relative to the working directory; run from the repository root when using its Playbooks.
 
@@ -25,9 +25,26 @@ Manual recovery of a stopped run with `ember-evaluator retry --run <run-id-or-di
 
 ## Proxy and sources
 
-`proxy.http/https` control their respective protocols; `null` means direct. `noProxy` lists direct destinations. `proxy.overrides.host/daemon/build/runtime` select routes for Evaluator, Docker daemon, Dockerfile RUN, and runtime installation. Missing override fields inherit common settings; a null location is entirely direct. Loopback always refers to the execution location and is never silently rewritten.
+`proxy.http/https` control their respective protocols; `null` means direct. `noProxy` lists direct destinations. `proxy.overrides.host/daemon/build/runtime` select routes for Evaluator, Docker daemon, Dockerfile RUN, and runtime installation. Without corresponding environment overrides, missing location fields inherit common settings and a null location is entirely direct. Proxy environment variables override matching fields at every location, including explicit addresses and nulls; other fields retain their YAML values. Loopback always refers to the execution location and is never silently rewritten.
 
-Use environment references for authenticated proxy URLs. Ray transports the template and expands variables on each node; literal credentials are rejected. Without an explicit file or EVALUATOR_NETWORK_CONFIG, edit the default file in the user directory. Each run keeps its own settings and HTTP client.
+| Environment variables (first nonempty value wins within each row) | Overridden field |
+| --- | --- |
+| `HTTP_PROXY`, `http_proxy` | `proxy.http` at every location |
+| `HTTPS_PROXY`, `https_proxy` | `proxy.https` at every location |
+| `NO_PROXY`, `no_proxy` | `proxy.noProxy` at every location; comma-separated |
+| `HF_ENDPOINT` | `sources.huggingface` |
+| `UV_DEFAULT_INDEX`, `UV_INDEX_URL`, `PIP_INDEX_URL` | `sources.python.index` |
+| `PIP_EXTRA_INDEX_URL` | `sources.python.extraIndexes`; whitespace-separated, replaces the YAML list |
+| `UV_PYTHON_INSTALL_MIRROR` | `sources.python.interpreter` |
+| `NPM_CONFIG_REGISTRY`, `npm_config_registry` | `sources.npm.registry` |
+| `EVALUATOR_NODE_MIRROR` | `sources.node.dist` |
+| `EVALUATOR_GITHUB_MIRROR` | `sources.github.repository`; API/raw addresses are retained |
+| `EVALUATOR_DEBIAN_MIRROR` | `sources.apt`; appends `debian`, `debian-security`, `ubuntu`, and `ubuntu-ports` paths |
+| `EVALUATOR_DOCKER_BUILD_NETWORK` | `docker.buildNetwork` |
+
+For example, `export HTTPS_PROXY=http://127.0.0.1:7890` selects that proxy even when YAML omits proxies or sets `https: null`. Unset the variable (and any lowercase alias) to use YAML again. HTTP and HTTPS proxies are independent; neither falls back to the other. `ALL_PROXY` is not a configuration input. Proxy URLs must use HTTP(S).
+
+Use environment variables or references for authenticated proxy URLs. Ray transports the template; each node applies its own nonempty network environment overrides before expanding references. Variables referenced by the resulting template must exist on the receiving node; literal credentials are rejected. Without an explicit file or EVALUATOR_NETWORK_CONFIG, edit the default file in the user directory. Each run keeps its own settings and HTTP client, fixed at startup. `inspect` shows values after environment overrides.
 
 | Field | Downloads |
 | --- | --- |

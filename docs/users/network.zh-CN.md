@@ -2,9 +2,9 @@
 
 > [English](network.md) | 中文
 
-网络文件独立于实验 YAML。选择顺序为：CLI 的 `--network`（SDK 的 `networkConfigPath`）→ `EVALUATOR_NETWORK_CONFIG` → 用户目录下的 `~/.ember-evaluator/network.yaml`。Windows 对应 `%USERPROFILE%\.ember-evaluator\network.yaml`。默认文件不存在时自动创建，使用官方源和直连；已有文件不会被覆盖。
+网络文件独立于实验 YAML。文件选择顺序为：CLI 的 `--network`（SDK 的 `networkConfigPath`）→ `EVALUATOR_NETWORK_CONFIG` → 用户目录下的 `~/.ember-evaluator/network.yaml`。Windows 对应 `%USERPROFILE%\.ember-evaluator\network.yaml`。默认文件不存在时自动创建，文件内容使用官方源和直连；已有文件不会被覆盖。
 
-网络文件可以完全留空、只写注释或写 `{}`，都表示使用各下载器的默认源和直连。`version: 1` 可省略；填写时必须为 1。未填写的配置字段也使用默认值。代理和换源环境变量不再自动覆盖这份文件；需要时在 YAML 中显式写 `${VARIABLE}`。显式指定的文件不存在或格式错误时直接报错，不回退其他文件。
+字段优先级为：**已设置且非空的受支持环境变量 → YAML → 程序默认值**，显式指定 `--network` 时也适用。网络文件可以完全留空、只写注释或写 `{}`；没有对应环境变量时才使用默认源和直连。`version: 1` 可省略；填写时必须为 1。YAML 仍支持 `${VARIABLE}` 引用，环境变量覆盖的字段不再展开原来的引用。空字符串环境变量视为未设置，不会清空 YAML。无效的环境变量值直接报错，不回退 YAML。显式指定的文件不存在或格式错误时也直接报错，不回退其他文件。
 
 以下命令使用已注册的 `ember-evaluator`，注册步骤见[安装指南](installation.zh-CN.md#安装全局命令)。示例路径相对当前工作目录；使用仓库中的 Playbook 时，请在仓库根目录执行。
 
@@ -25,9 +25,26 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 ## 代理和下载地址
 
-`proxy.http`、`proxy.https` 分别控制 HTTP 和 HTTPS；`null` 表示直连，`noProxy` 为直连域名列表。`proxy.overrides.host/daemon/build/runtime` 分别覆盖 Evaluator 进程、Docker daemon、Dockerfile 的 `RUN`、运行时安装命令。覆盖对象中未填写的字段继承公共代理；整个位置设为 `null` 表示该位置直连。
+`proxy.http`、`proxy.https` 分别控制 HTTP 和 HTTPS；`null` 表示直连，`noProxy` 为直连域名列表。`proxy.overrides.host/daemon/build/runtime` 分别覆盖 Evaluator 进程、Docker daemon、Dockerfile 的 `RUN`、运行时安装命令。没有对应环境变量时，覆盖对象中未填写的字段继承公共代理，整个位置设为 `null` 表示该位置直连。代理环境变量会覆盖所有位置的对应字段，包括 YAML 中显式设置的地址和 `null`；其他字段保留原值。
 
-`127.0.0.1` 始终指执行位置自身，不自动改成 `host.docker.internal`。容器或 Ray 节点需要填写它实际能访问的地址。认证代理使用 `${NODE_PROXY}` 等引用，避免将明文凭据保存在实验结果中；Ray 拒绝传输字面认证地址，节点在自己的环境中展开变量。
+| 环境变量（同一行按优先级排列，取第一个非空值） | 覆盖字段 |
+| --- | --- |
+| `HTTP_PROXY`、`http_proxy` | 所有位置的 `proxy.http` |
+| `HTTPS_PROXY`、`https_proxy` | 所有位置的 `proxy.https` |
+| `NO_PROXY`、`no_proxy` | 所有位置的 `proxy.noProxy`，逗号分隔 |
+| `HF_ENDPOINT` | `sources.huggingface` |
+| `UV_DEFAULT_INDEX`、`UV_INDEX_URL`、`PIP_INDEX_URL` | `sources.python.index` |
+| `PIP_EXTRA_INDEX_URL` | `sources.python.extraIndexes`，空白分隔，替换 YAML 列表 |
+| `UV_PYTHON_INSTALL_MIRROR` | `sources.python.interpreter` |
+| `NPM_CONFIG_REGISTRY`、`npm_config_registry` | `sources.npm.registry` |
+| `EVALUATOR_NODE_MIRROR` | `sources.node.dist` |
+| `EVALUATOR_GITHUB_MIRROR` | `sources.github.repository`，不修改 API/raw 地址 |
+| `EVALUATOR_DEBIAN_MIRROR` | `sources.apt`，按根地址添加 `debian`、`debian-security`、`ubuntu`、`ubuntu-ports` 路径 |
+| `EVALUATOR_DOCKER_BUILD_NETWORK` | `docker.buildNetwork` |
+
+例如，PowerShell 中设置 `$env:HTTPS_PROXY = "http://127.0.0.1:7890"` 后，即使 YAML 没写代理或写了 `https: null`，HTTPS 下载也使用该代理。要恢复 YAML 的配置，先执行 `Remove-Item Env:HTTPS_PROXY`，并检查是否仍设置了小写变量。HTTP 和 HTTPS 分别读取代理，不相互补齐；`ALL_PROXY` 不作为代理配置输入。代理仅支持 HTTP(S) 地址。
+
+`127.0.0.1` 始终指执行位置自身，不自动改成 `host.docker.internal`。容器或 Ray 节点需要填写它实际能访问的地址。认证代理使用环境变量或 `${NODE_PROXY}` 等引用，避免将明文凭据保存在实验结果中；Ray 拒绝传输字面认证地址，节点优先使用自己的非空网络环境变量，然后展开模板引用。模板引用的变量必须在接收节点提供。
 
 | 字段 | 用途 |
 | --- | --- |
@@ -40,7 +57,7 @@ ember-evaluator run experiment.yaml --network network.yaml
 | `sources.apt` | `debian`、`debianSecurity`、`ubuntu`、`ubuntuSecurity`、`ubuntuPorts` 各自的完整仓库根地址 |
 | `git.ssh.route` | `direct` 或 HTTP CONNECT `proxy`；不将 SSH Git 地址改成 HTTPS |
 
-未指定 `--network` 或 `EVALUATOR_NETWORK_CONFIG` 时读取用户目录中的默认文件，可直接编辑其中的对应字段。各下载器使用本次运行固定的设置；运行中修改进程变量不会改变已有实例。模型 endpoint、模型认证和任务网络权限仍由实验配置控制。
+未指定 `--network` 或 `EVALUATOR_NETWORK_CONFIG` 时读取用户目录中的默认文件，可直接编辑其中的对应字段；环境变量仍优先于该文件。各下载器使用本次运行启动时固定的设置，`inspect` 显示环境变量覆盖后的实际值；运行中修改进程变量不会改变已有实例。模型 endpoint、模型认证和任务网络权限仍由实验配置控制。
 
 ## 镜像获取方式
 
@@ -65,7 +82,7 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 ## Docker 构建与诊断
 
-`FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用 YAML 指定的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。
+`FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用应用环境变量覆盖后的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。
 
 `doctor experiment.yaml` 的 `network.dockerAdvice` 提供脱敏的 Docker 代理配置建议，Docker 探针通过当前 context 访问 daemon。Linux Engine 管理员保留原配置其他字段，校验后应用并重启；Docker Desktop 在 Desktop 设置中应用代理，不能依赖 `daemon.json` 的代理字段。远端 daemon 的配置必须在远端主机应用。所有普通评测、预热和诊断命令均不自动重启 Docker。
 

@@ -1,7 +1,7 @@
 import { fetch as fetchHttp, type Dispatcher } from "undici";
 import { createNetworkDispatcher } from "./dispatcher.js";
 import { networkEnvironment } from "./environment.js";
-import { networkDocument, networkEnvironmentTemplate, redactNetwork, networkSecrets } from "../../config/network.js";
+import { networkDocument, redactNetwork, networkSecrets } from "../../config/network.js";
 import type { NetworkAccess, NetworkDocument, NetworkLocation } from "../../core/contracts/network.js";
 
 /** The instance owns dispatchers; creating one never changes global fetch or process.env. */
@@ -9,7 +9,7 @@ export class NetworkRuntime implements NetworkAccess {
   readonly settings;
   readonly secrets: string[];
   private dispatcher: Dispatcher | undefined;
-  constructor(readonly document: NetworkDocument = networkDocument(networkEnvironmentTemplate(process.env), process.env, "environment/defaults")) {
+  constructor(readonly document: NetworkDocument = networkDocument({}, process.env, "environment/defaults")) {
     this.fetch = this.fetch.bind(this);
     this.settings = document.settings;
     this.secrets = networkSecrets(document);
