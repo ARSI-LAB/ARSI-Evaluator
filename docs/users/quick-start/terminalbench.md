@@ -10,11 +10,11 @@ Run terminal tasks in Docker with the default SimpleAgent and inspect results fr
 
 Follow [source installation](../installation.md#install-from-source) to configure GitHub read access, then install and build Evaluator. The AgentBundle SDK downloads and builds automatically; no manual clone is required.
 
-Run these commands from the Evaluator root with `node dist/cli.js`; global registration is unnecessary. The machine needs Docker Engine and access to the model API, task data, and images.
+Run these commands from the Evaluator repository root with the `ember-evaluator` command registered during installation. The machine needs Docker Engine and access to the model API, task data, and images.
 
 ```bash
 docker version
-node dist/cli.js --help
+ember-evaluator --help
 ```
 
 Official 4.0 prebuilt images use `linux/amd64`, explicitly selected by the example. ARM64 nodes require QEMU/binfmt. See [Docker platform selection](../deployment/docker-platform.md).
@@ -26,14 +26,14 @@ Set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY` in the execution termina
 Use [terminalbench-4.0.yaml](../../../playbook/terminalbench/terminalbench-4.0.yaml) to inspect expanded configuration and prerequisites:
 
 ```bash
-node dist/cli.js config explain playbook/terminalbench/terminalbench-4.0.yaml
-node dist/cli.js doctor playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator config explain playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
 `doctor` does not call models, download tasks, or pull images. Confirm `not-checked` items through actual execution. The following preview may download task data:
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --dry-run
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run
 ```
 
 ## 3. Run Tasks
@@ -46,7 +46,7 @@ run:
 ```
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
 Docker prepares the task environment; the agent operates inside the container, and the task verifier checks completion. Initial image pulls may be slow. See [Harbor execution and verification boundaries](../benchmarks/harbor.md#execution-and-verification-boundaries) for environments, networking, and verification materials. Once execution works, remove `run.maxTasks` and start a new full experiment.
@@ -58,7 +58,7 @@ The example writes to `results/terminalbench-4.0/<RUN_ID>/`. Open `report.md` fo
 With configuration, code, and plugin versions unchanged, resume unfinished tasks:
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --resume
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
 Switching from two tasks to the full dataset changes configuration and requires a new run. See [daily operations](../usage.md#resume-and-rebuild-reports) for resume and offline reports.

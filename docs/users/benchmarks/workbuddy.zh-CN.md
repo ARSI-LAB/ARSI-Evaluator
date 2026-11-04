@@ -15,7 +15,7 @@ WorkBuddy 包含 Code、Office、Web 和 Security 四种场景，通过 Harbor �
 | Web | Docker、模型裁判；视觉检查需裁判支持图片 | [Web 示例](../../../playbook/workbuddy/workbuddy-web.yaml) |
 | Security | Linux 原生文件系统、Docker、任务网络策略 | [Security 示例](../../../playbook/workbuddy/workbuddy-security.yaml) |
 
-在仓库根目录运行 `node dist/cli.js doctor <config.yaml>`，再执行 `node dist/cli.js run <config.yaml>`。模型变量和全局 CLI 见[安装与入门](../quick-start.zh-CN.md)。Office 文件交付应使用 SimpleAgent 或具备文件操作能力的 AgentBundle；Dify 的文件限制见[Solver 指南](../solvers.zh-CN.md#使用-dify)。
+在仓库根目录运行 `ember-evaluator doctor <config.yaml>`，再执行 `ember-evaluator run <config.yaml>`。模型变量和全局 CLI 见[安装与入门](../quick-start.zh-CN.md)。Office 文件交付应使用 SimpleAgent 或具备文件操作能力的 AgentBundle；Dify 的文件限制见[Solver 指南](../solvers.zh-CN.md#使用-dify)。
 
 ## WorkBuddy 的上游 CompositeVerifier
 

@@ -14,6 +14,20 @@ APT 换源处理 `/etc/apt/sources.list` 和 `sources.list.d/` 下的 `.list`、
 
 Evaluator 固定 Node **Docker 镜像**的下载与上述 Node 压缩包下载独立。本地缺少固定镜像时，自动读取执行节点 Docker daemon 的 `RegistryConfig.Mirrors`，直接使用其中第一个华为云 HTTPS 镜像源；没有配置华为云时使用原 Docker Hub 引用。也可在评测进程设置 `EVALUATOR_NODE_IMAGE_MIRROR=https://<你的华为云镜像加速地址>` 显式指定 registry origin（只填域名，不含仓库路径或认证信息）。已有本地官方镜像优先复用。镜像源只替换下载地址，固定版本、多架构摘要和目标平台校验保持不变；运行时构建和模型网关使用同一来源。拉取失败立即报错，不自动重试其他源，也不修改 Docker 全局配置。Local 与 Ray 均在实际执行节点解析；显式环境变量需传入对应 worker。此规则不替换 Benchmark 的 ECR 镜像或管理容器 Dockerfile 的基础镜像。
 
+评测进程的全局 `fetch` 和 Pi runner 在直连和代理连接下均默认使用 HTTP/1.1。在**启动进程前**设置 `EVALUATOR_HTTP2=1` 才允许协商 HTTP/2；不设置或设为 `EVALUATOR_HTTP2=0` 时使用 HTTP/1.1。开启后，服务器不支持 HTTP/2 时仍可使用 HTTP/1.1。代理配置和 TLS 证书验证继续生效。Pi runner 从自身环境读取此变量；容器和 Worker 的启动环境需单独配置；它不控制浏览器、Docker 镜像拉取、外部下载命令或其他第三方 Solver 运行时。
+
+```bash
+# 可选：允许 HTTP/2（Git Bash / Linux / macOS）
+export EVALUATOR_HTTP2=1
+```
+
+```powershell
+# 可选：允许 HTTP/2（PowerShell）
+$env:EVALUATOR_HTTP2 = "1"
+```
+
+大文件下载反复报 `UND_ERR_RES_CONTENT_LENGTH_MISMATCH` 时，保持默认 HTTP/1.1，并检查代理连接。当前下载中断后仍会从头重试。
+
 ## 裁判镜像的下载源与构建网络
 
 任务镜像、Solver 运行时、裁判镜像是独立的构建链路。宿主机 apt 或 Git 的全局配置不会自动进入裁判镜像。裁判构建使用以下设置：

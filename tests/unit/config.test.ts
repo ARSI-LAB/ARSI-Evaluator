@@ -15,6 +15,24 @@ async function file(value: unknown, filename = "experiment.yaml") {
 }
 const load = (path: string) => loadConfig(path, {}, { KEY: "secret" });
 
+test.each([undefined, { name: "local" }, { name: "local", config: {} }])("local execution and preparation default to one with scheduler %j", async scheduler => {
+  const loaded = await load(await file({ services, benchmark: "gsm8k", ...(scheduler ? { scheduler } : {}),
+    run: { preparation: {} } }));
+  expect(loaded.experiment.scheduler).toEqual({ name: "local", config: { concurrency: 1 } });
+  expect(loaded.experiment.run.preparation).toMatchObject({ concurrency: 1 });
+  expect(loaded.persisted).toHaveProperty("scheduler.config.concurrency", 1);
+});
+
+test("explicit execution/preparation limits and saved serial configurations retain their values", async () => {
+  const loaded = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 3 },
+    run: { preparation: { concurrency: 2 } } }));
+  expect(loaded.experiment.scheduler.config.concurrency).toBe(3);
+  expect(loaded.experiment.run.preparation?.concurrency).toBe(2);
+  const serial = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 1 } }));
+  const saved = await loadSavedConfig(await file(serial.persisted, "saved.yaml"), { KEY: "secret" });
+  expect(saved.experiment.scheduler.config.concurrency).toBe(1);
+});
+
 test("whole-task default is two hours and omitted phase overrides remain absent", async () => {
   const loaded = await load(await file({ services, benchmark: "gsm8k" }));
   expect(loaded.experiment.run.timeoutSeconds).toBe(7200);

@@ -2,20 +2,20 @@
 
 > [English](./quick-start.md) | 中文
 
-目标：用你的模型 API 跑两道 GSM8K 数学题，得到一份可离线查看的报告。下文运行命令在 Evaluator 仓库根目录执行；不需要先安装全局 CLI。
+目标：用你的模型 API 跑两道 GSM8K 数学题，得到一份可离线查看的报告。下文运行命令在 Evaluator 仓库根目录执行。
 
 ## 1. 安装和构建
 
 先完成[安装指南](installation.zh-CN.md#直接安装)。下面的 local 示例不需要 Docker 或 Ray，Agent 会在本机执行工具。
 
-后文的 `node dist/cli.js` 命令在 Evaluator 仓库根目录执行；也可以换成已注册的 `ember-evaluator` 命令。
+后文统一使用安装指南中注册的 `ember-evaluator` 命令，在 Evaluator 仓库根目录执行。
 
 ## 2. 选择题库并生成配置
 
 ```bash
-node dist/cli.js benchmark list
-node dist/cli.js benchmark info gsm8k
-node dist/cli.js init --benchmark gsm8k --output first-run.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info gsm8k
+ember-evaluator init --benchmark gsm8k --output first-run.yaml
 ```
 
 `list` 列出可用名称，`info` 显示默认组合，`init` 生成配置文件。文件已存在时 `init` 会报错，不会覆盖它。
@@ -74,8 +74,8 @@ $env:MODEL_API_KEY = [System.Net.NetworkCredential]::new("", $modelKey).Password
 ## 4. 先检查，再运行
 
 ```bash
-node dist/cli.js doctor first-run.yaml
-node dist/cli.js run first-run.yaml
+ember-evaluator doctor first-run.yaml
+ember-evaluator run first-run.yaml
 ```
 
 `doctor` 会检查配置、认证引用和当前路径需要的工具，不发送模型请求、不下载题库、不构建镜像。`not-checked` 表示没有检查，不表示检查通过；模型与数据源权限需要实际运行确认。
@@ -95,7 +95,7 @@ results/first-run/<RUN_ID>
 以后需要重新生成报告时：
 
 ```bash
-node dist/cli.js report results/first-run/<RUN_ID>
+ember-evaluator report results/first-run/<RUN_ID>
 ```
 
 把 `<RUN_ID>` 换成实际目录名。离线报告不需要模型 key，不会再次发题；保持结果目录完整，不要只复制一个 `result.json`。
@@ -107,7 +107,7 @@ node dist/cli.js report results/first-run/<RUN_ID>
 保持配置、代码和插件版本不变，使用同一份 YAML：
 
 ```bash
-node dist/cli.js run first-run.yaml --resume
+ember-evaluator run first-run.yaml --resume
 ```
 
 也可用 `--resume <RUN_ID>` 明确指定。续跑跳过已有有效结果，未完成或无效任务会新建 attempt，不是从对话的某一轮继续。改了模型、题目、并发等配置后应开始新 run，不要绕过指纹或版本检查。

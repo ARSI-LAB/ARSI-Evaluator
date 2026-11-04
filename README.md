@@ -54,6 +54,7 @@ Run from the Evaluator repository root:
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm build
 pnpm add -g .
 ember-evaluator --help
 ```
@@ -81,6 +82,19 @@ The model service must support OpenAI Chat Completions and tool calling. When th
 | Standard model service performance evaluation | AgentX standard | local, optionally in the management container | Python 3.11–3.13, venv, tokenizer, streaming model service with long context; management image includes Python | [AgentX performance](docs/users/quick-start/agentx.md) |
 
 See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for resume, reports, and daily operations.
+
+### Warm Images Before Evaluation
+
+For Docker workloads, prepare images and dependencies ahead of time with the same YAML you will use for evaluation. For example, after setting the model variables above, run:
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
+```
+
+Warmup follows the YAML task selection and prepares task, verification, and sidecar images, Evaluator runtimes, and Solver installation layers. It makes no model calls and creates no evaluation results or reports; a model API key is not required, but model names, endpoints, and other configuration must still be valid. Unlike `run --dry-run`, it pulls or builds images.
+
+Keep the configuration, task versions, platform, and Docker daemon the same to reuse the cache. Local Docker, Ray Client, and Ray Jobs are supported; Ray prepares images on the assigned execution nodes. If using `--task-ids-file` or `--patch`, pass the same options to both commands. See [image warmup](docs/users/usage.md#warm-images-without-evaluation) for details and prerequisites.
 
 ## 📖 Guides
 

@@ -46,9 +46,10 @@ await writeFile(new URL("../dist/adapters/harness/pi/runtime-lock.json", import.
 
 const root = new URL("../dist/adapters/harness/pi/", import.meta.url);
 await cp(new URL("../src/adapters/harness/pi/model-defaults.json", import.meta.url), new URL("model-defaults.json", root));
-// The standalone Pi runner must carry the same error classifier as the coordinator.
+// The standalone Pi runner shares the coordinator's error and HTTP policies.
 // Copy only its runtime dependencies and rewrite imports before hashing the Pi bundle.
-const errorAssets = new Map([
+const runtimeAssets = new Map([
+  ["../../net/env-proxy.js", "runtime-env-proxy.js"],
   ["../../../core/errors/classify.js", "runtime-classify.js"],
   ["../../../core/errors/network-failure.js", "runtime-network-failure.js"],
   ["../../../core/errors/evaluator-error.js", "runtime-evaluator-error.js"],
@@ -56,7 +57,7 @@ const errorAssets = new Map([
   ["../../../core/diagnostics.js", "runtime-diagnostics.js"],
   ["../../../core/live-progress.js", "runtime-live-progress.js"],
 ]);
-for (const [relative, name] of errorAssets) {
+for (const [relative, name] of runtimeAssets) {
   let contents = await readFile(new URL(relative, root), "utf8");
   for (const [reference, target] of [
     ["./network-failure.js", "runtime-network-failure.js"], ["./evaluator-error.js", "runtime-evaluator-error.js"],
@@ -67,7 +68,7 @@ for (const [relative, name] of errorAssets) {
 }
 for (const name of (await readdir(root)).filter(name => name.endsWith(".js"))) {
   let contents = await readFile(new URL(name, root), "utf8");
-  for (const [relative, target] of errorAssets) contents = contents.replaceAll(`"${relative}"`, `"./${target}"`);
+  for (const [relative, target] of runtimeAssets) contents = contents.replaceAll(`"${relative}"`, `"./${target}"`);
   await writeFile(new URL(name, root), contents);
 }
 await normalizeRuntimeText(root);

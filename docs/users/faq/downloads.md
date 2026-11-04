@@ -14,6 +14,20 @@ APT mirror rewriting handles `/etc/apt/sources.list` and `.list`/`.sources` unde
 
 Pinned Node **Docker image** downloads are separate from Node tarballs. If missing locally, read the node daemon's `RegistryConfig.Mirrors` and use its first Huawei Cloud HTTPS mirror, otherwise Docker Hub. Explicit `EVALUATOR_NODE_IMAGE_MIRROR=https://<your-huawei-cloud-mirror>` supplies an origin without repository paths/credentials. Existing official local images are preferred. Only the download address changes; pinned versions, multi-architecture digests, and platform validation remain. Runtime builds and model gateways share the source. Pull failure returns immediately without trying other sources or changing Docker globals. Local/Ray resolve on execution nodes; pass explicit variables to workers. This does not replace benchmark ECR images or toolbox Dockerfile bases.
 
+Evaluator's global `fetch` and its Pi runner use HTTP/1.1 by default for both direct and proxied connections. Set `EVALUATOR_HTTP2=1` **before starting the process** to allow HTTP/2 negotiation; unset it or set `EVALUATOR_HTTP2=0` to keep HTTP/1.1. Enabling HTTP/2 still permits HTTP/1.1 when the server does not support it. Proxy settings and TLS certificate validation remain in effect. The Pi runner reads this variable from its own environment. Configure it separately in container and worker launch environments; it does not configure browsers, Docker image pulls, external download commands, or other third-party Solver runtimes.
+
+```bash
+# Optional: allow HTTP/2 (Git Bash / Linux / macOS)
+export EVALUATOR_HTTP2=1
+```
+
+```powershell
+# Optional: allow HTTP/2 (PowerShell)
+$env:EVALUATOR_HTTP2 = "1"
+```
+
+If large downloads repeatedly terminate with `UND_ERR_RES_CONTENT_LENGTH_MISMATCH`, keep the default HTTP/1.1 and check proxy connectivity. Interrupted downloads currently restart from the beginning.
+
 ## Judge Image Sources and Build Networking
 
 Task images, Solver runtimes, and judge images build separately. Host apt/Git globals do not automatically enter judge images. Judge builds use:

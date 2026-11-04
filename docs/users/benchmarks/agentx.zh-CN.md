@@ -144,8 +144,8 @@ networkLatency: # 放在 benchmark.solver.config 下
 `upstreamSubmissionValid` 保留 Harness 的判断，`comparable` 另行检查场景、来源和测量完整性。比较结果时应保持语料 commit、场景、tokenizer、并发及部署条件一致。完成一次回放不代表满足排行榜提交条件。
 
 ```bash
-node dist/cli.js run playbook/agentx/agentx-standard.yaml --resume
-node dist/cli.js report results/agentx-standard/RUN_ID
+ember-evaluator run playbook/agentx/agentx-standard.yaml --resume
+ember-evaluator report results/agentx-standard/RUN_ID
 ```
 
 完成点跳过，失败、取消和超时点使用新 attempt 整点重跑，不续接某条请求。性能超时不产生零分。`report` 同时重建目录页和各点报告，可修复缺失或损坏的子报告；仅使用保存结果和内置报告插件，不需要 Python、模型认证或原数据缓存。显式 `--resume` 将续跑报告及各点子报告另存到 `reports/resume-N/`，保留旧报告；`retry` 和离线 `report` 更新当前报告，保存方式见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。
