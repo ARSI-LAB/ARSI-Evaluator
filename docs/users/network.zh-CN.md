@@ -80,6 +80,8 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 归档方式下，`environment.platform` 显式选择下载平台，`auto` 使用执行节点原生平台；不采用任务内原 Registry 镜像的平台声明。本机对应 URL 的 Evaluator 镜像标签存在时复用；覆盖远端同名文件后需清理对应镜像缓存，或使用新的版本目录/revision。操作和迁移说明见[任务镜像归档](../development/image-archives.md)。
 
+官方维护的 ModelScope 仓库为 [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)，存放部分 Benchmark 的官方任务镜像归档。可用镜像以仓库目录为准；上传自己的镜像见[单个和批量上传指引](../development/image-archives.md#上传到-modelscope)。
+
 ### 核验 ModelScope 镜像
 
 比较同一平台下的完整镜像 ID：**ID 相同，就是同一个镜像，名称和标签可以不同。**

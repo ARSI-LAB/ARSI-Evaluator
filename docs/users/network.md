@@ -80,6 +80,8 @@ Archives go directly to `docker load`, then receive an Evaluator tag. Evaluator 
 
 For archives, explicit `environment.platform` selects the download platform; `auto` selects the execution node native platform, ignoring the original registry task platform declaration. Existing Evaluator image tags for the same URL are reused. Clear the relevant image cache after replacing a remote file, or use a new version directory/revision. See [task image archives](../development/image-archives.md).
 
+The officially maintained ModelScope repository, [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator), hosts official task image archives for selected benchmarks. Check its file tree for available images. To publish your own archives, see the [single-file and batch upload guide](../development/image-archives.md#上传到-modelscope) (Chinese).
+
 ### Verify a ModelScope Image
 
 Compare full image IDs for the same platform: **matching IDs mean the same image, even if names and tags differ.**
