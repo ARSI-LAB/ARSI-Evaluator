@@ -15,6 +15,7 @@
 | Docker 终端任务 | [Terminal-Bench 4.0 入门](quick-start/terminalbench.zh-CN.md) |
 | 模型服务性能链路 | [AgentX 性能入门](quick-start/agentx.zh-CN.md) |
 | 通过 SSH 压测已有模型服务 | [AISBench 独立插件](../../plugins/aisbench/README.md) |
+| 从本地目录或文件读取题库 | [本地数据集](local-datasets.zh-CN.md) |
 | 从 Node.js 业务项目调用评测 | [Node.js SDK](sdk.zh-CN.md) |
 
 ## 通用操作

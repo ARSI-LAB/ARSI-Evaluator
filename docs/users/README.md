@@ -15,6 +15,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Docker terminal tasks | [Terminal-Bench 4.0](quick-start/terminalbench.md) |
 | Model service performance | [AgentX performance](quick-start/agentx.md) |
 | Load-test existing model services over SSH | [Standalone AISBench plugin](../../plugins/aisbench/README.md) |
+| Read downloaded dataset files | [Local datasets](local-datasets.md) |
 | Call evaluations from a Node.js project | [Node.js SDK](sdk.md) |
 
 ## Common Operations

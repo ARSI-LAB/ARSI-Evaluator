@@ -1,3 +1,4 @@
+import { LocalFileSource } from "../../../../adapters/datasets/sources/local/files-source.js";
 import { readRows } from "../../../../adapters/datasets/input-readers/rows.js";
 import { HuggingFaceSnapshotSource, type DatasetFileSource } from "../../../../adapters/datasets/sources/huggingface/snapshot-source.js";
 import { withDatasetActivity } from "../../../../adapters/datasets/activity.js";
@@ -30,11 +31,12 @@ export class OfficeQAProV2Benchmark implements Benchmark {
     private readonly expected = { questions: 90, documents: 1435 }, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
     this.prefix = config.corpusFormat === "pdf" ? "pdfs/" : "parsed_corpus/jsons/";
     this.suffix = config.corpusFormat === "pdf" ? ".pdf" : ".json";
-    this.source = source ?? new HuggingFaceSnapshotSource(config.cacheDir, {
-      dataset: "databricks/officeqa-pro-v2", revision: config.revision,
-      selections: [{ path: "officeqa_pro_v2.csv" }, { prefix: this.prefix, suffix: this.suffix }],
+    const definition = { dataset: "databricks/officeqa-pro-v2", revision: config.revision,
+      selections: [{ path: "officeqa_pro_v2.csv" }, { prefix: this.prefix, suffix: this.suffix }] };
     // Ray strips explicit credentials; execution nodes use their own HF_TOKEN.
-    }, config.hfToken ?? process.env.HF_TOKEN, undefined, network);
+    this.source = source ?? (config.localPath === undefined
+      ? new HuggingFaceSnapshotSource(config.cacheDir, definition, config.hfToken ?? process.env.HF_TOKEN, undefined, network)
+      : new LocalFileSource(config.localPath, definition));
     this.verificationRuntime = officeQAVerificationRuntime(config.dockerExecutable, network);
   }
 

@@ -68,6 +68,7 @@ try {
 | 参数 | 含义 |
 | --- | --- |
 | `configPath` | 实验 YAML；相对路径以调用时的当前目录解析 |
+| `networkConfigPath` | 网络 YAML，路径相对当前工作目录；省略时读取 `EVALUATOR_NETWORK_CONFIG`，再读取 `~/.ember-evaluator/network.yaml` |
 | `patchPath` | 显式插件 patch；相对当前目录解析，不自动扫描配置旁的 patch |
 | `overrides` | 与 CLI 相同的模型覆盖项：`model`、`endpoint`、`apiKey`、`apiKeyEnv` |
 | `env` | 用于 YAML 变量展开和模型认证，省略时使用 `process.env`；显式传入时使用该对象，不自动合并 |
@@ -77,7 +78,21 @@ try {
 
 YAML 内的 Bundle、输出等路径仍相对 YAML 目录；patch 内的模块路径相对 patch 文件。SDK 不调用 `process.chdir()`，也不修改 `process.env`。单个实例可并行调用，各次运行有独立 Registry 和资源；仍应给不同实验选择合适的输出路径，避免主动对同一个 run 同时续跑。
 
-`env` 只负责配置输入。Docker、代理、Ray 网关认证等部署变量仍由实际进程或执行节点提供；例如 Ray Jobs 的 token 仍按原 `tokenEnv` 或安全文件读取，不会通过 `env` 修改进程全局变量。
+`env` 提供实验和网络 YAML 的变量值，不自动与 `process.env` 合并。Docker daemon、Ray 网关认证等部署变量仍由实际进程或执行节点提供；例如 Ray Jobs 的 token 仍按原 `tokenEnv` 或安全文件读取，不会通过 `env` 修改进程全局变量。
+
+## 网络和本地数据
+
+```js
+const result = await evaluator.run({
+  configPath: "/path/to/experiment.yaml",
+  networkConfigPath: "/path/to/network.yaml",
+  env: { ...process.env, DOWNLOAD_PROXY: "http://proxy.example:8080" },
+});
+```
+
+网络 YAML 可写 `proxy: { https: "${DOWNLOAD_PROXY}" }`；空文件表示官方默认源和直连。省略 `networkConfigPath` 时使用用户默认网络文件，首次自动创建。完整字段见[网络配置](network.zh-CN.md)。
+
+本地数据路径写在实验 YAML 中：记录型题库使用 `benchmark.config.localPath`；Harbor 系列使用 `benchmark.config.source: { kind: local, path: ./dataset }`。相对路径按实验 YAML 目录解析，SDK 和 CLI 行为相同；格式和限制见[本地数据集](local-datasets.zh-CN.md)。SDK 不公开 `doctor()` 或 `inspect()` 方法，需要诊断时运行 `ember-evaluator doctor experiment.yaml`。
 
 ## 取消、续跑与报告
 

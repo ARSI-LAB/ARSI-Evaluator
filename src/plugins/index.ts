@@ -1,6 +1,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import { LocalRunStore } from "./stores/local.js";
 import { DefinedBenchmark, DEFINED_BENCHMARKS, HarborBenchmark, parseHarborConfig, AgentXBenchmark, parseAgentXConfig } from "./benchmarks/index.js";
+import { LocalRecordSource } from "../adapters/datasets/sources/local/files-source.js";
+import { LocalZipJsonSource } from "../adapters/datasets/sources/local/zip-json-source.js";
+import { localDatasetConfig, rejectLocalDatasetTransport } from "./benchmarks/local-data.js";
 import { HuggingFaceFilesSource } from "../adapters/datasets/sources/huggingface/files-source.js";
 import { HttpZipJsonSource } from "../adapters/datasets/sources/http/zip-json-source.js";
 import { dropDefinition } from "./benchmarks/definitions/drop.js";
@@ -40,8 +43,9 @@ export async function apply(ctx: Context): Promise<void> {
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);
   });
   ctx.evaluator.register("benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
-    new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }, undefined, undefined, runtime.network),
-    { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"] });
+    new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
+      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network),
+    { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport });
   ctx.evaluator.register("benchmark", "kernel", parseKernelConfig, (config, runtime) =>
     new KernelBenchmark({ ...config, manifest: runtime.resolvePath(config.manifest),
       profiling: { ...config.profiling, ...(config.profiling.cacheDir === undefined ? {} : { cacheDir: runtime.resolvePath(config.profiling.cacheDir) }) },
@@ -52,17 +56,20 @@ export async function apply(ctx: Context): Promise<void> {
     return {};
   }, () => new KernelReplaySolver());
   ctx.evaluator.register("benchmark", "agentx", parseAgentXConfig, (config, runtime) =>
-    new AgentXBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }, runtime.environmentName ?? "local", undefined, runtime.network),
-    { nodeLocal: { cacheDir: "cache" }, secretFields: ["hfToken"] });
+    new AgentXBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
+      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, runtime.environmentName ?? "local", undefined, runtime.network),
+    { nodeLocal: { cacheDir: "cache" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport });
   ctx.evaluator.register("benchmark", "drop", value => {
     const config = expectRecord(value, "drop");
-    rejectUnknown(config, ["cacheDir"], "drop");
-    return { cacheDir: expectNonEmptyString(config.cacheDir ?? ".cache/drop", "drop.cacheDir") };
-  }, (config, runtime) => new DefinedBenchmark(dropDefinition, new HttpZipJsonSource(runtime.resolvePath(config.cacheDir), {
+    rejectUnknown(config, ["cacheDir", "localPath"], "drop");
+    return { cacheDir: expectNonEmptyString(config.cacheDir ?? ".cache/drop", "drop.cacheDir"), ...localDatasetConfig(config) };
+  }, (config, runtime) => new DefinedBenchmark(dropDefinition, config.localPath === undefined ? new HttpZipJsonSource(runtime.resolvePath(config.cacheDir), {
     url: "https://s3-us-west-2.amazonaws.com/allennlp/datasets/drop/drop_dataset.zip",
     sha256: "39d2278a29fd729de301b111a45f434c24834f40df8f4ff116d864589e3249d6",
     selections: { train: "drop_dataset/drop_dataset_train.json", test: "drop_dataset/drop_dataset_dev.json" },
-  }), { dockerExecutable: "docker" }), { nodeLocal: { cacheDir: "cache" } });
+  }, runtime.network) : new LocalZipJsonSource(runtime.resolvePath(config.localPath), {
+    train: "drop_dataset/drop_dataset_train.json", test: "drop_dataset/drop_dataset_dev.json",
+  }), { network: runtime.network, dockerExecutable: "docker" }), { nodeLocal: { cacheDir: "cache" }, validate: rejectLocalDatasetTransport });
   ctx.evaluator.register("solver", "agentx-replay", parseAgentXReplayConfig, (config, runtime) => new AgentXReplaySolver(config, runtime));
   ctx.evaluator.register("verifier", "harbor-shell", parseShellVerifierConfig, () => new HarborShellVerifier());
   ctx.evaluator.register("verifier", "harbor-python", parsePythonVerifierConfig, (config, runtime) => new HarborPythonVerifier(config, runtime),
@@ -187,21 +194,23 @@ export async function apply(ctx: Context): Promise<void> {
       name,
       (value: unknown) => {
         const config = expectRecord(value, name);
-        rejectUnknown(config, ["cacheDir", "hfToken", "dockerExecutable", ...(requiresJudge ? ["judgeService"] : [])], name);
+        rejectUnknown(config, ["cacheDir", "hfToken", "dockerExecutable", "localPath", ...(requiresJudge ? ["judgeService"] : [])], name);
         const cacheDir = expectNonEmptyString(config.cacheDir ?? ".cache/huggingface", `${name}.cacheDir`);
         const dockerExecutable = expectNonEmptyString(config.dockerExecutable ?? "docker", `${name}.dockerExecutable`);
-        return { cacheDir, dockerExecutable,
+        return { cacheDir, dockerExecutable, ...localDatasetConfig(config),
           ...(config.hfToken === undefined ? {} : { hfToken: expectNonEmptyString(config.hfToken, `${name}.hfToken`) }),
           ...(requiresJudge ? { judgeService: expectNonEmptyString(config.judgeService, `${name}.judgeService`) } : {}) };
       },
       (config, runtime) =>
         new DefinedBenchmark(
           definition,
-          new HuggingFaceFilesSource(runtime.resolvePath(config.cacheDir), name, source, config.hfToken ?? process.env.HF_TOKEN, undefined, runtime.network),
+          config.localPath === undefined
+            ? new HuggingFaceFilesSource(runtime.resolvePath(config.cacheDir), name, source, config.hfToken ?? process.env.HF_TOKEN, undefined, runtime.network)
+            : new LocalRecordSource(runtime.resolvePath(config.localPath), source),
           { network: runtime.network, dockerExecutable: config.dockerExecutable,
             ...(config.judgeService === undefined ? {} : { judgeService: config.judgeService, judge: requireJudgeService(runtime, config.judgeService) }) },
         ),
-      { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"] },
+      { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport },
     );
   }
   ctx.evaluator.register(
