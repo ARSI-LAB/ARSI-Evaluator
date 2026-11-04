@@ -32,6 +32,7 @@
 从仓库根目录运行：
 
 ```bash
+ember-evaluator benchmark info officeqa-pro-v2
 ember-evaluator doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml

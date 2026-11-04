@@ -272,6 +272,7 @@ See [Ray config](config.md#ray-and-execution-nodes), [cluster examples](../../pl
 ## Load External Plugins
 
 ```bash
+ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```

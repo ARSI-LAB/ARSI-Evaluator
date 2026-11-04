@@ -13,6 +13,8 @@ Use the `ember-evaluator` command registered during installation. Run the follow
 ## 2. Choose a Benchmark and Generate Configuration
 
 ```bash
+ember-evaluator benchmark list
+ember-evaluator benchmark info gsm8k
 ember-evaluator init --benchmark gsm8k --output first-run.yaml
 ```
 

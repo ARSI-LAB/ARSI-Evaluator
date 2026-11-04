@@ -13,6 +13,8 @@
 ## 2. 选择题库并生成配置
 
 ```bash
+ember-evaluator benchmark list
+ember-evaluator benchmark info gsm8k
 ember-evaluator init --benchmark gsm8k --output first-run.yaml
 ```
 

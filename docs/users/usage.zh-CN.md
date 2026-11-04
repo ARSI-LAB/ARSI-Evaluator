@@ -272,6 +272,7 @@ scheduler:
 ## 加载外部插件
 
 ```bash
+ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```

@@ -32,6 +32,7 @@ Set `HF_TOKEN`, `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY` in the execu
 Run from the repository root:
 
 ```bash
+ember-evaluator benchmark info officeqa-pro-v2
 ember-evaluator doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
 ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml

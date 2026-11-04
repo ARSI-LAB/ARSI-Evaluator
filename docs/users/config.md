@@ -264,7 +264,7 @@ scheduler:
 
 ## Discovery, Initialization, and Diagnostics
 
-init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. init, inspect, and doctor accept explicit --patch.
+benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. benchmark list/info, init, inspect, and doctor accept explicit --patch.
 
 doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It performs temporary downloads and Docker build probes without sending model requests or executing tasks. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
 
