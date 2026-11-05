@@ -32,6 +32,15 @@
 
 AgentX 的 Trace 数据集公开，现有示例不强制要求 HF_TOKEN；需要显式数据认证的题库配置见[数据认证](../docs/users/config.zh-CN.md#hugging-face-受限数据认证)。
 
+网络配置放在独立 YAML 中，通过 `--network` 与实验配置一起传入。例如，从 ModelScope 下载 Terminal-Bench 4.0 任务镜像：
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+```
+
+先准备 Docker 和实验引用的模型配置；示例默认全量选题，镜像是否已发布以远端仓库为准。`archives.yaml` 只修改该题库的任务镜像来源；镜像源、代理、组合配置和默认文件的使用步骤见[网络配置指南](../docs/users/network.zh-CN.md#1-先选一份网络配置)。
+
 从仓库根目录执行：
 
 ```bash

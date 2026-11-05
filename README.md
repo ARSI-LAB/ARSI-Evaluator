@@ -115,6 +115,15 @@ Local Docker, Ray Client, and Ray Jobs support warmup; Ray prepares images on th
 >
 > Maintained by the Ember Evaluator team, this repository hosts official task image archives for selected benchmarks. Check its file tree for available tasks and platforms.
 
+Use the bundled network file from the repository root. The experiment YAML selects the benchmark, model, and tasks; the YAML after `--network` selects image download sources:
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+```
+
+Prepare Docker, model settings, and task selection using the [Terminal-Bench quick start](docs/users/quick-start/terminalbench.md). The example selects all tasks; only published tasks and platforms are available, and other downloads retain their defaults. See [how to use --network](docs/users/network.md#1-choose-a-network-file) to select mirrors, combine settings, or set a default file.
+
 ## 📖 Guides
 
 Choose a guide for your task:

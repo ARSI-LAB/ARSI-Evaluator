@@ -135,7 +135,7 @@ output:
 
 Solver 决定 Agent 怎样执行；任务环境决定使用现成镜像还是构建 Dockerfile。选择 `simpleagent` 或 `agentbundle` 不会直接决定镜像下载方式。`warmup` 不调用模型，但会准备任务镜像、Evaluator 共享的 Node 运行环境，以及所选 Harness 需要的安装依赖；可用缓存会被复用。
 
-同一次预热可能既有 Dockerfile 的 `FROM` 拉取，也有 Evaluator 主动获取 Node 等现成镜像。前者使用 Docker daemon/BuildKit 的网络；后者才使用网络文件中的 `docker.mirrors` 和 `docker.pull`。即使 `docker.pull.method: docker`，Evaluator 仍会先替换镜像地址，再交给 Docker 下载。镜像获取、构建中安装依赖和运行时安装使用的配置边界见[网络指南](network.zh-CN.md#预热期间的镜像与依赖下载)。
+同一次预热可能既有 Dockerfile 的 `FROM` 拉取，也有 Evaluator 主动获取 Node 等现成镜像。前者使用 Docker daemon/BuildKit 的网络；后者才使用网络文件中的 `docker.mirrors` 和 `docker.pull`。即使 `docker.pull.method: docker`，Evaluator 仍会先替换镜像地址，再交给 Docker 下载。镜像获取、构建中安装依赖和运行时安装使用的配置边界见[预热期间的镜像与依赖下载](deployment/network.zh-CN.md#预热期间的镜像与依赖下载)。
 
 ## 使用 Dify
 
