@@ -149,12 +149,18 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network play
 
 ## 📊 评测结果
 
-以下成绩按模型与 Agent Harness 组合记录，空白单元格表示暂未发布成绩；比较时需同时核对文档输入、题目范围和评分条件。
+`tbd` 表示尚未评测。比较成绩时，请同时核对文档输入、题目范围和评分条件。
 
-| 模型＋Agent Harness | GSM8K | MMLU | WorkBuddy | Terminal-Bench 4.0 | SWE-bench Verified | OfficeQA Pro V2 |
-| --- | --- | --- | --- | --- | --- | --- |
-| DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
-| DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |
+**模型** · DeepSeek V4.1 Flash 1017
+
+| Benchmark | Agent Harness | 结果 |
+| --- | --- | --- |
+| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
+| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
+| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
+| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
+| SWE-bench Verified | SimpleAgent | `tbd` |
+| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
 
 ## 🙏 致谢
 

@@ -149,12 +149,18 @@ Benchmarks fall into three categories by evaluation purpose:
 
 ## 📊 Evaluation Results
 
-Results are recorded for each model and agent harness combination. Empty cells mean no results have been published. Compare document inputs, task ranges, and scoring conditions along with the scores.
+`tbd` indicates a pending evaluation. Compare document inputs, task ranges, and scoring conditions along with the scores.
 
-| Model + Agent Harness | GSM8K | MMLU | WorkBuddy | Terminal-Bench 4.0 | SWE-bench Verified | OfficeQA Pro V2 |
-| --- | --- | --- | --- | --- | --- | --- |
-| DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
-| DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |
+**Model** · DeepSeek V4.1 Flash 1017
+
+| Benchmark | Agent Harness | Result |
+| --- | --- | --- |
+| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
+| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
+| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
+| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
+| SWE-bench Verified | SimpleAgent | `tbd` |
+| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
 
 ## 🙏 Acknowledgments
 
