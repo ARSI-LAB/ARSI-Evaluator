@@ -8,7 +8,7 @@ import { DockerRuntime, PINNED_NODE_IMAGE, type DockerCommand } from "../../src/
 
 afterEach(() => vi.unstubAllEnvs());
 const runtimeWithMirror = (command: DockerCommand, platform: "linux/amd64" | "linux/arm64" = "linux/amd64") => new DockerRuntime(command, PINNED_NODE_IMAGE, platform,
-  createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ version: 1, docker: { mirrors: { "docker.io": origin } } }, {})) }));
+  createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ docker: { mirrors: { "docker.io": origin } } }, {})) }));
 const origin = "https://fixture.mirror.swr.myhuaweicloud.com";
 const mirrored = `${new URL(origin).host}/library/${PINNED_NODE_IMAGE}`;
 const digest = "sha256:" + "a".repeat(64);

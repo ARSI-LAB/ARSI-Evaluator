@@ -40,6 +40,7 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 - **Multiple evaluation workloads**: GSM8K, MMLU, HumanEval, Terminal-Bench, SWE-bench, WorkBuddy, [OfficeQA Pro V2](docs/users/benchmarks/officeqa-pro-v2.md) (parsed JSON by default, with original PDF support), and custom Harbor tasks. See [supported benchmarks](docs/users/README.md#supported-benchmarks).
 - **Multiple agents and model services**: SimpleAgent and AgentBundle (including the Dify Harness), with optional independent judge models. See [solvers and model services](docs/users/solvers.md).
 - **Local, container, and distributed execution**: Run tasks in local or Docker environments, schedule them locally or through Ray, and control concurrency and environment preparation. See [execution modes](docs/users/usage.md#local-docker-and-ray) and [concurrency](docs/users/concurrency.md).
+- **Network configuration**: Configure proxies, data download URLs, Docker registry mirrors, and package sources. See the [network configuration guide](docs/users/network.md).
 - **Evidence and resume**: Save configuration, source versions, trajectories, verification logs, and artifacts. Resume unfinished tasks after interruption. See [resume and result files](docs/users/usage.md#resume-and-rebuild-reports).
 - **Metrics and offline reports**: Compute scores, accuracy, duration, and token usage, and rebuild Markdown reports from saved results. See [reading results](docs/users/usage.md#read-results) and [scoring](docs/users/reference/scoring.md).
 - **Model service performance**: Measure throughput, TTFT, ITL, and request latency with AgentX, optionally collecting vLLM and Ascend NPU metrics. See [AgentX](docs/users/benchmarks/agentx.md).
@@ -90,9 +91,9 @@ The model service must support OpenAI Chat Completions and tool calling. When th
 
 See [Playbook examples](playbook/README.md) for other benchmarks and combinations, and the [user documentation](docs/users/README.md) for resume, reports, and daily operations.
 
-### Warm Images Before Evaluation
+## 🔥 Warm Images Before Evaluation
 
-For Docker workloads, prepare images and dependencies ahead of time with the same YAML you will use for evaluation. For example, after setting the model variables above, run:
+For Docker workloads, use `warmup` to download or build images and install dependencies before evaluation. The following commands use the same experiment YAML to check the environment, prepare images, and start evaluation:
 
 ```bash
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
@@ -100,11 +101,19 @@ ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-Use `doctor` to diagnose configuration, required tools, and network access, then resolve failed checks before warming up. Diagnostics perform temporary downloads and Docker build probes without calling models or executing tasks; `not-checked` means a check has not been performed.
+Resolve failed `doctor` checks before running `warmup`. Warmup prepares solve, verification, and service images for the selected tasks, plus Evaluator runtimes and Solver dependencies. It makes no model calls, executes no tasks, and creates no evaluation reports.
 
-Warmup follows the YAML task selection and prepares task, verification, and sidecar images, Evaluator runtimes, and Solver installation layers. It makes no model calls and creates no evaluation results or reports; a model API key is not required, but model names, endpoints, and other configuration must still be valid. Unlike `run --dry-run`, it pulls or builds images.
+Warmup does not require a model API key, but model names, endpoints, and other configuration must be valid. Add model credentials for evaluation and keep task versions, task selection, platform, plugin configuration, and Docker daemon unchanged to reuse cached images.
 
-Keep the configuration, task versions, platform, and Docker daemon the same to reuse the cache. Local Docker, Ray Client, and Ray Jobs are supported; Ray prepares images on the assigned execution nodes. If using `--patch`, load the same patch in all three commands; if using `--task-ids-file`, pass the same option to `warmup` and `run`. See [image warmup](docs/users/usage.md#warm-images-without-evaluation) for details and prerequisites.
+Local Docker, Ray Client, and Ray Jobs support warmup; Ray prepares images on the execution nodes. See the [image warmup guide](docs/users/usage.md#warm-images-without-evaluation) for options and prerequisites.
+
+### 📥 Download Evaluation Images from ModelScope
+
+**Ember Evaluator can download task image archives from ModelScope and load them into Docker automatically.** Once an archive source is configured, `warmup` and `run` select images by task, platform, and solve/verify phase. Hugging Face image archives are also supported.
+
+> **Official image repository: [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)**
+>
+> Maintained by the Ember Evaluator team, this repository hosts official task image archives for selected benchmarks. Check its file tree for available tasks and platforms.
 
 ## 📖 Guides
 

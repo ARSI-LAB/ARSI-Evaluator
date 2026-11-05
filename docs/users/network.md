@@ -4,7 +4,7 @@
 
 Network YAML is separate from experiment YAML. File selection: CLI `--network` (SDK `networkConfigPath`), then `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` (`%USERPROFILE%\.ember-evaluator\network.yaml` on Windows). The default file is created with official sources and direct connections on first use; existing content is never overwritten.
 
-Field precedence is **nonempty supported environment variables → YAML → built-in defaults**, including files selected with `--network`. An empty file, comments only, or `{}` uses default sources and direct connections only when no corresponding environment variables are set. `version` is optional and must be `1` when present. YAML still supports `${VARIABLE}` references; overridden fields do not expand their original references. Empty environment values are treated as unset and do not clear YAML values. Invalid environment values fail instead of falling back to YAML. Missing or invalid explicitly selected files fail without falling back.
+Field precedence is **nonempty supported environment variables → YAML → built-in defaults**, including files selected with `--network`. An empty file, comments only, or `{}` uses default sources and direct connections only when no corresponding environment variables are set. Network configuration does not accept a `version` field. Remove it from existing files; otherwise loading fails with `Unknown network field: version`. YAML still supports `${VARIABLE}` references; overridden fields do not expand their original references. Empty environment values are treated as unset and do not clear YAML values. Invalid environment values fail instead of falling back to YAML. Missing or invalid explicitly selected files fail without falling back.
 
 These commands use the registered `ember-evaluator` CLI; see the [installation guide](installation.md#register-the-global-cli). Example paths are relative to the working directory; run from the repository root when using its Playbooks.
 
@@ -79,6 +79,8 @@ Archive configuration uses `provider: modelscope | huggingface` and `baseUrl`, t
 Archives go directly to `docker load`, then receive an Evaluator tag. Evaluator does not inspect archives, compare file checksums, original registry digests or image platforms, or verify imported identities. Docker errors propagate without fallback. Docker load may restore or overwrite original tags. Image IDs and other metadata are still read for runtime builds.
 
 For archives, explicit `environment.platform` selects the download platform; `auto` selects the execution node native platform, ignoring the original registry task platform declaration. Existing Evaluator image tags for the same URL are reused. Clear the relevant image cache after replacing a remote file, or use a new version directory/revision. See [task image archives](../development/image-archives.md).
+
+The officially maintained ModelScope repository, [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator), hosts official task image archives for selected benchmarks. Check its file tree for available images. To publish your own archives, see the [single-file and batch upload guide](../development/image-archives.md#上传到-modelscope) (Chinese).
 
 ### Verify a ModelScope Image
 

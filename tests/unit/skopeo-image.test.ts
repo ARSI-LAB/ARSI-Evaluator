@@ -18,7 +18,7 @@ test("skopeo preserves the platform proof and uses the same verified archive bui
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   vi.stubEnv("DOCKER_CONFIG", join(directory, "no-auth"));
   const source = await registryProxyFixture(directory); cleanup.push(() => source.close());
-  const runtime = new NetworkRuntime(networkDocument({ version: 1, proxy: { https: "http://user:proxy-secret@proxy.test:1" } }, {}));
+  const runtime = new NetworkRuntime(networkDocument({ proxy: { https: "http://user:proxy-secret@proxy.test:1" } }, {}));
   cleanup.push(() => runtime.dispose());
   vi.mocked(networkCommand).mockImplementation(async (_executable, args, options) => {
     expect(args.slice(0, 4)).toEqual(["--override-os", "linux", "--override-arch", "amd64"]);
@@ -43,7 +43,7 @@ test("missing skopeo reports the missing executable without using the Node downl
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   vi.stubEnv("DOCKER_CONFIG", join(directory, "no-auth"));
   vi.mocked(networkCommand).mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
-  const runtime = new NetworkRuntime(networkDocument({ version: 1 }, {}));
+  const runtime = new NetworkRuntime(networkDocument({}, {}));
   await expect(downloadSkopeoImage("busybox:1.37.0", "linux/amd64", runtime, "missing-skopeo", directory, "fixture/import:one", AbortSignal.timeout(5000)))
     .rejects.toThrow("install it yourself or configure skopeoExecutable");
   expect(networkCommand).toHaveBeenCalledTimes(1);

@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parse } from "yaml";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { runCli, parseArgs } from "../../src/cli.js";
 import { diagnoseNetwork } from "../../src/adapters/network/doctor.js";
@@ -26,7 +27,8 @@ test("doctor creates the default YAML and names the failed field and recommendat
   const report = JSON.parse(out.at(-1)!);
   expect(report.network).toMatchObject({ configPath: defaultNetworkConfigPath(), status: "failed",
     recommendedCommand: expect.stringContaining("--network"), probes: [expect.objectContaining({ name: "huggingface" })] });
-  expect(await readFile(defaultNetworkConfigPath(), "utf8")).toContain("version: 1");
+  const defaultConfig = parse(await readFile(defaultNetworkConfigPath(), "utf8"));
+  expect(defaultConfig).toMatchObject({ sources: { huggingface: "https://huggingface.co" } });
   expect(errors.join("\n")).toContain(defaultNetworkConfigPath());
   expect(errors.join("\n")).toContain("sources.huggingface");
   expect(errors.join("\n")).toContain("mirrors.yaml");
@@ -38,7 +40,7 @@ test("experiment doctor preserves configuration checks and uses the selected net
   await mkdir(join(root, "data"));
   const file = join(root, "experiment.yaml"), network = join(root, "network.yaml");
   await writeFile(file, "services:\n  default:\n    model: fixture\n    base_url: https://model.invalid/v1\n    api_key: ${TEST_KEY}\nbenchmark: gsm8k\nenvironment: local\n");
-  await writeFile(network, "version: 1\nsources:\n  huggingface: https://hub.test\n");
+  await writeFile(network, "sources:\n  huggingface: https://hub.test\n");
   vi.mocked(diagnoseNetwork).mockImplementation(async (runtime, _signal, options) => {
     expect(runtime.settings.sources.huggingface).toBe("https://hub.test");
     expect(options?.docker).toBe(false);

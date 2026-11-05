@@ -50,7 +50,7 @@ function imageFixture() {
   return { image: createPythonVerifierImage("fixture", command), command, started, gate, remove: () => { present = false; } };
 }
 test("build configuration keeps location-specific proxy routes explicit", () => {
-  const access = new NetworkRuntime(networkDocument({ version: 1, proxy: { https: "http://127.0.0.1:7890", overrides: { build: { https: "http://host.docker.internal:7890" } } }, sources: { python: { index: "https://python.example/simple" } }, docker: { buildNetwork: "host" } }, {}));
+  const access = new NetworkRuntime(networkDocument({ proxy: { https: "http://127.0.0.1:7890", overrides: { build: { https: "http://host.docker.internal:7890" } } }, sources: { python: { index: "https://python.example/simple" } }, docker: { buildNetwork: "host" } }, {}));
   const network = dockerBuildNetwork(access);
   expect(network.identity.sources.python.index).toBe("https://python.example/simple");
   expect(network.identity.proxy.https).toBe("http://host.docker.internal:7890");

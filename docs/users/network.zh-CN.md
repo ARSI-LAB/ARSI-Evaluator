@@ -4,7 +4,7 @@
 
 网络文件独立于实验 YAML。文件选择顺序为：CLI 的 `--network`（SDK 的 `networkConfigPath`）→ `EVALUATOR_NETWORK_CONFIG` → 用户目录下的 `~/.ember-evaluator/network.yaml`。Windows 对应 `%USERPROFILE%\.ember-evaluator\network.yaml`。默认文件不存在时自动创建，文件内容使用官方源和直连；已有文件不会被覆盖。
 
-字段优先级为：**已设置且非空的受支持环境变量 → YAML → 程序默认值**，显式指定 `--network` 时也适用。网络文件可以完全留空、只写注释或写 `{}`；没有对应环境变量时才使用默认源和直连。`version: 1` 可省略；填写时必须为 1。YAML 仍支持 `${VARIABLE}` 引用，环境变量覆盖的字段不再展开原来的引用。空字符串环境变量视为未设置，不会清空 YAML。无效的环境变量值直接报错，不回退 YAML。显式指定的文件不存在或格式错误时也直接报错，不回退其他文件。
+字段优先级为：**已设置且非空的受支持环境变量 → YAML → 程序默认值**，显式指定 `--network` 时也适用。网络文件可以完全留空、只写注释或写 `{}`；没有对应环境变量时才使用默认源和直连。网络配置不接受 `version` 字段；已有文件中的该字段需要删除，否则报 `Unknown network field: version`。YAML 仍支持 `${VARIABLE}` 引用，环境变量覆盖的字段不再展开原来的引用。空字符串环境变量视为未设置，不会清空 YAML。无效的环境变量值直接报错，不回退 YAML。显式指定的文件不存在或格式错误时也直接报错，不回退其他文件。
 
 以下命令使用已注册的 `ember-evaluator`，注册步骤见[安装指南](installation.zh-CN.md#安装全局命令)。示例路径相对当前工作目录；使用仓库中的 Playbook 时，请在仓库根目录执行。
 
@@ -79,6 +79,8 @@ ember-evaluator run experiment.yaml --network network.yaml
 归档下载后直接执行 `docker load` 并添加 Evaluator 标签；不解析归档、不比较文件 SHA-256、原 Registry 摘要或镜像平台，也不做导入后的身份校验。Docker 返回失败时正常报错，不回退到其他来源。原始镜像标签可能由 Docker load 恢复或覆盖。运行时读取镜像 ID 等元数据用于后续构建。
 
 归档方式下，`environment.platform` 显式选择下载平台，`auto` 使用执行节点原生平台；不采用任务内原 Registry 镜像的平台声明。本机对应 URL 的 Evaluator 镜像标签存在时复用；覆盖远端同名文件后需清理对应镜像缓存，或使用新的版本目录/revision。操作和迁移说明见[任务镜像归档](../development/image-archives.md)。
+
+官方维护的 ModelScope 仓库为 [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)，存放部分 Benchmark 的官方任务镜像归档。可用镜像以仓库目录为准；上传自己的镜像见[单个和批量上传指引](../development/image-archives.md#上传到-modelscope)。
 
 ### 核验 ModelScope 镜像
 

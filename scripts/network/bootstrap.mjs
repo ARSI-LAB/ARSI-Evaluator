@@ -7466,8 +7466,7 @@ function dictionary(value, label) {
   return value;
 }
 function parseNetworkSettings(value) {
-  const raw = record(value, ["version", "proxy", "sources", "docker", "git"], "network");
-  if (raw.version !== void 0 && raw.version !== 1) throw new TypeError("network.version must be 1");
+  const raw = record(value, ["proxy", "sources", "docker", "git"], "network");
   const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true);
   const proxyObject = record(raw.proxy === null ? void 0 : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
   const overrides = record(proxyObject.overrides, locations, "network.proxy.overrides");
@@ -7500,7 +7499,6 @@ function parseNetworkSettings(value) {
   if (route === "proxy" && !resolvedProxy.host.https && !resolvedProxy.host.http)
     throw new TypeError("Git SSH proxy requires a host HTTP(S) proxy");
   return {
-    version: 1,
     proxy: resolvedProxy,
     sources: {
       huggingface: url(sources.huggingface ?? "https://huggingface.co", "network.sources.huggingface", false, true),
@@ -7545,7 +7543,7 @@ function mergeNetworkTemplate(base, overrides, label = "network") {
   return result;
 }
 function applyNetworkEnvironment(template, env2) {
-  const raw = record(template, ["version", "proxy", "sources", "docker", "git"], "network");
+  const raw = record(template, ["proxy", "sources", "docker", "git"], "network");
   const proxy2 = {}, python = {}, sources = {}, docker = {};
   const reference = (names) => {
     const key = names.find((name) => env2[name]);

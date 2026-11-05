@@ -27,7 +27,7 @@
 
 ## ℹ️ 简介
 
-ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境，完成任务执行、答案验证、结果保存和报告生成，帮助你在相同实验条件下比较不同模型与 Agent。
+Ember Evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境，完成任务执行、答案验证、结果保存和报告生成，帮助你在相同实验条件下比较不同模型与 Agent。
 
 项目支持数学与知识问答、代码修改、终端操作、办公、网页和安全任务；也支持使用 AgentX 回放 Trace，测量模型服务的吞吐与延迟。
 
@@ -40,6 +40,7 @@ ember-evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 - **多种评测任务**：支持 GSM8K、MMLU、HumanEval、Terminal-Bench、SWE-bench、WorkBuddy、[OfficeQA Pro V2](docs/users/benchmarks/officeqa-pro-v2.zh-CN.md)（默认解析 JSON，也支持原始 PDF）和自有 Harbor 任务，见[支持的 Benchmark](docs/users/README.zh-CN.md#现在能测哪些-benchmark)。
 - **多种 Agent 与模型服务**：支持 SimpleAgent 和 AgentBundle（含 Dify Harness），可配置独立裁判模型，见[Solver 与模型服务](docs/users/solvers.zh-CN.md)。
 - **本机、容器与分布式执行**：使用 local 或 Docker 执行任务，通过本地 Scheduler 或 Ray 调度，并控制并发和环境准备，见[运行方式](docs/users/usage.zh-CN.md#本地docker-与-ray)和[并发指南](docs/users/concurrency.zh-CN.md)。
+- **网络配置**：支持配置代理、数据下载地址、Docker 镜像源和依赖包源，见[网络配置指南](docs/users/network.zh-CN.md)。
 - **证据保存与任务续跑**：保存配置、来源版本、轨迹、验证日志和产物，中断后继续未完成任务，见[续跑与结果文件](docs/users/usage.zh-CN.md#续跑与重建报告)。
 - **指标与离线报告**：统计得分、正确率、耗时和 token usage，从已保存结果重建 Markdown 报告，见[结果阅读](docs/users/usage.zh-CN.md#如何读结果)和[评分口径](docs/users/reference/scoring.zh-CN.md)。
 - **模型服务性能测量**：用 AgentX 测量吞吐、TTFT、ITL 和请求延迟，可选采集 vLLM 与 Ascend NPU 指标，见[AgentX 指南](docs/users/benchmarks/agentx.zh-CN.md)。
@@ -90,9 +91,9 @@ ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml
 
 其他题库和运行组合见 [Playbook 示例](playbook/README.md)，续跑、报告和日常操作见[用户文档](docs/users/README.zh-CN.md)。
 
-### 评测前提前预热镜像
+## 🔥 评测前预热镜像
 
-使用 Docker 执行任务时，可以提前用正式评测的同一份 YAML 准备镜像和依赖。例如，设置好上面的模型变量后执行：
+使用 Docker 执行任务时，先用 `warmup` 下载或构建镜像、安装依赖，正式评测时即可复用。以下示例使用同一份实验 YAML，依次检查环境、预热镜像和开始评测：
 
 ```bash
 ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
@@ -100,11 +101,19 @@ ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-先用 `doctor` 诊断配置、所需工具和网络，处理失败项后再预热。诊断会执行临时下载和 Docker 构建探针，不调用模型或执行题目；`not-checked` 表示尚未检查。
+先处理 `doctor` 报告的失败项，再执行 `warmup`。预热会准备所选任务的解题、验证和服务镜像，以及 Evaluator 运行时和 Solver 依赖；不调用模型、不执行题目，也不生成评测报告。
 
-预热按 YAML 的选题配置准备任务镜像、验证镜像、侧车镜像、Evaluator 运行时和 Solver 安装层，不调用模型，不生成评测结果或报告。预热不要求模型 API key，但模型名称、端点等配置仍需有效；与 `run --dry-run` 相比，预热会实际拉取或构建镜像。
+预热不要求模型 API key，但模型名称、端点等配置仍需有效。正式评测时补齐模型认证信息，并保持任务版本、选题、平台、插件配置和 Docker daemon 一致，以复用镜像缓存。
 
-保持配置、任务版本、平台和 Docker daemon 一致，正式评测即可复用缓存。本机 Docker、Ray Client 和 Ray Jobs 均支持预热；Ray 在分配的执行节点上准备镜像。若使用 `--patch`，上述三条命令应加载同一份 patch；若使用 `--task-ids-file`，`warmup` 和 `run` 应传入相同参数。完整用法和前置条件见[只预热镜像，不开始测评](docs/users/usage.zh-CN.md#只预热镜像不开始测评)。
+本机 Docker、Ray Client 和 Ray Jobs 均支持预热；Ray 在实际执行节点上准备镜像。完整参数和前置条件见[镜像预热指南](docs/users/usage.zh-CN.md#只预热镜像不开始测评)。
+
+### 📥 从 ModelScope 下载评测镜像
+
+**Ember Evaluator 支持从 ModelScope 下载任务镜像归档并自动加载到 Docker。** 配置归档来源后，`warmup` 和 `run` 会按选中的任务、平台和解题／验证阶段获取镜像。也支持 Hugging Face 镜像归档。
+
+> **官方镜像仓库：[evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)**
+>
+> 由 Ember Evaluator 官方维护，存放部分 Benchmark 的官方任务镜像归档。可用任务和平台以仓库目录为准。
 
 ## 📖 使用指南
 

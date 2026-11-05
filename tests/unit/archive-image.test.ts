@@ -27,7 +27,7 @@ async function fixture(status = 200) {
   cleanup.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
   const settings: ArchiveImageAcquisition = { method: "archive", provider: "modelscope", baseUrl: `http://127.0.0.1:${address.port}/terminalbench4.0` };
-  const network = new NetworkRuntime(networkDocument({ version: 1 }, {})); cleanup.push(() => network.dispose());
+  const network = new NetworkRuntime(networkDocument({}, {})); cleanup.push(() => network.dispose());
   return { root, requests, bytes, settings, network };
 }
 const context = { taskId: "terminal-bench/task-a", phase: "solve" as const };
