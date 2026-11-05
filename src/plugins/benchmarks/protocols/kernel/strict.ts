@@ -1,4 +1,4 @@
-// Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import { expectRecord, expectNonEmptyString, rejectUnknown } from "../../../../config/schema.js";
 

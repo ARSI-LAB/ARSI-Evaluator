@@ -32,13 +32,13 @@ async function withAptDirectory(run: (root: string, apply: (mirror: string) => P
 }
 
 test("HTTPS task mirrors bootstrap missing CA trust before switching sources", () => {
-  const instructions = aptSourceInstructions({ debian: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/debian", debianSecurity: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/debian-security", ubuntu: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("https://repo.huaweicloud.com").replace(/\/$/u, "") + "/ubuntu-ports" });
+  const instructions = aptSourceInstructions({ debian: String("https://repo.example.test").replace(/\/$/u, "") + "/debian", debianSecurity: String("https://repo.example.test").replace(/\/$/u, "") + "/debian-security", ubuntu: String("https://repo.example.test").replace(/\/$/u, "") + "/ubuntu", ubuntuSecurity: String("https://repo.example.test").replace(/\/$/u, "") + "/ubuntu", ubuntuPorts: String("https://repo.example.test").replace(/\/$/u, "") + "/ubuntu-ports" });
   expect(instructions).toHaveLength(3);
   expect(instructions[0]).toContain('Acquire::Retries "3";');
   expect(instructions[1]).toContain("[ ! -s /etc/ssl/certs/ca-certificates.crt ]");
-  expect(instructions[1]).toContain("http://repo.huaweicloud.com/debian");
+  expect(instructions[1]).toContain("http://repo.example.test/debian");
   expect(instructions[1]).toContain("apt-get install -y --no-install-recommends ca-certificates");
-  expect(instructions[2]).toContain("https://repo.huaweicloud.com/debian");
+  expect(instructions[2]).toContain("https://repo.example.test/debian");
   expect(instructions.join("\n")).not.toMatch(/allow-unauthenticated|trusted=yes|Verify-Peer/);
 });
 

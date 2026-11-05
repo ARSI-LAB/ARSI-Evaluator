@@ -18,7 +18,7 @@ def error_owner(exc):
         return 'evaluation'
     if isinstance(exc, CompilationError): return 'candidate'
     try:
-        # The NPU compiler raises this sibling type for candidate MLIR pass failures.
+        # Triton-Ascend raises this sibling type for candidate MLIR pass failures.
         from triton.compiler.errors import MLIRCompilationError
     except ImportError:
         return 'evaluation'

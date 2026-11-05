@@ -12,7 +12,7 @@
 
 APT 换源处理 `/etc/apt/sources.list` 和 `sources.list.d/` 下的 `.list`、`.sources` 文件。`sources.apt` 分别指定 Debian 主仓库、安全仓库及 Ubuntu archive、security、ports 的完整地址，保留发行版、组件和签名密钥；第三方仓库保持原地址。原始任务文件和已有镜像不会被原地修改。
 
-固定 Node Docker 镜像、任务基础镜像和独立裁判镜像使用网络 YAML 的 `docker.pull` 与 `docker.mirrors`。镜像源按原 registry 精确匹配，固定 digest 与平台校验保持不变；不再自动挑选 daemon 中的华为云镜像。`FROM` 的联网由实际 Docker daemon 配置负责。三种获取方式及配置示例见[网络下载配置](../network.zh-CN.md)。
+固定 Node Docker 镜像、任务基础镜像和独立裁判镜像使用网络 YAML 的 `docker.pull` 与 `docker.mirrors`。镜像源按原 registry 精确匹配，固定 digest 与平台校验保持不变；Evaluator 不根据 daemon 配置自动选择镜像源。`FROM` 的联网由实际 Docker daemon 配置负责。三种获取方式及配置示例见[网络下载配置](../network.zh-CN.md)。
 
 评测进程的全局 `fetch` 和 Pi runner 在直连和代理连接下均默认使用 HTTP/1.1。在**启动进程前**设置 `EVALUATOR_HTTP2=1` 才允许协商 HTTP/2；不设置或设为 `EVALUATOR_HTTP2=0` 时使用 HTTP/1.1。开启后，服务器不支持 HTTP/2 时仍可使用 HTTP/1.1。代理配置和 TLS 证书验证继续生效。Pi runner 从自身环境读取此变量；容器和 Worker 的启动环境需单独配置；它不控制浏览器、Docker 镜像拉取、外部下载命令或其他第三方 Solver 运行时。
 

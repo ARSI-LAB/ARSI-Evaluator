@@ -50,7 +50,7 @@ def replay(request):
     if tool_id != 0x1001:
         raise RuntimeError("MSTX operator profiler injection is not active")
     import torch
-    import torch_npu  # noqa: F401  (registers the required NPU backend)
+    import torch_npu  # noqa: F401  (registers the npu backend, required on Ascend)
 
     if not torch.npu.is_available():
         raise RuntimeError("NPU is required for detailed profiling")

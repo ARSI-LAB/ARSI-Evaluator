@@ -224,7 +224,7 @@ def evaluate(request, profile_root=Path(".")):
 
 @contextlib.contextmanager
 def native_output(log):
-    """同时接住 设备运行时/C++ 写入文件描述符的日志，避免污染 JSON。"""
+    """同时接住 CANN/C++ 写入文件描述符的日志，避免污染 JSON。"""
     sys.stdout.flush()
     sys.stderr.flush()
     saved = [os.dup(1), os.dup(2)]

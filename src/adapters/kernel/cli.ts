@@ -93,7 +93,7 @@ async function readJson(path: string): Promise<Record<string, unknown> | undefin
   }
 }
 
-/** 解析入口进程 stdout 的单 JSON（取最后一个非空行，容忍设备运行时噪声输出）。 */
+/** 解析入口进程 stdout 的单 JSON（取最后一个非空行，容忍 CANN 噪声输出）。 */
 export function parseAtomPayload(sub: string, stdout: string): Record<string, unknown> {
   const lines = stdout.trim().split("\n").filter((line) => line.trim() !== "");
   const last = lines[lines.length - 1] ?? "";

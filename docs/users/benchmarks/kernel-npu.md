@@ -2,7 +2,7 @@
 
 > English | [中文](./kernel-npu.zh-CN.md)
 
-`kernel` validates existing candidates on NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. RSI generates candidates through its Proposer and evaluates frozen artifacts through the full SDK. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
+`kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. RSI generates candidates through its Proposer and evaluates frozen artifacts through the full SDK. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
 
 ## Hardware Selection
 
@@ -12,7 +12,7 @@ Use top-level `hardware: npu` in experiment YAML; omission also means NPU. `hard
 
 Prepare dependencies through [installation](../installation.md). pnpm downloads and builds the AgentBundle SDK from GitHub automatically; no sibling source repository is required. Built-in plugin imports need this dependency even when that Solver is not selected.
 
-Requires Linux, NPU, a compatible device runtime, torch, torch_npu, triton-ascend; detailed collection also pandas/NumPy/Jinja2. Use a verified operator-capable Python and load that runtime first. Only `local` environment/scheduler, concurrency 1; no competing timing workloads on the device. Built-in workers verify, so no benchmark.verifier. Local workspaces do not isolate malicious Python; evaluate trusted code only.
+Requires Linux, NPU, CANN, torch, torch_npu, triton-ascend; detailed collection also pandas/NumPy/Jinja2. Use a verified operator-capable Python and load CANN first. Only `local` environment/scheduler, concurrency 1; no competing timing workloads on the device. Built-in workers verify, so no benchmark.verifier. Local workspaces do not isolate malicious Python; evaluate trusted code only.
 
 ```bash
 export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python

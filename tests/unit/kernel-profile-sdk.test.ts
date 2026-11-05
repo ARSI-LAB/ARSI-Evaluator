@@ -40,7 +40,7 @@ async function fixture(mode: "complete" | "missing" | "cleanup" | "no-trace" | "
         if (mode !== "missing-l2") await writeFile(join(profile, "L2Cache.csv"), "block_id,sub_block_id\n0,vector\n");
         await writeFile(join(profile, "ResourceConflictRatio.csv"), "block_id,aiv_vec_wait_ratio\n0,0.1\n");
         if (mode === "complete") await writeFile(join(profile, "trace.json"), JSON.stringify({ traceEvents: [{ pid: "core0.veccore0", tid: "VECTOR", ts: 0, dur: 10 }] }));
-        await writeFile(resultPath, JSON.stringify({ seed: mode === "wrong-seed" ? 41 : 42, warmup: 7, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1, capture: { method: "mstx", range: "rsi_operator_profile", toolId: 4097, rangeId: 0, warmupCompleted: mode === "wrong-capture" ? 6 : 7, callsInRange: 1 }, deviceName: "FixtureAccelerator", inputContract: "unchanged problem.get_inputs", environment: { device: "fixture logical=0", visibleDevices: "0" } }));
+        await writeFile(resultPath, JSON.stringify({ seed: mode === "wrong-seed" ? 41 : 42, warmup: 7, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1, capture: { method: "mstx", range: "rsi_operator_profile", toolId: 4097, rangeId: 0, warmupCompleted: mode === "wrong-capture" ? 6 : 7, callsInRange: 1 }, deviceName: "Ascend950PR", inputContract: "unchanged problem.get_inputs", environment: { device: "fixture950 logical=0", visibleDevices: "0" } }));
       }
       return { stdout: (async function* () {})(), stderr: (async function* () {})(), done: Promise.resolve({ code: 0, signal: null }),
         async stop() { stopped++; if (mode === "cleanup") throw new Error("cannot stop"); } };
@@ -166,7 +166,7 @@ test.each(["no-trace", "complete"] as const)("explicit Default diagnostics use P
       status: "completed", cleanup: "confirmed", diagnosticProtocol: { collection: "Default", capture: "after-warmup-mstx-range" },
       profiling: { metadata: { collection: "Default",
         trace: { status: "unavailable", reason: "not-requested-by-default-protocol" },
-        replay: { seed: 42, warmup: 7, environment: { device: "fixture logical=0", visibleDevices: "0" } } },
+        replay: { seed: 42, warmup: 7, environment: { device: "fixture950 logical=0", visibleDevices: "0" } } },
         analysis: { trace: null, roofline: { vec_rate: 0.7 } } },
     } });
     expect(verdict).not.toHaveProperty("score");
