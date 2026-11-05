@@ -68,6 +68,7 @@ try {
 | 参数 | 含义 |
 | --- | --- |
 | `configPath` | 实验 YAML；相对路径以调用时的当前目录解析 |
+| `networkConfigPath` | 网络 YAML，路径相对当前工作目录；省略时读取 `EVALUATOR_NETWORK_CONFIG`，再读取 `~/.ember-evaluator/network.yaml` |
 | `patchPath` | 显式插件 patch；相对当前目录解析，不自动扫描配置旁的 patch |
 | `overrides` | 与 CLI 相同的模型覆盖项：`model`、`endpoint`、`apiKey`、`apiKeyEnv` |
 | `env` | 用于 YAML 变量展开和模型认证，省略时使用 `process.env`；显式传入时使用该对象，不自动合并 |
@@ -77,7 +78,21 @@ try {
 
 YAML 内的 Bundle、输出等路径仍相对 YAML 目录；patch 内的模块路径相对 patch 文件。SDK 不调用 `process.chdir()`，也不修改 `process.env`。单个实例可并行调用，各次运行有独立 Registry 和资源；仍应给不同实验选择合适的输出路径，避免主动对同一个 run 同时续跑。
 
-`env` 只负责配置输入。Docker、代理、Ray 网关认证等部署变量仍由实际进程或执行节点提供；例如 Ray Jobs 的 token 仍按原 `tokenEnv` 或安全文件读取，不会通过 `env` 修改进程全局变量。
+`env` 提供实验和网络 YAML 的变量值，不自动与 `process.env` 合并。Docker daemon、Ray 网关认证等部署变量仍由实际进程或执行节点提供；例如 Ray Jobs 的 token 仍按原 `tokenEnv` 或安全文件读取，不会通过 `env` 修改进程全局变量。
+
+## 网络和本地数据
+
+```js
+const result = await evaluator.run({
+  configPath: "/path/to/experiment.yaml",
+  networkConfigPath: "/path/to/network.yaml",
+  env: { ...process.env, DOWNLOAD_PROXY: "http://proxy.example:8080" },
+});
+```
+
+网络 YAML 可写 `proxy: { https: "${DOWNLOAD_PROXY}" }`。省略 `networkConfigPath` 时，先读取 `EVALUATOR_NETWORK_CONFIG`，再使用用户目录中的默认网络文件。空文件使用程序默认值，受支持的环境变量仍可覆盖它们。完整字段见[网络配置字段](reference/network.zh-CN.md)。
+
+本地数据路径写在实验 YAML 中：记录型题库使用 `benchmark.config.localPath`；Harbor 系列使用 `benchmark.config.source: { kind: local, path: ./dataset }`。相对路径按实验 YAML 目录解析，SDK 和 CLI 行为相同；格式和限制见[本地数据集](local-datasets.zh-CN.md)。SDK 不公开 `doctor()` 或 `inspect()` 方法，需要诊断时运行 `ember-evaluator doctor experiment.yaml`。
 
 ## 取消、续跑与报告
 
@@ -92,7 +107,7 @@ const result = await evaluator.run({
 const reportPath = await evaluator.report("/path/to/results/saved-run-id");
 ```
 
-续跑使用相同的配置、来源、代码与插件版本；校验失败时拒绝执行，不重写原报告。`report()` 离线重建报告，不调用模型、不需要模型 key；第三方报告插件仍需可用，失败时透传 `rebuildReport()` 的异常。每次 `run()` 返回或抛出前都会释放本次资源，不需要调用 `evaluator.dispose()`。
+续跑使用相同的配置、来源、外部插件与 Solver 身份，允许使用更新并重新构建后的 Evaluator 代码，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)；校验失败时拒绝执行，不重写原报告。`report()` 离线重建报告，不调用模型、不需要模型 key；第三方报告插件仍需可用，失败时透传 `rebuildReport()` 的异常。每次 `run()` 返回或抛出前都会释放本次资源，不需要调用 `evaluator.dispose()`。
 
 进度回调应快速完成；异步消息可由业务方自行入队。同步回调抛错会中止本次运行并释放资源，SDK 抛出 `EvaluatorRunError`，保留已保存的部分结果。
 

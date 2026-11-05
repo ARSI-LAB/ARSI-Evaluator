@@ -1,0 +1,12 @@
+docker:
+  # 共享镜像（如 Node）：通过 docker pull 获取。
+  # 未单独配置获取方式的题库任务镜像也使用此设置。
+  pull:
+    method: docker
+  # Terminal-Bench 任务镜像：从 ModelScope 下载归档并加载到 Docker。
+  benchmarks:
+    terminalbench:
+      method: archive
+      provider: modelscope
+      # Official image repository; adjust the benchmark directory as needed.
+      baseUrl: https://modelscope.cn/datasets/evolving-foundry/ember-evaluator/resolve/master/terminalbench4.0

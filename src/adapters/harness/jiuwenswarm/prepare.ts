@@ -121,7 +121,7 @@ export async function prepareJiuwenswarm(
     executable: node,
     args: [cli, "--json", ...args, "--harness-version", version],
     cwd: runtime.root,
-    env,
+    env: preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env,
     inheritEnv: false,
     input: null,
   });
@@ -260,7 +260,7 @@ export async function prepareJiuwenswarmDocker(
     executable: "node",
     args: [cli, "--json", ...args, "--harness-version", version],
     cwd: root,
-    env,
+    env: preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env,
     inheritEnv: false,
     input: null,
   });

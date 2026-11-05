@@ -18,3 +18,6 @@ plugins/tracer/collector.log
 plugins/tracer/collector.log.*
 plugins/tracer/tracer.pid
 plugins/tracer/collector/tests/
+
+!tests/fixtures/results/
+!tests/fixtures/results/**/*.ts

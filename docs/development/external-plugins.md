@@ -195,12 +195,12 @@ Solver 的模型服务通过 `benchmark.solver.service` 选择；需要模型的
 
 ## 5. 验证加载并运行
 
-仍在插件项目目录执行；若已安装 CLI，也可将 `node ../Ember-Evaluator/dist/cli.js` 替换成 `ember-evaluator`：
+先按[安装指南](../users/installation.zh-CN.md#安装全局命令)注册 `ember-evaluator`，再在插件项目目录执行：
 
 ```bash
-node ../Ember-Evaluator/dist/cli.js config explain experiment.yaml --patch cordis.patch.yaml
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml --dry-run
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml
+ember-evaluator config explain experiment.yaml --patch cordis.patch.yaml
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml --dry-run
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml
 ```
 
 - `config explain` 检查配置解析、组件注册名和配置校验，显示最终配置及字段来源；不执行指标计算。
@@ -212,8 +212,8 @@ node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yam
 续跑仍显式传入相同 patch：
 
 ```bash
-node ../Ember-Evaluator/dist/cli.js run experiment.yaml --patch cordis.patch.yaml --resume <run-id>
-node ../Ember-Evaluator/dist/cli.js report results/<run-id>
+ember-evaluator run experiment.yaml --patch cordis.patch.yaml --resume <run-id>
+ember-evaluator report results/<run-id>
 ```
 
 `report` 不接受 `--patch`，它按已保存的提供者信息加载原来的 Metrics/Reporter 插件，不重新求解。保留原插件安装及可解析路径；移动结果目录不会自动复制插件，也不会自动改写保存的插件路径。

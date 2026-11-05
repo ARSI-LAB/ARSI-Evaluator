@@ -1,3 +1,5 @@
+import { NetworkRuntime } from "../../src/adapters/network/runtime.js";
+import { networkDocument, parseNetworkSettings } from "../../src/config/network.js";
 import { afterEach, expect, test, vi } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -70,13 +72,13 @@ test("does not start a pull when preparation was cancelled", async () => {
 
 test("configured proxy downloads once, imports verified content and reuses persistent receipts without native pull", async () => {
   const f = await fixture();
-  const pull = createDockerImagePuller(f.command, f.proxy);
+  const pull = createDockerImagePuller(f.command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
   const [first, shared] = await Promise.all([pull(f.reference, "linux/amd64", AbortSignal.timeout(5000)), pull(f.reference, "linux/amd64", AbortSignal.timeout(5000))]);
   expect(shared).toEqual(first);
   expect(first.verifiedDigest).toBe(f.indexDigest);
   expect(f.calls.filter(args => args[0] === "load")).toHaveLength(1);
   const requests = f.requests.length;
-  const fresh = createDockerImagePuller(f.command, "http://127.0.0.1:1");
+  const fresh = createDockerImagePuller(f.command, { network: new NetworkRuntime(networkDocument({ proxy: { http: "http://127.0.0.1:1", https: "http://127.0.0.1:1" }, docker: { pull: { method: "registry-client" } } }, {})) });
   expect(await fresh(f.reference, "linux/amd64", AbortSignal.timeout(5000))).toEqual(first);
   expect(f.requests).toHaveLength(requests);
   expect(f.calls.some(args => args[0] === "pull")).toBe(false);
@@ -87,7 +89,7 @@ test("configured proxy downloads once, imports verified content and reuses persi
 
 test("proxy-imported classic images with no RepoDigests retain verified pinned task provenance", async () => {
   const f = await fixture();
-  const pull = createDockerImagePuller(f.command, f.proxy);
+  const pull = createDockerImagePuller(f.command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
   const scope = { taskId: "fixture/task", phase: "solve" as const };
   const first = await resolvePinnedTaskImage(f.command, f.reference, "linux/amd64", scope, AbortSignal.timeout(5000), undefined, pull);
   expect(first).toMatchObject({ reference: f.reference, id: f.configDigest });
@@ -98,7 +100,7 @@ test("proxy-imported classic images with no RepoDigests retain verified pinned t
 
 test("a corrupt download cannot import content and a later acquisition can recover", async () => {
   const f = await fixture(); f.controls.corruptLayer = true;
-  const pull = createDockerImagePuller(f.command, f.proxy);
+  const pull = createDockerImagePuller(f.command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
   await expect(pull(f.reference, "linux/amd64", AbortSignal.timeout(5000))).rejects.toThrow(/Cannot acquire/);
   expect(f.calls.some(args => args[0] === "load")).toBe(false);
   f.controls.corruptLayer = false;

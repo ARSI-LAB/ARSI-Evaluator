@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { redactNetwork, networkSecrets } from "./config/network.js";
+import { CommandUsageError, parseCommand as parseArgs } from "./cli-commands.js";
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve, dirname, join } from "node:path";
@@ -28,59 +30,15 @@ const defaultIO: CliIO = {
     process.stderr.write(text + "\n");
   },
 };
-const help = `
-Run an experiment:
-ember-evaluator run <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--tracer [url]] [--dry-run] [--task-ids-file <json>] [--resume [run-id]] [--model <name>] [--endpoint <url>] [--api-key <key> | --api-key-env <name>]
-
-Prepare images and runtimes without evaluation:
-ember-evaluator warmup <yaml> [--progress <auto|tty|plain>] [--patch <path>] [--task-ids-file <json>] [model overrides]
-
-Preview or remove evaluator image references:
-ember-evaluator cleanup images [<yaml>] [--all] [--yes] [--patch <path>]
-
-Retry network failures in the same run:
-ember retry --run <run-id-or-directory> [--progress <auto|tty|plain>] [--task-id <id>] [--request-id <id>] [--reason <text>]
-Discover and initialize:
-ember-evaluator benchmark list [--patch <path>]
-ember-evaluator benchmark info <name> [--patch <path>]
-ember-evaluator init --benchmark <name> --output <yaml> [--patch <path>]
-ember-evaluator doctor <yaml> [--patch <path>] [model overrides]
-
-Inspect configuration:
-ember-evaluator config explain <yaml> [--patch <path>] [model overrides]
-ember-evaluator config resolve <yaml> [--patch <path>] [model overrides]
-
-Generate a report:
-ember-evaluator report <run-dir>
-
-Manage the tracer plugin Collector (plugins/tracer):
-ember-evaluator tracer serve [--url <url>] [--db <path>] [--spool <path>] [--port <n>] [--timeout <ms>]
-ember-evaluator tracer stop [--url <url>] [--db <path>] [--port <n>]
-ember-evaluator tracer status [--url <url>] [--db <path>] [--port <n>]
-ember-evaluator tracer logs [--log <path>] [--lines <n>] [--follow]
-
-Run kernel measurement atoms (bridge to the kernel executor; precision and bench follow
-the original kernel verify-then-benchmark flow, profile and roofline are independent):
-ember-evaluator kernel bench --problem <path> --kernel <path> --out <json> [--device <n>] [--python <py>]
-ember-evaluator kernel precision --problem <path> --kernel <path> --out <json> [--seeds 0 1] [--device <n>] [--python <py>]
-ember-evaluator kernel profile --problem <path> --kernel <path> --out <json> [--round <n>] [--device <n>] [--python <py>]
-ember-evaluator kernel roofline --metrics <profile-json> --out <json> [--python <py>]
-
-Show help:
-ember-evaluator --help
-
-`;
-
-type Command =
+export type Command = (
+  | { kind: "benchmark-list"; json: boolean; patchPath?: string }
+  | { kind: "benchmark-info"; name: string; patchPath?: string }
   | { kind: "cleanup-images"; file?: string; all: boolean; execute: boolean; patchPath?: string }
   | { kind: "retry"; run: string; taskIds: string[]; requestId?: string; reason?: string }
-  | { kind: "help" }
-  | { kind: "benchmark-list"; patchPath?: string }
-  | { kind: "benchmark-info"; name: string; patchPath?: string }
+  | { kind: "help"; text: string; exitCode?: number }
   | { kind: "init"; name: string; output: string; patchPath?: string }
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
-  | { kind: "config-explain"; file: string; overrides: CliOverrides; patchPath?: string }
-  | { kind: "config-resolve"; file: string; overrides: CliOverrides; patchPath?: string }
+  | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
   | ({ kind: "tracer"; argv: string[] })
   | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; device: number; python?: string }
@@ -88,7 +46,8 @@ type Command =
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
-  | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string };
+  | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
+) & { networkConfigPath?: string };
 
 type TracerCliResult = { ok: true; status: number } | { ok: false; error: unknown; usage: boolean };
 type TracerCli = { runTracerCli(argv: string[], io: CliIO, signal: AbortSignal): Promise<TracerCliResult> };
@@ -102,204 +61,7 @@ async function loadTracerCli(): Promise<TracerCli> {
   }
 }
 
-export function parseArgs(argv: string[]): Command {
-  if (!argv.length || (argv.length === 1 && ["--help", "-h"].includes(argv[0]!))) return { kind: "help" };
-  if (argv[0] === "cleanup") {
-    if (argv[1] !== "images") throw new TypeError("Expected cleanup images [yaml] [--all] [--yes]");
-    let file: string | undefined, patchPath: string | undefined, all = false, execute = false;
-    for (let index = 2; index < argv.length; index++) {
-      const arg = argv[index]!;
-      if (arg === "--all" && !all) all = true;
-      else if (arg === "--yes" && !execute) execute = true;
-      else if (arg === "--patch" && patchPath === undefined && argv[index + 1] && !argv[index + 1]!.startsWith("-")) patchPath = resolve(argv[++index]!);
-      else if (!arg.startsWith("-") && file === undefined) file = arg;
-      else throw new TypeError("Unknown or repeated image cleanup option");
-    }
-    if (!file && !all) throw new TypeError("Image cleanup requires YAML or --all");
-    if (!file && patchPath) throw new TypeError("--patch requires YAML");
-    return { kind: "cleanup-images", all, execute, ...(file ? { file } : {}), ...(patchPath ? { patchPath } : {}) };
-  }
-  if (argv[0] === "warmup") {
-    const parsed = parseArgs(["run", ...argv.slice(1)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.overrides.tracer !== undefined) throw new TypeError("warmup does not accept --resume, --dry-run or --tracer");
-    const { resume: _resume, ...options } = parsed;
-    return { ...options, kind: "warmup" };
-  }
-  if (argv[0] === "retry") {
-    const values: Record<string, string> = {};
-    const taskIds: string[] = [];
-    for (let index = 1; index < argv.length; index += 2) {
-      const key = argv[index]!, value = argv[index + 1];
-      if (!["--run", "--task-id", "--request-id", "--reason"].includes(key) || !value || value.startsWith("--")) throw new TypeError("Invalid retry option");
-      if (key === "--task-id") taskIds.push(value);
-      else { if (values[key]) throw new TypeError("Repeated retry option"); values[key] = value; }
-    }
-    if (!values["--run"]) throw new TypeError("retry requires --run <run-id or directory>");
-    return { kind: "retry", run: values["--run"], taskIds, ...(values["--request-id"] ? { requestId: values["--request-id"] } : {}), ...(values["--reason"] ? { reason: values["--reason"] } : {}) };
-  }
-  if (argv[0] === "benchmark" || argv[0] === "init") {
-    const kind = argv[0] === "init" ? "init" : argv[1] === "list" ? "benchmark-list" : argv[1] === "info" ? "benchmark-info" : undefined;
-    if (!kind) throw new TypeError("Expected benchmark list or benchmark info <name>");
-    const options: Record<string, string> = {};
-    const start = kind === "init" ? 1 : kind === "benchmark-list" ? 2 : 3;
-    for (let i = start; i < argv.length; i += 2) {
-      const flag = argv[i], value = argv[i + 1];
-      if (!flag || !value || value.startsWith("-") || options[flag] !== undefined ||
-        !(kind === "init" ? ["--benchmark", "--output", "--patch"] : ["--patch"]).includes(flag))
-        throw new TypeError("Unknown, repeated or incomplete discovery/init option");
-      options[flag] = value;
-    }
-    const patch = options["--patch"] === undefined ? {} : { patchPath: resolve(options["--patch"]) };
-    if (kind === "benchmark-list") return { kind, ...patch };
-    const name = kind === "init" ? options["--benchmark"] : argv[2];
-    if (!name || name.startsWith("-")) throw new TypeError("A benchmark name is required");
-    if (kind === "benchmark-info") return { kind, name, ...patch };
-    if (!options["--output"]) throw new TypeError("init requires --output <yaml>");
-    return { kind, name, output: resolve(options["--output"]), ...patch };
-  }
-  if (argv[0] === "doctor") {
-    const parsed = parseArgs(["run", ...argv.slice(1)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined || parsed.overrides.tracer !== undefined)
-      throw new TypeError("doctor accepts only --patch and model overrides");
-    return { kind: "doctor", file: parsed.file, overrides: parsed.overrides,
-      ...(parsed.patchPath === undefined ? {} : { patchPath: parsed.patchPath }) };
-  }
-  if (argv[0] === "report" && argv.length === 2 && !argv[1]!.startsWith("-"))
-    return { kind: "report", directory: argv[1]! };
-  if (argv[0] === "kernel") {
-    const sub = argv[1];
-    if (sub !== "bench" && sub !== "precision" && sub !== "profile")
-      throw new TypeError("Expected kernel bench, precision or profile");
-    const allowed = sub === "profile" ? ["--problem", "--kernel", "--out", "--round", "--device", "--python"]
-      : sub === "precision" ? ["--problem", "--kernel", "--out", "--seeds", "--device", "--python"]
-      : ["--problem", "--kernel", "--out", "--device", "--python"];
-    const values: Record<string, string> = {};
-    for (let i = 2; i < argv.length; i += 1) {
-      const flag = argv[i]!;
-      if (!allowed.includes(flag)) throw new TypeError(`Unknown kernel ${sub} option: ${flag}`);
-      const value = argv[i + 1];
-      if (value === undefined || value.startsWith("--")) throw new TypeError(`Missing value for ${flag} option`);
-      if (values[flag] !== undefined) throw new TypeError(`Repeated ${flag} option`);
-      values[flag] = value;
-      i += 1;
-    }
-    const py = () => (values["--python"] === undefined ? {} : { python: values["--python"] });
-    const device = () => (values["--device"] === undefined ? { device: 0 } : { device: integer("--device") });
-    const integer = (flag: string, fallback?: number): number => {
-      const raw = values[flag];
-      if (raw === undefined) {
-        if (fallback === undefined) throw new TypeError(`${flag} is required`);
-        return fallback;
-      }
-      const value = Number(raw);
-      if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${flag} must be a non-negative integer`);
-      return value;
-    };
-    if (sub === "bench" || sub === "precision" || sub === "profile") {
-      const problem = values["--problem"], kernel = values["--kernel"], out = values["--out"];
-      if (problem === undefined || kernel === undefined || out === undefined)
-        throw new TypeError(`kernel ${sub} requires --problem, --kernel and --out`);
-      if (sub === "profile") {
-        const round = integer("--round", 0);
-        return { kind: "kernel-profile", problem: resolve(problem), kernel: resolve(kernel), out: resolve(out), round, ...device(), ...py() };
-      }
-      if (sub === "precision") {
-        const seeds = (values["--seeds"] ?? "0 1").split(/\s+/).map(Number)
-          .filter((seed) => Number.isSafeInteger(seed) && seed >= 0);
-        return { kind: "kernel-precision", problem: resolve(problem), kernel: resolve(kernel), out: resolve(out), seeds, ...device(), ...py() };
-      }
-      return { kind: "kernel-bench", problem: resolve(problem), kernel: resolve(kernel), out: resolve(out), ...device(), ...py() };
-    }
-    throw new TypeError(`Unknown kernel subcommand: ${sub}`);
-  }
-  if (argv[0] === "config" && (argv[1] === "explain" || argv[1] === "resolve")) {
-    const parsed = parseArgs(["run", ...argv.slice(2)]);
-    if (parsed.kind !== "run" || parsed.resume !== undefined || parsed.taskIdsFile !== undefined || parsed.overrides.tracer !== undefined)
-      throw new TypeError("config commands accept only --patch and model overrides");
-    return { kind: argv[1] === "explain" ? "config-explain" : "config-resolve", file: parsed.file,
-      overrides: parsed.overrides, ...(parsed.patchPath === undefined ? {} : { patchPath: parsed.patchPath }) };
-  }
-  if (argv[0] === "tracer") return { kind: "tracer", argv: argv.slice(1) };
-  if (argv[0] !== "run" || !argv[1] || argv[1].startsWith("-"))
-    throw new TypeError("Expected run <yaml> or report <run-dir>");
-  const flags: Record<string, keyof CliOverrides> = {
-    "--model": "model",
-    "--endpoint": "endpoint",
-    "--api-key": "apiKey",
-    "--api-key-env": "apiKeyEnv",
-  };
-  const overrides: CliOverrides = {};
-  let dryRun = false;
-  let resume: string | null | undefined;
-  let taskIdsFile: string | undefined;
-  let patchPath: string | undefined;
-  for (let index = 2; index < argv.length; ) {
-    if (argv[index] === "--dry-run") {
-      if (dryRun) throw new TypeError("Repeated --dry-run option");
-      dryRun = true;
-      index++;
-      continue;
-    }
-    if (argv[index] === "--task-ids-file") {
-      const value = argv[index + 1];
-      if (taskIdsFile !== undefined || value === undefined || value.startsWith("--")) {
-        throw new TypeError("Repeated or incomplete --task-ids-file option");
-      }
-      taskIdsFile = value;
-      index += 2;
-      continue;
-    }
-    if (argv[index] === "--patch") {
-      const value = argv[index + 1];
-      if (patchPath !== undefined || value === undefined || value.startsWith("--")) {
-        throw new TypeError("Repeated or incomplete --patch option");
-      }
-      patchPath = resolve(value);
-      index += 2;
-      continue;
-    }
-    if (argv[index] === "--resume") {
-      if (resume !== undefined) throw new TypeError("Repeated --resume option");
-      const value = argv[index + 1];
-      resume = value !== undefined && !value.startsWith("--") ? value : null;
-      index += resume === null ? 1 : 2;
-      continue;
-    }
-    if (argv[index] === "--tracer") {
-      if (overrides.tracer !== undefined) throw new TypeError("Repeated --tracer option");
-      const value = argv[index + 1];
-      const url = value !== undefined && !value.startsWith("--") ? value : undefined;
-      overrides.tracer = url === undefined ? {} : { url };
-      index += url === undefined ? 1 : 2;
-      continue;
-    }
-    const field = flags[argv[index]!];
-    const value = argv[index + 1];
-    if (!field || value === undefined || value.startsWith("--") || overrides[field] !== undefined)
-      throw new TypeError("Unknown, repeated or incomplete run option");
-    overrides[field] = value;
-    index += 2;
-  }
-  if (overrides.apiKey !== undefined && overrides.apiKeyEnv !== undefined)
-    throw new TypeError("Choose --api-key or --api-key-env");
-  if (dryRun && resume !== undefined) throw new TypeError("--dry-run cannot be combined with --resume");
-  return dryRun
-    ? {
-        kind: "dry-run",
-        file: argv[1],
-        overrides,
-        ...(taskIdsFile === undefined ? {} : { taskIdsFile }),
-        ...(patchPath === undefined ? {} : { patchPath }),
-      }
-    : {
-        kind: "run",
-        file: argv[1],
-        overrides,
-        ...(resume === undefined ? {} : { resume }),
-        ...(taskIdsFile === undefined ? {} : { taskIdsFile }),
-        ...(patchPath === undefined ? {} : { patchPath }),
-      };
-}
+export { parseCommand as parseArgs } from "./cli-commands.js";
 
 async function readTaskIds(path: string | undefined): Promise<string[] | undefined> {
   if (path === undefined) return undefined;
@@ -404,7 +166,7 @@ async function runCliCommand(
       /fetch failed|\b(?:ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|UND_ERR_\w+)\b/i.test(text)
     ) {
       networkHintShown = true;
-      writeHint("Check connectivity to the URL/host above (DNS, proxy, TLS). For Hugging Face, the default origin is the https://hf-mirror.com mirror; override with HF_ENDPOINT (e.g. https://huggingface.co). For GitHub and other proxied hosts, set HTTP_PROXY/HTTPS_PROXY. Model API variables do not configure dataset access.");
+      writeHint("Check connectivity to the URL/host above (DNS, proxy, TLS). Use --network network.yaml to select download sources and per-location proxies; the default Hugging Face origin is https://huggingface.co. Model API variables do not configure dataset access.");
     }
   };
   const progress = (event: ProgressEvent) => {
@@ -453,13 +215,15 @@ async function runCliCommand(
   try {
     command = parseArgs(argv);
   } catch (error) {
+    if (error instanceof CommandUsageError) { failure(error); io.error(error.helpText); return 2; }
     failure(error);
-    io.error(help);
+    io.error("Use ember-evaluator <command> --help for usage and parameter details.");
     return 2;
   }
+  const networkOptions = command.networkConfigPath === undefined ? {} : { networkConfigPath: command.networkConfigPath };
   if (command.kind === "help") {
-    io.out(help);
-    return 0;
+    io.out(command.text);
+    return command.exitCode ?? 0;
   }
   if (command.kind === "tracer") {
     // Collector operations are infrastructure failures, so they must not use the task-oriented error taxonomy
@@ -481,7 +245,7 @@ async function runCliCommand(
       phase = "arguments";
       detail = "Parsing tracer arguments";
       failure(result.error);
-      io.error(help);
+      io.error("Use ember-evaluator tracer <command> --help for usage and parameter details.");
       return 2;
     }
     report("managing the tracer Collector", result.error);
@@ -494,7 +258,7 @@ async function runCliCommand(
       secrets.push(...Object.entries(process.env).filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
       const { cleanupImages } = await import("./cleanup.js");
       const result = await cleanupImages({ ...command, signal, ...(execution ? { execution } : {}),
-        onLoaded: config => secrets.push(...Object.values(config.auths).map(auth => auth.value).filter(Boolean)) });
+        onLoaded: config => secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value).filter(Boolean)) });
       io.out(JSON.stringify(result, null, 2));
       if (signal.aborted) return 130;
       return result.nodes.some(node => node.error || node.items.some(item => item.status === "failed")) ? 1 : 0;
@@ -506,13 +270,15 @@ async function runCliCommand(
       return await retryRun(command, signal, io.out, progress);
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
   }
-  if (command.kind === "benchmark-list" || command.kind === "benchmark-info" || command.kind === "init") {
+  if (command.kind === "init" || command.kind === "benchmark-list" || command.kind === "benchmark-info") {
     let registry: PluginRegistry | undefined;
     try {
       registry = await openPluginRegistry(command.patchPath);
-      const { benchmarkNames, benchmarkInfo, initializeExperiment } = await import("./commands/benchmark.js");
-      if (command.kind === "benchmark-list") io.out(benchmarkNames(registry).join("\n"));
-      else if (command.kind === "benchmark-info") io.out(JSON.stringify(benchmarkInfo(registry, command.name), null, 2));
+      const { benchmarkList, benchmarkInfo, formatBenchmarkTable, initializeExperiment } = await import("./commands/benchmark.js");
+      if (command.kind === "benchmark-list") {
+        const rows = benchmarkList(registry);
+        io.out(command.json ? JSON.stringify(rows, null, 2) : formatBenchmarkTable(rows));
+      } else if (command.kind === "benchmark-info") io.out(JSON.stringify(benchmarkInfo(registry, command.name), null, 2));
       else { await initializeExperiment(registry, command.name, command.output); io.out(command.output); }
       return 0;
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
@@ -522,16 +288,20 @@ async function runCliCommand(
     let registry: PluginRegistry | undefined;
     secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
     try {
+      const { diagnoseDownloads } = await import("./commands/network-diagnosis.js");
       registry = await openPluginRegistry(command.patchPath);
       const { loadConfig } = await import("./config/load.js");
       const { bootstrapBenchmark } = await import("./bootstrap.js");
       const { diagnose } = await import("./commands/doctor.js");
-      const config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry });
-      secrets.push(...Object.values(config.auths).map(auth => auth.value));
+      const config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, ...networkOptions });
+      secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
       await bootstrapBenchmark(config, dirname(resolve(command.file)), command.patchPath, registry);
       const checks = await diagnose(config, command.file, signal);
-      io.out(JSON.stringify({ checks }, null, 2));
-      return signal.aborted ? 130 : checks.some(check => check.status === "failed") ? 1 : 0;
+      const network = await diagnoseDownloads({ config, configPath: command.file,
+        ...(command.patchPath ? { patchPath: command.patchPath } : {}) }, signal, io.error);
+      io.out(JSON.stringify({ checks, network }, null, 2));
+      const networkPassed = network.status === "passed";
+      return signal.aborted ? 130 : checks.some(check => check.status === "failed") || !networkPassed ? 1 : 0;
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
     finally { await registry?.dispose(); }
   }
@@ -567,18 +337,17 @@ async function runCliCommand(
       return signal.aborted ? 130 : 2;
     }
   }
-  if (command.kind === "config-explain" || command.kind === "config-resolve") {
+  if (command.kind === "inspect") {
     const { loadConfig } = await import("./config/load.js");
-    const { stringify } = await import("yaml");
-    const { explainConfig } = await import("./config/explain.js");
     const { exportConfig } = await import("./config/export.js");
     secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
     try {
       const config = await loadConfig(resolve(command.file), command.overrides, process.env, {
-        allowMissingAuth: true, validatePlugins: true,
+        allowMissingAuth: true, validatePlugins: true, ...networkOptions,
         ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
       });
-      io.out(command.kind === "config-explain" ? explainConfig(config) : stringify(exportConfig(config)).trimEnd());
+      io.out(JSON.stringify({ experiment: exportConfig(config),
+        network: { configPath: config.network!.origin, digest: config.network!.digest, settings: redactNetwork(config.network!.settings) } }, null, 2));
       if (JSON.stringify(config.persisted).includes("[runtime-provided]"))
         io.error("Runtime credentials were replaced with an EVALUATOR_API_KEY environment reference. Provide credentials through that variable or the CLI when running the exported configuration.");
       return 0;
@@ -604,9 +373,9 @@ async function runCliCommand(
       progress({ phase: "config", message: `Loading and validating ${resolve(command.file)}` });
       registry = await openPluginRegistry(command.patchPath,
         command.overrides.tracer === undefined ? {} : { tracer: true });
-      config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
+      config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...networkOptions, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
       applyTaskIds(config, taskIds);
-      secrets.push(...Object.values(config.auths).map(auth => auth.value));
+      secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
       progress({ phase: "bootstrap", message: `Initializing benchmark plugin: ${config.experiment.benchmark.name}` });
       benchmarkComponents = await bootstrapBenchmark(config, dirname(resolve(command.file)), command.patchPath, registry);
     } catch (error) {
@@ -653,12 +422,15 @@ async function runCliCommand(
       .filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
     try {
       const taskIds = await readTaskIds(command.taskIdsFile);
-      const result = await executeWarmup({ configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
+      const result = await executeWarmup({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
         ...(execution ? { execution } : {}),
         ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
         onWarning: warning,
-        onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); } });
-      io.out(JSON.stringify(result));
+        onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); } });
+      io.out(`Image warmup: ${result.readyTaskIds.length}/${result.taskIds.length} tasks ready; ${result.failures.length} failed`);
+      for (const { taskId, failure } of result.failures) {
+        io.out(`${taskId}: [${failure.code}] ${failure.message}`);
+      }
       return result.status === "ready" ? 0 : 1;
     } catch (error) { failure(error); return signal.aborted ? 130 : ["arguments", "config", "bootstrap"].includes(phase) ? 2 : 1; }
   }
@@ -669,14 +441,14 @@ async function runCliCommand(
   let taskIds: string[] | undefined;
   try { taskIds = await readTaskIds(command.taskIdsFile); }
   catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  const outcome = await executeExperiment({ configPath: command.file, overrides: command.overrides, signal,
+  const outcome = await executeExperiment({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal,
     ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
     ...(command.resume === undefined ? {} : { resume: command.resume === null ? true : command.resume }),
     ...(taskIds === undefined ? {} : { taskIds }),
     ...(execution === undefined ? {} : { execution }),
     onProgress: progress,
     onWarning: warning,
-    onLoaded: config => { secrets.push(...Object.values(config.auths).map(auth => auth.value)); },
+    onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); },
     onDiagnostic: diagnostic => { phase = diagnostic.phase; failure(diagnostic.error); },
     onDeploymentLog: io.out,
   });

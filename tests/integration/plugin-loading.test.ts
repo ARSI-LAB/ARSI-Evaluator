@@ -219,10 +219,6 @@ describe("bootstrap", () => {
     const components = await bootstrapWithPatch(loaded, fixture("valid"));
     try { expect(components.environment).toBeInstanceOf(DockerEnvironment); }
     finally { await components.dispose(); }
-    loaded.experiment.environment.config = { dockerExecutable: "not-installed-fixture-docker", pullProxy: "http://user:secret@127.0.0.1:1" };
-    const proxy = await bootstrapWithPatch(loaded, fixture("valid"));
-    try { expect(proxy.environment).toBeInstanceOf(DockerEnvironment); }
-    finally { await proxy.dispose(); }
     loaded.experiment.environment.config = { pullProxy: "socks5://localhost:7890" };
     await expect(bootstrapWithPatch(loaded, fixture("valid"))).rejects.toThrow(/pullProxy/);
     loaded.experiment.environment.config = { privileged: true };

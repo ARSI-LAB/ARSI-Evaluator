@@ -1,3 +1,4 @@
+export type * from "./core/contracts/hardware.js";
 export type * from "./core/contracts/task.js";
 export type * from "./core/contracts/result.js";
 export type * from "./core/contracts/errors.js";
@@ -96,6 +97,7 @@ export { HarborPythonVerifier, parsePythonVerifierConfig } from "./plugins/verif
 export { loadGenericHarborTask } from "./plugins/benchmarks/protocols/harbor/task.js";
 
 export { identifyNetworkFailure, type NetworkStage, type NetworkEvidence } from "./core/errors/network-failure.js";
+export type { NetworkAccess, NetworkDocument, NetworkSettings, NetworkProxy, NetworkLocation, NetworkSnapshot, ImageAcquisition, ImageRequestContext } from "./core/contracts/network.js";
 export { resolveRunStatus } from "./core/task-result-resolver.js";
 export type { ReportingFactoryContext, FactoryContext, ServiceBinding } from "./core/registry.js";
 export type { Deployment } from "./config/deployment.js";

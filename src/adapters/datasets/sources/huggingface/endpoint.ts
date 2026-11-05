@@ -1,9 +1,6 @@
 export type HuggingFaceTransport = { apiBase: string; fileBase: string };
 
-// Direct egress to huggingface.co is unreliable on CN networks, so the mirror
-// ships as the default (matching the pinned mirrors of the Ray smoke cluster).
-// Set HF_ENDPOINT=https://huggingface.co to restore the official origin.
-const DEFAULT_ENDPOINT = "https://hf-mirror.com";
+const DEFAULT_ENDPOINT = "https://huggingface.co";
 
 /** Hub origin. `HF_ENDPOINT=https://hf-mirror.com` replaces huggingface.co for API and file URLs. */
 export function huggingfaceEndpoint(env: NodeJS.ProcessEnv = process.env): string {
@@ -22,7 +19,7 @@ export function huggingfaceEndpoint(env: NodeJS.ProcessEnv = process.env): strin
   return url.origin;
 }
 
-export function huggingfaceTransport(env: NodeJS.ProcessEnv = process.env): HuggingFaceTransport {
-  const endpoint = huggingfaceEndpoint(env);
+export function huggingfaceTransport(env: NodeJS.ProcessEnv = process.env, network?: import("../../../../core/contracts/network.js").NetworkAccess): HuggingFaceTransport {
+  const endpoint = network?.settings.sources.huggingface ?? huggingfaceEndpoint(env);
   return { apiBase: endpoint, fileBase: endpoint };
 }

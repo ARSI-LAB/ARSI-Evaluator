@@ -1,3 +1,4 @@
+import { restoreNetworkTemplate, validateNetworkSnapshot } from "../../config/network.js";
 import { parseRuntimeServices } from "./runtime-services.js";
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -110,7 +111,9 @@ async function executeRegisteredNode(input: unknown, node: NodeConfig, token: st
     const environment = localizePortableSelection(remote.safeConfig.environment, "environment", node, lookup);
     const service = remote.safeConfig.solver.service;
     const config: LoadedConfig = {
+      ...(remote.safeConfig.network ? { network: restoreNetworkTemplate(remote.safeConfig.network.template, process.env), benchmarkName: remote.safeConfig.network.benchmarkName } : {}),
       experiment: {
+        hardware: remote.safeConfig.hardware ?? "npu",
         services: Object.fromEntries(Object.entries(bindings).map(([name, binding]) => [name, binding.model])),
         benchmark,
         environment,
@@ -292,6 +295,31 @@ async function main(): Promise<void> {
   if (!filename) throw new Error("EVALUATOR_NODE_CONFIG is required");
   const node = parseNodeConfig(JSON.parse(await readFile(filename, "utf8")), dirname(resolve(filename)));
   process.env.EVALUATOR_CACHE_DIR ??= join(node.outputRoot, "cache");
+  if (process.argv[2] === "--network-doctor") {
+    const { NetworkRuntime } = await import("../network/runtime.js");
+    const { diagnoseNetwork } = await import("../network/doctor.js");
+    const { loadPackageDigest } = await import("../../core/package-provenance.js");
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of process.stdin) {
+      size += chunk.length;
+      if (size > 2 * 1024 * 1024) throw new Error("Network diagnosis input too large");
+      chunks.push(Buffer.from(chunk));
+    }
+    const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    validateNetworkSnapshot(input.network);
+    if (input.packageDigest !== await loadPackageDigest() || typeof input.location !== "string") throw new Error("Network diagnosis node package mismatch");
+    const network = new NetworkRuntime(restoreNetworkTemplate(input.network.template, process.env));
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    process.once("SIGTERM", cancel); process.once("SIGINT", cancel);
+    try {
+      const results = await diagnoseNetwork(network, controller.signal, { benchmark: input.network.benchmarkName,
+        location: input.location, ...(node.dockerExecutable ? { docker: node.dockerExecutable } : {}) });
+      process.stdout.write(JSON.stringify(results) + "\n");
+    } finally { process.removeListener("SIGTERM", cancel); process.removeListener("SIGINT", cancel); await network.dispose(); }
+    return;
+  }
   if (process.argv[2] === "--image-lease") {
     const { createInterface } = await import("node:readline");
     const { guardNodeImages } = await import("./image-cleanup-worker.js");

@@ -1,7 +1,8 @@
 # 网络操作重试与手动补测
 
 > [English](./network-retry.md) | 中文
-`ember retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
+
+`ember-evaluator retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
 
 ## 自动网络重试
 
@@ -16,42 +17,40 @@
 | Docker 拉取 | 在拉取操作内有限重试，复用 Docker 已下载的内容 |
 | 产物传输 | 按原上传标识重试对应请求，不重新解题、验证或收集 |
 
-未另有设置的框架网络操作缺省最多尝试 3 次（含首次）；模型调用使用 `services.<名称>.retry.maxAttempts` 或所属 SDK 的既有设置。已有重试的 SDK/下载器外不再套一层重试。退避遵守取消信号和当前阶段时限。
+框架网络操作默认最多尝试 3 次（含首次），模型调用次数由 `services.<名称>.retry.maxAttempts` 或模型 SDK 设置决定。取消操作或到达当前阶段的时限后，不再继续重试。
 
-重试耗尽后上报 `NETWORK_FAILURE`，表示当前操作失败，`retryable: false`、`action: finalize`，不再自动生成新 Attempt。镜像构建仍保留 `ENV_IMAGE_BUILD_FAILED`；不会重放整个 `docker build`、任务安装/编译脚本或 Verifier 脚本。框架不能替第三方插件和任意任务脚本安全地重放其内部网络访问。
+重试次数耗尽后，本次操作失败，不会自动重新执行整道题。镜像构建失败使用 `ENV_IMAGE_BUILD_FAILED`；不会自动重跑整个 `docker build`、安装/编译脚本或评分脚本。第三方插件和任务脚本自己的重试由它们各自控制。
 
-`run.taskRetry` 已删除。旧 YAML 需要移除此字段；它不再作为来源初始化或任务补测预算。历史结果可离线读取，旧运行的恢复仍须满足配置与执行版本校验。
+旧 YAML 中的 `run.taskRetry` 需要删除。模型请求次数改用上述配置，失败任务按下方命令手动补测。恢复条件见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## 命令
 
 ```bash
-ember retry --run <run-id>
-ember retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
+ember-evaluator retry --run <run-id>
+ember-evaluator retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
 ```
 
-`ember-evaluator` 仍可使用；两个名称指向同一个 CLI。重复传入 `--task-id` 可限制多道题。省略选题时筛选全部当前网络失败；没有符合条件的题目正常返回，不创建 Attempt。
+重复传入 `--task-id` 可选择多道题；省略时筛选全部符合条件的网络失败任务。没有符合条件的题目时，命令正常返回，不创建新的执行记录。补测已结束的评测时，可传入 `--network network.yaml` 更换下载源或代理。仍在运行的评测继续使用启动时的网络配置。
 
-首次创建 Run 时在 `~/.ember/runs/` 保存 Run ID 与位置，`EVALUATOR_RUN_INDEX_DIR` 可修改索引目录。索引不保存认证。跨主机复制结果后，直接传结果目录；Ray Jobs 的本机索引记录原认证网关、配置引用及 job ID，命令通过原网关操作远端协调端，不能对下载副本独立重新求解。
+可用 Run ID 或结果目录指定原评测。ID 索引默认保存在 `~/.ember/runs/`，可用 `EVALUATOR_RUN_INDEX_DIR` 修改。跨主机复制结果后，请直接传结果目录。Ray Jobs 需要通过原网关操作远端 run，并保留原网关认证；下载到本机的结果副本不能直接代替远端 run。
 
-运行中命令只提交控制请求，由原 Coordinator 安排补测，其他题目继续。已经结束的 Run 取得原写锁后开启恢复轮次，沿用相同 Run ID，只选当前网络失败题。它不调用普通 `--resume` 的“全部未完成题”筛选。`--request-id` 重放同一个请求时不会重复创建 Attempt；同一题已有准备或执行工作时也不重复加入队列。
+原评测仍在运行时，命令向原进程提交补测请求，其他题目继续执行；原评测已结束时，会在同一个 run 中恢复。`retry` 只选择符合条件的网络失败任务，`--resume` 则按续跑规则处理未完成任务。
 
-活动请求通过 IPC 直接通知原进程：Windows 使用命名管道，Unix 使用 Socket；Ray Jobs 网关通过已有共享 Job 目录连接 Socket。空闲时不轮询或重写 `retry-control.json`。来源和环境准备期间收到的请求先返回 `pending`，调度就绪后处理；任务调度期间返回 `accepted` 或 `rejected`。
+准备数据或环境期间，请求可能显示 `pending`，调度就绪后处理；`accepted` 表示已受理，`rejected` 表示未受理，应按返回原因处理。
 
-控制文件先保存受理记录，再将任务加入队列；保存失败不入队，也不取消其他正在运行的题目。遇到 `EPERM`、`EACCES`、`EBUSY` 时，文件操作最多尝试 7 次，累计退避约 1.12 秒；持续失败返回错误并保留原文件。IPC 启动或结束记录保存失败会输出警告，正常任务调度继续。
+如果提示请求未确认，使用错误信息中的原 `requestId`，通过 `--request-id` 重发，避免重复提交。原进程正在结束时，等它退出后再使用同一个 ID 重发。
 
-如果提示请求未确认，使用错误信息中的原 `requestId` 通过 `--request-id` 重发；连接中断可能发生在受理之后，新建 ID 会失去请求去重保护。协调进程正在结束时，等待其结束后复用原 ID 重发。旧控制文件仍可读取，但补测和恢复继续执行原有的配置、插件及运行包摘要校验，不能仅通过升级程序绕过版本限制。正在运行的旧进程不会自动获得 IPC 接口。
-
-认证从原服务的环境变量引用重新绑定。调用前恢复这些环境变量；配置、模型、插件版本或运行包内容发生变化时会拒绝恢复。原来直接通过命令行或字面值传入、没有环境引用的密钥不能从结果文件恢复，命令会明确报错。认证不进入补测控制邮箱或报告。
+补测前，在启动命令的环境中恢复原配置引用的模型和服务认证变量。结果文件不保存可直接恢复的密钥；原认证只使用字面值、没有环境变量引用时，需要按报错补齐配置。配置、来源和插件等恢复要求见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## 手动补测与执行位置
 
-只有显式 `retry` 请求或 `--resume` 才会重新执行任务。每次已受理的手动请求最多为每个符合条件的空闲任务创建一个新 Attempt，使用新目录和准备记录；失败后不再自动追加下一次。相同 `requestId` 重发不会重复创建 Attempt。
+每次手动请求只为符合条件的任务增加一次执行，失败后不会自动继续补测。同一个 `requestId` 重发不会重复创建执行；已经准备或运行中的题目也不会重复排队。
 
-原进程退出和资源回收未确认时禁止补测，防止重叠执行。Local 与 Ray 都由 Engine 处理显式请求；Ray 负责执行位置、节点容量、退休确认与上传回执。Ray Jobs 通过原认证网关连接原队列，或启动访问原 Run 目录的恢复协调任务；恢复仍写原 Run。
+原任务仍在运行或资源释放未确认时不能补测，以免同一道题同时执行。Local 和 Ray 均支持补测；Ray Jobs 仍通过原网关操作，并将新结果写回原 run。
 
 ## 哪些失败可以补测
 
-手动补测要求错误码为 `NETWORK_FAILURE`，并带有阶段、原因及脱敏证据。实际资格重新检查证据、评分和清理状态；不相信远端的 `retryable` 字段，也不会自动受理请求。
+错误码需为 `NETWORK_FAILURE`，且记录中明确说明网络故障原因。程序还会检查该题是否已有有效评分、资源是否已释放；不是所有超时或失败都能补测。
 
 | 操作 | 可以补测的证据 | 不能据此补测 |
 | --- | --- | --- |
@@ -72,12 +71,12 @@ ember retry --run <run-directory> --task-id terminal-bench/example --request-id 
 - `tasks/.../attempts/` 保留原始失败、轨迹、日志和新 Attempt。
 - `manifest.json` 保留初始化失败与准备轮次历史。
 - `retry` 更新根目录报告；若之前执行过 `--resume`，同时更新 `reports/current.json` 指向的续跑报告，不新增目录。
-- 显式 `--resume` 另建 `reports/resume-N/`；首次续跑前的报告保存在 `reports/initial/`，此前的续跑报告保留。中断发布造成的报告与指标摘要不一致，可由离线报告检测并重建。
+- 显式 `--resume` 另建 `reports/resume-N/`；首次续跑前的报告保存在 `reports/initial/`，此前的续跑报告保留。报告生成中断时，可用下方命令重新生成。
 
 ```bash
 ember-evaluator report <run-directory>
 ```
 
-最新错误来自各题当前结果及仍未解决的运行级故障。历史错误不会被合并回最新统计。`attempt-accounting` 另行累计全部 Attempt 的已知 Token、执行耗时和费用；失败 Attempt 保留已收到的部分 usage。`partialAttempts` 与未知费用计数说明观测不完整，已知金额不能解释为服务端完整成本，未知值不会伪造为 0。
+最新报告只统计当前结果和仍未解决的运行故障，历史失败仍可在各次执行目录查看。`attempt-accounting` 累计所有执行中已知的 Token、耗时和费用；缺失用量会单独标记，不能把已知费用当作完整账单。
 
-首次数据下载前就保存 Run ID。下载失败时任务集合显示“未确定”，指标中的 selected、valid、coverage 为 null；恢复成功后才锁定实际来源和任务集合。
+数据首次下载失败时，仍会保留 Run ID，但题目数暂时显示为未确定；恢复成功后才会显示实际题目范围。

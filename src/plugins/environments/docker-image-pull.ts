@@ -5,15 +5,17 @@ import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContainerPlatform } from "../../core/contracts/environment.js";
-import { downloadRegistryImage, parseDockerPullProxy } from "../../adapters/containers/registry-image.js";
+import { downloadRegistryImage, mirrorImageReference } from "../../adapters/containers/registry-image.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { DockerBuildCache } from "./docker-build-cache.js";
 import { dockerActivity } from "./docker-progress.js";
 import { applicationCacheRoot } from "./runtime-installation.js";
 import { acquireRuntimeLock } from "./runtime-lock.js";
 
-export { parseDockerPullProxy } from "../../adapters/containers/registry-image.js";
-export type DockerImagePull = (reference: string, platform: ContainerPlatform, signal: AbortSignal) => Promise<{
+import { NetworkRuntime } from "../../adapters/network/runtime.js";
+import { downloadSkopeoImage } from "../../adapters/containers/skopeo-image.js";
+import type { RegistryImageAcquisition, ImageRequestContext, NetworkAccess } from "../../core/contracts/network.js";
+export type DockerImagePull = (reference: string, platform: ContainerPlatform, signal: AbortSignal, context?: ImageRequestContext) => Promise<{
   reference: string;
   /** Present only after registry content and imported image identity have both been verified. */
   verifiedDigest?: string;
@@ -78,15 +80,21 @@ async function importedImage(command: DockerCommand, tag: string, platform: Cont
   return value[0];
 }
 
-/** Select the transport per environment; only this client's registry requests use pullProxy. */
-export function createDockerImagePuller(command: DockerCommand, proxy?: string): DockerImagePull {
-  if (proxy === undefined) return async (reference, platform, signal) => {
-    await pullDockerImage(command, reference, platform, signal);
-    return { reference };
+/** The method is explicit and independent of whether a proxy is configured. */
+export function createDockerImagePuller(command: DockerCommand, options: {
+  network?: NetworkAccess | undefined;
+  acquisition?: RegistryImageAcquisition | undefined;
+} = {}): DockerImagePull {
+  const network = options.network ?? new NetworkRuntime();
+  const acquisition = options.acquisition ?? network.settings.docker.pull;
+  if (acquisition.method === "docker") return async (reference, platform, signal) => {
+    const source = mirrorImageReference(reference, network.settings.docker.mirrors);
+    if (source === reference || !await importedImage(command, source, platform, signal))
+      await pullDockerImage(command, source, platform, signal);
+    return { reference: source };
   };
-  const pullProxy = parseDockerPullProxy(proxy);
   const downloads = new DockerBuildCache<Awaited<ReturnType<DockerImagePull>>>(false);
-  return (reference, platform, signal) => downloads.get(JSON.stringify([reference, platform]), signal, async active => {
+  return (reference, platform, signal, context) => downloads.get(JSON.stringify([reference, platform, context]), signal, async active => {
     const key = createHash("sha256").update(JSON.stringify([reference, platform])).digest("hex");
     const tag = `ember-evaluator/pull:${key}`;
     const cache = join(process.env.EVALUATOR_CACHE_DIR ?? applicationCacheRoot(), "docker-pulls");
@@ -97,7 +105,7 @@ export function createDockerImagePuller(command: DockerCommand, proxy?: string):
       const receipt = await readReceipt(path, reference, platform, tag);
       if (receipt) {
         const id = await importedImage(command, tag, platform, active);
-        if (id && ![receipt.configDigest, receipt.manifestDigest].includes(id)) throw new Error("Cached proxy-pulled image tag was replaced");
+        if (id && ![receipt.configDigest, receipt.manifestDigest].includes(id)) throw new Error("Cached acquired image tag was replaced");
         if (id) return { reference: tag, verifiedDigest: receipt.sourceDigest };
       }
       const directory = await mkdtemp(join(tmpdir(), "evaluator-image-pull-"));
@@ -106,7 +114,10 @@ export function createDockerImagePuller(command: DockerCommand, proxy?: string):
       const report = activity ? (event: Parameters<NonNullable<typeof activity>>[0]) => activity({ ...event, operationId }) : undefined;
       report?.({ message: `Pulling image ${reference}`, status: "started", activity: true });
       try {
-        const image = await downloadRegistryImage(reference, platform, pullProxy, directory, tag, active, report);
+        const source = mirrorImageReference(reference, network.settings.docker.mirrors);
+        const image = acquisition.backend === "skopeo"
+            ? await downloadSkopeoImage(source, platform, network, acquisition.skopeoExecutable, directory, tag, active, report)
+            : await downloadRegistryImage(source, platform, network.settings.proxy.host, directory, tag, active, report);
         report?.({ message: "Importing verified image into Docker", activity: true });
         await command(["load", "--input", image.archive], { signal: active, maxBuffer: 8 * 1024 * 1024 });
         const id = await importedImage(command, tag, platform, active);
@@ -127,7 +138,7 @@ export function createDockerImagePuller(command: DockerCommand, proxy?: string):
     } catch (error) {
       active.throwIfAborted();
       // Import/cache errors are generated locally; proxy and registry credentials never enter this message.
-      throw new EvaluatorError("ENV_IMAGE_PULL_FAILED", `Cannot acquire Docker image ${reference} through pullProxy`,
+      throw new EvaluatorError("ENV_IMAGE_PULL_FAILED", `Cannot acquire Docker image ${reference} using ${acquisition.method}`,
         { component: "docker", operation: "pull" }, { cause: error });
     } finally { await release(); }
   });

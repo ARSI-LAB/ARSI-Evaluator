@@ -15,6 +15,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Docker terminal tasks | [Terminal-Bench 4.0](quick-start/terminalbench.md) |
 | Model service performance | [AgentX performance](quick-start/agentx.md) |
 | Load-test existing model services over SSH | [Standalone AISBench plugin](../../plugins/aisbench/README.md) |
+| Read downloaded dataset files | [Local datasets](local-datasets.md) |
 | Call evaluations from a Node.js project | [Node.js SDK](sdk.md) |
 
 ## Common Operations
@@ -63,11 +64,13 @@ These names are used by `benchmark info`, `init --benchmark`, and YAML. External
 | Operators | `kernel` | [Correctness and NPU performance of existing kernels](benchmarks/kernel-npu.md); local serial execution without model calls |
 
 ```bash
-node dist/cli.js benchmark list
-node dist/cli.js benchmark info workbuddy
-node dist/cli.js init --benchmark workbuddy --output workbuddy.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info workbuddy
+ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 ```
 
 WorkBuddy Web requires a judge; Office model scoring is optional. Store Security data and results on a native Linux filesystem. Do not extract under Windows or WSL `/mnt/c` or `/mnt/d`. See [WorkBuddy](benchmarks/workbuddy.md).
 
 Run a small sample before increasing tasks, concurrency, or nodes. See the [FAQ](faq/README.md) for installation, scoring, resume, and resource issues.
+
+- [Network downloads, proxies and image acquisition](network.md)

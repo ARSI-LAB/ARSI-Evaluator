@@ -9,6 +9,7 @@ import { gatewayRun, locateRun, submitRetry, controlTransaction } from "./core/r
 import { isManualRetryEligible } from "./core/manual-retry.js";
 import { identifyNetworkFailure } from "./core/errors/network-failure.js";
 import { loadSavedConfig } from "./config/load.js";
+import { loadNetworkConfig } from "./config/network.js";
 import { bootstrap, createPluginRuntime } from "./bootstrap.js";
 import { runEngine } from "./core/engine.js";
 import { saveReport } from "./report.js";
@@ -29,12 +30,12 @@ function savedUsesTracer(manifest: RunManifest): boolean {
   return Object.hasOwn(manifest.pluginVersions ?? {}, "tracer-plugin");
 }
 
-export async function retryRun(options: { run: string; taskIds: string[]; requestId?: string; reason?: string },
+export async function retryRun(options: { networkConfigPath?: string; run: string; taskIds: string[]; requestId?: string; reason?: string },
   signal: AbortSignal, log: (text: string) => void, onProgress?: ProgressListener): Promise<number> {
   const gateway = await gatewayRun(options.run);
   if (gateway) {
     await requireCredentialReferences(gateway.gatewayConfig);
-    const config = await loadSavedConfig(gateway.gatewayConfig, process.env, { configDirectory: gateway.configDirectory, ...(gateway.patchPath ? { patchPath: gateway.patchPath } : {}) });
+    const config = await loadSavedConfig(gateway.gatewayConfig, process.env, { network: await loadNetworkConfig(options.networkConfigPath), configDirectory: gateway.configDirectory, ...(gateway.patchPath ? { patchPath: gateway.patchPath } : {}) });
     const registry = await openPluginRegistry(gateway.patchPath);
     try {
       if (!config.deployment) throw new Error("Saved run has no Ray Jobs deployment");
@@ -59,7 +60,7 @@ export async function retryRun(options: { run: string; taskIds: string[]; reques
   try {
     // Rebind original service references before admitting work; no model overrides are accepted.
     const config = await loadSavedConfig(join(directory, "config.yaml"), process.env, {
-      validatePlugins: true, registry, ...(patchPath ? { patchPath } : {}), configDirectory,
+      network: await loadNetworkConfig(options.networkConfigPath), validatePlugins: true, registry, ...(patchPath ? { patchPath } : {}), configDirectory,
     });
     if (fingerprintResumeConfig(config.persisted) !== manifest.configFingerprint) throw new Error("Retry configuration differs from locked run");
     if (fingerprintConfig(registry.pluginVersions) !== fingerprintConfig(manifest.pluginVersions)) throw new Error("Retry plugin/execution versions differ from locked run");

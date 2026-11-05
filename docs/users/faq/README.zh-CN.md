@@ -4,7 +4,7 @@
 
 按实际遇到的问题选择入口。完整配置、执行政策和评分定义分别在对应指南中维护。
 
-[用户文档](../README.zh-CN.md) · [下载与镜像 FAQ](downloads.zh-CN.md) · [Docker FAQ](docker.zh-CN.md)
+[用户文档](../README.zh-CN.md) · [下载与镜像 FAQ](downloads.zh-CN.md) · [Docker FAQ](docker.zh-CN.md) · [网络诊断](network.zh-CN.md)
 
 ## 安装与配置
 
@@ -18,7 +18,7 @@ Evaluator 导入内置插件时需要 AgentBundle SDK，因此 pnpm 会自动下
 
 ### doctor 通过后，为什么正式运行仍可能失败？
 
-`doctor` 不发送模型请求、不下载数据、不构建镜像，`not-checked` 也不是通过。`run --dry-run` 可以锁定来源并枚举任务，但仍不证明模型调用和任务执行成功；先限制样本实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
+`doctor` 检查部分下载和 Docker 构建操作，不发送模型请求。`not-checked` 表示该项未完成检查。即使检查通过，仍需先预热、再选少量题目实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
 
 ## 下载、容器与资源
 
@@ -78,14 +78,14 @@ replay 完整执行有限 Trace，包含冷启动、等待和排空，与正式 
 
 ### 为什么修改配置后不能续跑原 run？
 
-续跑要求来源、选题、模型配置、代码和插件版本匹配，以免把不同实验条件的结果混在一起。更换题数、并发、准备方式或模型后应新建 run；原结果保留后仍可离线报告，见[续跑说明](../usage.zh-CN.md#续跑与重建报告)。
+续跑要求来源、选题、模型配置、外部插件及待评测 Bundle、Harness 版本匹配。Evaluator 代码允许更新并重新构建后续跑，已有有效结果会保留，其他任务使用新代码执行。更换题数、并发、准备方式或模型后应新建 run；原结果保留后仍可离线报告，见[续跑说明](../usage.zh-CN.md#续跑与重建报告)。
 
 ## 调试日志
 
 错误会直接显示阶段、任务、原因和建议；完整结构化诊断保存在 attempt 的 `result.json`，准备阶段诊断保存在 `manifest.json`。需要额外细节时，在仓库根目录执行：
 
 ```bash
-EVALUATOR_DEBUG=1 node dist/cli.js run playbook/gsm8k/gsm8k-simpleagent.yaml
+EVALUATOR_DEBUG=1 ember-evaluator run playbook/gsm8k/gsm8k-simpleagent.yaml
 ```
 
 `1` / `true` 开启，未设置或 `0` / `false` 关闭。PowerShell 使用 `$env:EVALUATOR_DEBUG="1"`。进度与错误写入 stderr，最终结果路径写入 stdout；错误分类和恢复策略见[错误码参考](../reference/errors.zh-CN.md)。

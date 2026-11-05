@@ -33,6 +33,9 @@ import { taskMcpExtension } from "./mcp.js";
 import { classifyError } from "../../../core/errors/classify.js";
 import { streamWithProviderOutput } from "./openai-output.js";
 import { LIVE_LINES, safeLiveText, toolActivity, toolOutputLines } from "../../../core/live-progress.js";
+import { installEnvProxy } from "../../net/env-proxy.js";
+
+installEnvProxy();
 
 const SYSTEM_PROMPT =
   "You are an autonomous coding agent. Complete the user's task in the current working directory. Use the available tools when needed, then give a concise final answer.";

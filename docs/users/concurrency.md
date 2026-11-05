@@ -26,9 +26,9 @@ Batch waits for the round; pipelines dispatch by readiness. Individual preparati
 
 Effective concurrency is fixed after round allocation: Local takes the smaller of configured concurrency and pending count; Ray also caps by node slots, not cluster-wide slots. Tail tasks retain established deadlines. With base 600 seconds, concurrency 1/4/32 gives 600/2400/6000 seconds per environment. This extends allowed time, not preparation speed. Execution concurrency and solve/score limits remain independent.
 
-Both local modes use `run.preparation.concurrency`, defaulting to `scheduler.concurrency`; if execution concurrency is also omitted, both are 1. Ray allocates by node slots; the field caps per-node preparation, otherwise using Scheduler limits/discovered slots. Shared Docker runtime, images, and verifier dependencies count toward their environment budgets. `manifest.json` `preparationRounds` saves policy, optional round cap, per-task/environment base, concurrency, multiplier, effective limit, and timestamps; Ray also saves `nodeConcurrency`. Resume creates a new round and retains history. Duration/report metrics read offline; missing historical environment budgets remain unknown rather than inferred from batch budgets.
+Both local modes use `run.preparation.concurrency`, defaulting to `scheduler.concurrency`; if execution concurrency is also omitted, both default to 1. Profiles with explicit concurrency (such as AgentX serial preparation) keep their declared values. Ray allocates by node slots; the field caps per-node preparation, otherwise using Scheduler limits/discovered slots. Shared Docker runtime, images, and verifier dependencies count toward their environment budgets. `manifest.json` `preparationRounds` saves policy, optional round cap, per-task/environment base, concurrency, multiplier, effective limit, and timestamps; Ray also saves `nodeConcurrency`. Resume creates a new round and retains history. Duration/report metrics read offline; missing historical environment budgets remain unknown rather than inferred from batch budgets.
 
-Resume requires matching configuration, sources, code, and plugins. Start a new run after changing preparation modes or upgrading runtime packages. Historical results support offline reports.
+Resume requires matching configuration, sources, external plugins, and solver identity; updated and rebuilt Evaluator code is allowed. Start a new run after changing preparation modes. Historical results support offline reports; see [resume](usage.md#resume-and-rebuild-reports).
 
 Network retries occur within requests/downloads/pulls and are bounded. Exhaustion records failure without a new attempt. See [operation retries and manual recovery](network-retry.md) for explicit commands during/after runs.
 
@@ -116,8 +116,8 @@ Before preparation, Scheduler chooses the smallest allocated-task/node-slot rati
 Independent warmup uses the same placement/preparation code for direct Ray Client and Ray Jobs:
 
 ```bash
-ember warmup ray-experiment.yaml
-ember run ray-experiment.yaml
+ember-evaluator warmup ray-experiment.yaml
+ember-evaluator run ray-experiment.yaml
 ```
 
 Warmup starts neither Solver nor scoring; `placements` lists task nodes. Identical selection order, nodes, and slots yield identical allocation. Node/capacity changes recompute it, and new nodes prepare their own images. Warmup does not replace run receipt checks or add cache copying, failover, or Ray pipelines.

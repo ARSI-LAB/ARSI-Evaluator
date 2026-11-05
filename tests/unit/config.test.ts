@@ -15,6 +15,24 @@ async function file(value: unknown, filename = "experiment.yaml") {
 }
 const load = (path: string) => loadConfig(path, {}, { KEY: "secret" });
 
+test.each([undefined, { name: "local" }, { name: "local", config: {} }])("local execution and preparation default to one with scheduler %j", async scheduler => {
+  const loaded = await load(await file({ services, benchmark: "gsm8k", ...(scheduler ? { scheduler } : {}),
+    run: { preparation: {} } }));
+  expect(loaded.experiment.scheduler).toEqual({ name: "local", config: { concurrency: 1 } });
+  expect(loaded.experiment.run.preparation).toMatchObject({ concurrency: 1 });
+  expect(loaded.persisted).toHaveProperty("scheduler.config.concurrency", 1);
+});
+
+test("explicit execution/preparation limits and saved serial configurations retain their values", async () => {
+  const loaded = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 3 },
+    run: { preparation: { concurrency: 2 } } }));
+  expect(loaded.experiment.scheduler.config.concurrency).toBe(3);
+  expect(loaded.experiment.run.preparation?.concurrency).toBe(2);
+  const serial = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 1 } }));
+  const saved = await loadSavedConfig(await file(serial.persisted, "saved.yaml"), { KEY: "secret" });
+  expect(saved.experiment.scheduler.config.concurrency).toBe(1);
+});
+
 test("whole-task default is two hours and omitted phase overrides remain absent", async () => {
   const loaded = await load(await file({ services, benchmark: "gsm8k" }));
   expect(loaded.experiment.run.timeoutSeconds).toBe(7200);
@@ -148,16 +166,6 @@ test("sensitive plugin references survive nested config persistence but expanded
   for (const secret of ["dataset-secret", "nested-value", "literal-sensitive-value"]) expect(JSON.stringify(loaded.persisted)).not.toContain(secret);
 });
 
-test("pullProxy round-trips credential-free URLs and preserves authenticated proxy environment references", async () => {
-  const plain = await load(await file({ services, benchmark: "gsm8k", environment: { name: "docker", config: { pullProxy: "http://localhost:7890" } } }));
-  expect((await loadSavedConfig(await file(plain.persisted), { KEY: "secret" })).experiment.environment.config.pullProxy).toBe("http://localhost:7890");
-  const path = await file({ services, benchmark: "gsm8k", environment: { name: "docker", config: { pullProxy: "${PULL_PROXY}" } } });
-  const env = { KEY: "secret", PULL_PROXY: "http://proxy-user:proxy-secret@localhost:7890" };
-  const auth = await loadConfig(path, {}, env);
-  expect(auth.persisted).toHaveProperty("environment.config.pullProxy", "${PULL_PROXY}");
-  expect(JSON.stringify(auth.persisted)).not.toContain("proxy-secret");
-  expect((await loadSavedConfig(await file(auth.persisted), env)).experiment.environment.config.pullProxy).toBe(env.PULL_PROXY);
-});
 
 test("resolves only referenced credentials and preserves unused references", async () => {
   const loaded = await load(await file({ services: { ...services,
@@ -188,10 +196,10 @@ test("rejects inline YAML credentials and CLI authentication conflicts", async (
   await expect(load(await file({ services: { default: { ...services.default, api_key: "plaintext" } }, benchmark: "gsm8k" })))
     .rejects.toThrow(/api_key must reference/);
   const path = await file({ services, benchmark: "gsm8k" });
-  await expect(loadConfig(path, { apiKey: "direct", apiKeyEnv: "OTHER" }, {})).rejects.toThrow(/cannot be used together/);
-  const loaded = await loadConfig(path, { apiKey: "direct" }, {});
-  expect(JSON.stringify(loaded.persisted)).not.toContain('"direct"');
-  expect(loaded.auths.default?.value).toBe("direct");
+  await expect(loadConfig(path, { apiKey: "inline-test-secret", apiKeyEnv: "OTHER" }, {})).rejects.toThrow(/cannot be used together/);
+  const loaded = await loadConfig(path, { apiKey: "inline-test-secret" }, {});
+  expect(JSON.stringify(loaded.persisted)).not.toContain('"inline-test-secret"');
+  expect(loaded.auths.default?.value).toBe("inline-test-secret");
   const exported = await file(exportConfig(loaded));
   expect((await loadConfig(exported, {}, { EVALUATOR_API_KEY: "replacement" })).auths.default?.value).toBe("replacement");
 });

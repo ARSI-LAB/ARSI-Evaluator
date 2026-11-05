@@ -14,10 +14,10 @@ import { controlTransaction, RetryControl, type RetryAdmission } from "./retry-c
 import { resolveRunStatus } from "./task-result-resolver.js";
 import { TaskQueue } from "./task-queue.js";
 import { isManualRetryEligible } from "./manual-retry.js";
-import { planResume } from "./resume.js";
+import { assertResumePluginVersions, planResume } from "./resume.js";
 import { ResumeError } from "./resume-error.js";
 import { enumerateSelectedTasks } from "./task-selection.js";
-import { assertSolverProvenance, resolveSolverProvenance } from "./solver-provenance.js";
+import { assertResumeSolverProvenance, resolveSolverProvenance } from "./solver-provenance.js";
 import { loadRunIdentity } from "./run-identity.js";
 import type { ProgressListener } from "./progress.js";
 import { progressOperation } from "./progress-operation.js";
@@ -82,14 +82,13 @@ async function executeRun({
   const resume = previous ? planResume(previous, previousAttempts, fingerprintResumeConfig(config.persisted)) : null;
   const bound = solverBinding(config);
   const solverProvenance = await resolveSolverProvenance(components.solver, signal, [bound.auth.value], previous?.solverProvenance);
-  if (previous) assertSolverProvenance(previous.solverProvenance, solverProvenance);
+  if (previous) assertResumeSolverProvenance(previous.solverProvenance, solverProvenance);
   const elapsed = () =>
     previous ? Math.max(0, Date.now() - Date.parse(previous.startedAt)) : performance.now() - started;
   if (previous) {
     if (!Number.isFinite(Date.parse(previous.startedAt)))
       throw new ResumeError("STORE_RECORD_INVALID", "Invalid original run start time");
-    if (fingerprintConfig(previous.pluginVersions) !== fingerprintConfig(components.pluginVersions))
-      throw new ResumeError("SOURCE_CHANGED", "Resume plugin versions differ from the original run");
+    assertResumePluginVersions(previous.pluginVersions, components.pluginVersions);
     if (previous.source !== null && (retryTaskIds ?? resume!.restartTaskIds).length === 0 && unconfirmedAttempts.length === 0) {
       if (components.benchmark.validateSourceOnCompletedResume && previous.source) {
         const lockedSource = previous.source;
@@ -114,6 +113,7 @@ async function executeRun({
         model: bound.model.name,
         api: bound.model.api,
         provider: bound.model.provider,
+        hardware: experiment.hardware ?? "npu",
         benchmark: experiment.benchmark.name,
         environment: experiment.environment.name,
         solver: experiment.solver.name,
@@ -227,7 +227,9 @@ async function executeRun({
     const schedulerSignal = AbortSignal.any([signal, runController.signal]);
     await components.scheduler.setup?.(
       {
-        run: { ...manifest, status: "running", finishedAt: null },
+        // Preserve the original manifest, but dispatch this session with the current code/runtime.
+        run: { ...manifest, pluginVersions: components.pluginVersions,
+          ...(solverProvenance === undefined ? {} : { solverProvenance }), status: "running", finishedAt: null },
         safeConfig: structuredClone(config.persisted),
         store: components.store,
         log: message => progress("execute", message),

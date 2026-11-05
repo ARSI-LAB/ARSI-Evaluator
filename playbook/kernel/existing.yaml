@@ -1,0 +1,15 @@
+# 在已安装 CANN、torch_npu 和 triton-ascend 的 Linux NPU 主机运行。
+# KERNEL_MANIFEST 指向任务清单；KERNEL_EVAL_PYTHON 指向该 NPU 环境的 Python。
+# KERNEL_EVAL_PLACEHOLDER 只需设置为 unused-local-evaluation，不调用模型。
+hardware: npu
+services:
+  default:
+    model: unused-local-evaluation
+    base_url: http://127.0.0.1:1/v1
+    api_key: ${KERNEL_EVAL_PLACEHOLDER}
+benchmark:
+  name: kernel
+  config:
+    manifest: ${KERNEL_MANIFEST}
+    python: ${KERNEL_EVAL_PYTHON}
+    device: 0

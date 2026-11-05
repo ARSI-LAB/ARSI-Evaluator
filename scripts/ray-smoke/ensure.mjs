@@ -120,6 +120,7 @@ async function serviceStates(env) {
     if (!requiredServices.includes(name)) continue;
     states[name] = {
       id: container.Id,
+      networkDigest: container.Config?.Labels?.["org.ember.evaluator.network"] ?? null,
       imageId: container.Image,
       running: container.State?.Running === true,
       health: container.State?.Health?.Status ?? null,
@@ -195,11 +196,20 @@ async function main() {
     }
   }
   const manifest = JSON.parse(await readFile(join(root, "dist/package-provenance.json"), "utf8"));
-  const fingerprint = await deploymentFingerprint(manifest.digest);
-  const env = { ...process.env, EVALUATOR_SOURCE_FINGERPRINT: fingerprint };
+  const { deploymentNetwork } = await import("../network/deployment.mjs");
+  const access = await deploymentNetwork();
+  try {
+  const fingerprint = createHash("sha256").update(await deploymentFingerprint(manifest.digest)).update(access.network.document.digest).digest("hex");
+  const override = await access.composeOverride(join(root, ".scratch/ray-smoke"), ["init", ...appServices], AbortSignal.timeout(300_000));
+  composeArgs.push("-f", override.path);
+  const env = { ...access.build.environment, ...override.env, EVALUATOR_SOURCE_FINGERPRINT: fingerprint };
   await capture(["info", "--format", "{{.ServerVersion}}"], env);
   const image = await imageState();
   const states = await serviceStates(env);
+  for (const name of dependencyServices) {
+    if (states[name] && states[name].networkDigest !== access.network.document.digest)
+      throw new Error(`Network settings changed for ${name}; an administrator must explicitly recreate the Docker-in-Docker services before rerunning ensure. Existing daemons were not restarted.`);
+  }
   let plan = deploymentPlan(fingerprint, image, states, bundleDirectory);
   if (plan.ready) {
     try {
@@ -216,11 +226,9 @@ async function main() {
     console.log("Deployment inputs changed; building the local Ray image...");
     const context = await stageDeploymentBuildContext();
     try {
-      await execute(["build", "--file", join(context.directory, "scripts/ray-smoke/Dockerfile"), "--tag", imageName,
-        "--build-arg", `EVALUATOR_SOURCE_FINGERPRINT=${fingerprint}`,
-        "--build-arg", "APT_MIRROR=https://mirrors.aliyun.com",
-        "--build-arg", "NPM_CONFIG_REGISTRY=https://registry.npmmirror.com",
-        "--build-arg", "PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple", context.directory], env);
+      await access.rewriteDockerfile(join(context.directory, "scripts/ray-smoke/Dockerfile"));
+      await execute(["build", ...access.build.buildArgs, "--file", join(context.directory, "scripts/ray-smoke/Dockerfile"), "--tag", imageName,
+        "--build-arg", `EVALUATOR_SOURCE_FINGERPRINT=${fingerprint}`, context.directory], env);
     } finally { await context.dispose(); }
     const built = await imageState();
     if (built?.fingerprint !== fingerprint) throw new Error("Built image fingerprint does not match current inputs");
@@ -237,6 +245,7 @@ async function main() {
   }
   await waitForRay(updatedStates.head.id, env, 60_000);
   console.log("The local Ray Jobs cluster is ready for Jobs experiments from the playbook.");
+  } finally { await access.dispose(); }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -4,52 +4,57 @@
 
 [FAQ index](README.md) · [User documentation](../README.md)
 
-Set variables in the environment actually launching Evaluator or workers. Download-source changes do not alter version/digest requirements.
+Set variables in the environment actually launching Evaluator or execution nodes. Changing sources changes download addresses, not the selected dataset version.
 
 ## Data Downloads, Mirrors, and Proxies
 
-HF datasets default to `https://hf-mirror.com`. Task Docker builds default to Huawei Cloud pip/apt sources and replace literal `https://nodejs.org/dist/` URLs with npmmirror Node downloads without modifying source datasets. Override with `PIP_INDEX_URL`, `EVALUATOR_DEBIAN_MIRROR`, and `EVALUATOR_NODE_MIRROR`; changes alter task image cache identities. `NPM_CONFIG_REGISTRY` changes npm sources, not Node binary URLs. Ray deployment variables may override defaults. Switch HF with `HF_ENDPOINT`, such as `https://huggingface.co`. For GitHub/other proxies set `HTTP_PROXY`/`HTTPS_PROXY`; global `fetch` and Pi model requests use them.
+Downloads use official sources by default. Select Hugging Face, GitHub, pip/uv, npm, Node and APT sources and per-location proxies with a separate [network YAML](../network.md), supplied through `--network` or `EVALUATOR_NETWORK_CONFIG`.
 
-APT mirror rewriting handles `/etc/apt/sources.list` and `.list`/`.sources` under `sources.list.d/`, mapping official Debian main/security and Ubuntu archive/security/ports to mirror `/debian`, `/debian-security`, `/ubuntu`, `/ubuntu-ports`, preserving releases, components, and signing keys. Third-party repositories remain unchanged. `EVALUATOR_DEBIAN_MIRROR` applies to both distributions; use an origin without paths and ensure required repositories exist. Newly built task images retain mirrors for agent installs; existing image references are not modified.
+`sources.apt` independently sets full Debian main/security and Ubuntu archive/security/ports URLs. Builds use those addresses while keeping the original distribution and signing settings. Configure third-party repositories separately; original task files are not modified.
 
-Pinned Node **Docker image** downloads are separate from Node tarballs. If missing locally, read the node daemon's `RegistryConfig.Mirrors` and use its first Huawei Cloud HTTPS mirror, otherwise Docker Hub. Explicit `EVALUATOR_NODE_IMAGE_MIRROR=https://<your-huawei-cloud-mirror>` supplies an origin without repository paths/credentials. Existing official local images are preferred. Only the download address changes; pinned versions, multi-architecture digests, and platform validation remain. Runtime builds and model gateways share the source. Pull failure returns immediately without trying other sources or changing Docker globals. Local/Ray resolve on execution nodes; pass explicit variables to workers. This does not replace benchmark ECR images or toolbox Dockerfile bases.
+Shared images use the method in `docker.pull`; `docker.mirrors` can select registry mirrors. Task images can additionally select ModelScope/Hugging Face archives through `docker.benchmarks`. Dockerfile `FROM` uses the Docker daemon's network settings. See [image downloads](../image-downloads.md) for examples.
+
+Evaluator and the Pi runner default to HTTP/1.1. Set `EVALUATOR_HTTP2=1` **before starting the process** to allow HTTP/2; omit it or set `0` to retain HTTP/1.1. Servers without HTTP/2 support can still use HTTP/1.1.
+
+Set the variable separately in container and worker launch environments. It does not control browsers, Docker image pulls, or third-party Solvers' own download tools.
+
+```bash
+# Optional: allow HTTP/2 (Git Bash / Linux / macOS)
+export EVALUATOR_HTTP2=1
+```
+
+```powershell
+# Optional: allow HTTP/2 (PowerShell)
+$env:EVALUATOR_HTTP2 = "1"
+```
+
+If large downloads repeatedly terminate with `UND_ERR_RES_CONTENT_LENGTH_MISMATCH`, keep the default HTTP/1.1 and check proxy connectivity. Interrupted downloads currently restart from the beginning.
 
 ## Judge Image Sources and Build Networking
 
-Task images, Solver runtimes, and judge images build separately. Host apt/Git globals do not automatically enter judge images. Judge builds use:
+Task images, Solver runtimes and judge images build separately but read the same run's network YAML. `sources.python`, `sources.npm`, `sources.github` and `sources.apt` select installation sources; `proxy.overrides.build` selects build proxies and `docker.buildNetwork` selects `default` or `host`. Defaults use official sources. Loopback proxy addresses are not rewritten; provide an address reachable from the container.
 
-| Variable | Purpose and default |
-| --- | --- |
-| EVALUATOR_DEBIAN_MIRROR | Debian main/security and Ubuntu archive/security/ports origin; default https://repo.huaweicloud.com |
-| PIP_INDEX_URL | Python index; default https://repo.huaweicloud.com/repository/pypi/simple |
-| NPM_CONFIG_REGISTRY / npm_config_registry | Optional npm source, uppercase first; otherwise task defaults. Passed to every task/sidecar/separate-judge build stage for npm/pnpm/Corepack and included in cache identity. Lock versions/hashes remain; absolute lockfile URLs are not rewritten |
-| UV_DEFAULT_INDEX / UV_INDEX_URL | When set, overrides PIP_INDEX_URL for all judge-image Python installation |
-| PIP_IGNORE_INSTALLED | Optional task build argument, unset by default; accepts `0/1/false/true`. For mixed Conda/pip distutils uninstall failures, explicit `1` installs over resolved dependencies. Changes installed packages/cache identity |
-| EVALUATOR_GITHUB_MIRROR | GitHub prefix, default https://github.com/; e.g. https://git-mirror.example/github/ receives Tencent/workbuddy-bench.git or harbor-framework/harbor.git |
-| HTTP_PROXY / HTTPS_PROXY / NO_PROXY | Explicit Docker build inputs, lowercase supported; default networking rewrites loopback proxies to host.docker.internal |
-| EVALUATOR_DOCKER_BUILD_NETWORK | default or host; default default. host means the Docker daemon host, not necessarily the CLI's WSL distribution |
+Nonempty supported network environment variables override network YAML; see [network configuration fields](../reference/network.md). When using a custom Docker wrapper, configure Environment and Verifier executables separately; the Verifier uses `verifier.config.dockerExecutable`.
 
-Export in the WSL shell/management container launching Evaluator. Source/proxy URLs must omit credentials. Settings/recipe changes create new cache keys. With Docker adapter scripts, also select the script through verifier.config.dockerExecutable; Environment and Verifier executables are separate.
+Successful builds do not establish runtime download access. Ordinary/Compose main containers receive `NPM_CONFIG_REGISTRY`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL` and `UV_DEFAULT_INDEX` from the network settings; task/Environment values take precedence. `model-api` isolation does not inherit them.
 
-Successful builds do not establish runtime download access. Ordinary/Compose main containers can inherit explicit coordinator `NPM_CONFIG_REGISTRY`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, and `UV_DEFAULT_INDEX`; task/Environment values take precedence. `model-api` isolation does not inherit them.
+APT defaults to up to three retries per failed file, with 30-second connection and read timeouts; existing image or task settings take precedence. Index updates that still fail stop the build. Download retries do not rerun whole image builds or tasks, and do not rerun compilation or script errors.
 
-Task builds add missing APT defaults: up to three retries per failed file; HTTP/HTTPS connection/read timeout 30 seconds; index update fails immediately after exhausted errors instead of continuing with missing-package errors. Defaults apply before CA bootstrap; image settings, later task settings, and `apt-get -o` override them. Retries occur in APT downloads. Exhaustion fails the build without retrying whole builds/attempts. Compilation/script errors are not retried; preparation deadlines remain.
+WorkBuddy and Harbor Git dependencies get up to three download attempts, each limited to 120 seconds; prolonged slow transfers can also stop. Configure a reachable Git mirror or `HTTPS_PROXY` for connection failures. Evaluator does not choose third-party public proxies automatically.
 
-Git fetches pinned WorkBuddy and uv.lock Harbor commits with up to three attempts, 120 seconds each, stopping below 1 KiB/s for 30 seconds. Timeout kills Git and transport children. Git selects no third-party public proxy automatically; configure your mirror prefix or reachable HTTPS_PROXY.
+If a base image lacks CA certificates, the build installs `ca-certificates` before using HTTPS package sources. Custom HTTPS APT mirrors must provide a matching HTTP address for initial certificate installation, or the base image must already contain CA certificates.
 
-When base images lack CA certificates, builds first install ca-certificates through the same mirror's HTTP address with APT signatures checked, then restore HTTPS. Already-rewritten mirror HTTPS `.list`/`.sources` also bootstrap. Custom HTTPS mirrors need matching HTTP bootstrap or preinstalled CA. Existing certificates skip reinstall. Only build snapshots change; source files/digests remain intact.
-
-Setting PIP_INDEX_URL then running uv sync --frozen may still use official lockfile URLs. This implementation exports registry dependencies offline/frozen, then installs from the configured index using --require-hashes and --no-deps. Upstream versions/hashes remain; both source packages use pinned commits without resolving/modifying uv.lock. See [uv export documentation](https://docs.astral.sh/uv/concepts/projects/sync/#exporting-the-lockfile).
+Dependency lockfiles can contain fixed download URLs. Framework installation of Harbor dependencies uses the configured package source while retaining locked versions; source dependencies still use fixed Git commits. If a task's own installation script accesses other addresses, check that script and its tool settings.
 
 ## Why Access Sources Despite Existing Caches?
 
-Cache hits require matching source identity, pinned version, and content digest. Partial files are not a complete verifiable lock. Check original manifest, actual `cacheDir`, and execution environment; Windows/WSL/users may have different caches.
+Cached files must be complete for the current source and version. Partial downloads can still require network access. Check the actual `cacheDir` and execution environment: Windows, WSL, and different users may use different cache directories.
 
-GitHub/HF 403 differs from model 403. Identify the failing domain before checking access, throttling, and proxies. Do not alter digests to bypass validation. Old DeepSWE cache-registration scripts depend on removed source implementations and do not apply to Harbor profiles. New runs use current adapters; retained historical results rebuild offline.
+Handle GitHub/Hugging Face 403 errors separately from model-service 403 errors. Identify the domain in the failure log, then check that service's account permissions, access limits, or proxy settings.
 
 ## What If pip Cannot Uninstall distutils Packages During Builds?
 
-Try `PIP_IGNORE_INSTALLED=1` only for explicit distutils uninstall errors caused by mixed Conda/pip images. It changes Python installation/cache identities, not a general installation fix. Validate the new environment before starting a new evaluation.
+Try `PIP_IGNORE_INSTALLED=1` only for explicit distutils uninstall errors in images mixing Conda and pip. It changes Python package installation and rebuilds the relevant dependency layers. Warm up successfully before starting a new evaluation; diagnose other installation failures from their logs.
 
 ## Can I Retry Only Failed Tasks After Download Failures?
 

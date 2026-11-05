@@ -55,7 +55,7 @@ export async function preparePi(
     executable: node,
     args: [cli, "--json", ...args, "--harness-version", PI_VERSION],
     cwd: runtime.root,
-    env,
+    env: preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env,
     inheritEnv: false,
     input: null,
   });

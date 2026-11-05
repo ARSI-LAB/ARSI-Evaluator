@@ -8,6 +8,12 @@ AgentX reconstructs request lengths, prefix reuse, session turns, subagent depen
 
 Concurrency has two meanings: outer Scheduler executes one point at a time; load concurrency counts active session trees inside it. Subagents may increase request concurrency, so tree count differs from simultaneous requests. Summaries feed performance reports without quality scores.
 
+## Hardware Selection
+
+Top-level `hardware: npu` (the default) selects existing NPU behavior. With `hardware: gpu`, API replay and `telemetry.vllm` remain available without a GPU on the replay host. `telemetry.ascend` conflicts with GPU selection and is rejected before sampling by `doctor`, dry runs, and execution. GPU hardware metrics are not supported. See [configuration](../config.md#npu-and-gpu-selection) for defaults and resume behavior.
+
+The [GPU service API example](../../../playbook/agentx/agentx-gpu-api.yaml) replays requests without collecting device metrics.
+
 ## Preparation and Execution
 
 Prefer `environment: local`. Replay calls APIs from Evaluator's environment without executing real trace tools or creating task images/containers. Run inside toolbox or directly on the host. Users start inference services manually; Evaluator neither starts nor stops them.
@@ -16,7 +22,7 @@ Management images include Python/venv/compiler dependencies; first use creates a
 
 Services need streaming OpenAI Chat Completions, `ignore_eos`, and trace output lengths. Default official 062126 256k corpus requires at least 256k context plus headroom. `full` targets approximately1M context. Traces are not truncated for smaller contexts.
 
-Follow [quick start](../quick-start/agentx.md) for installation, model variables, tokenizer, and doctor/dry-run/run commands. This guide defines loads, metrics, and telemetry. `doctor` downloads/infers nothing; dry-run may download and lists points.
+Follow [quick start](../quick-start/agentx.md) for installation, model variables, tokenizer, and doctor/dry-run/run commands. This guide defines loads, metrics, and telemetry. `doctor` performs download probes without inference; dry-run may download and lists points.
 
 Choose a configuration for your goal; running all in sequence is unnecessary:
 
@@ -144,8 +150,8 @@ Root `metrics.json` keeps batch machine data/subreport indexes. Point metrics re
 `upstreamSubmissionValid` preserves harness judgment; `comparable` additionally checks scenario/source/completeness. Compare identical corpus commits, scenario, tokenizer, concurrency, and deployment. Completed replay does not establish leaderboard eligibility.
 
 ```bash
-node dist/cli.js run playbook/agentx/agentx-standard.yaml --resume
-node dist/cli.js report results/agentx-standard/RUN_ID
+ember-evaluator run playbook/agentx/agentx-standard.yaml --resume
+ember-evaluator report results/agentx-standard/RUN_ID
 ```
 
 Completed points skip; failed/cancelled/timed-out points get full new attempts, not request continuation. Performance timeouts are not zeros. `report` rebuilds indexes/point reports and repairs missing/corrupt subreports from saved data/built-in plugins, without Python/model credentials/cache. Explicit resume writes `reports/resume-N/` and preserves prior reports; retry/offline `report` update current reports. See [report storage](../usage.md#resume-and-rebuild-reports).

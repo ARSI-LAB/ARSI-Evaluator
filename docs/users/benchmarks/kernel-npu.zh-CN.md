@@ -4,6 +4,10 @@
 
 `kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI 的 `kernel` 评测器启动优化流程生成新候选，再调用同一 Evaluator CLI；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
 
+## 硬件选择
+
+实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU 后端尚未实现”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。现有 `kernel precision/bench/profile` 独立命令仍为 NPU 入口，参数和结果格式不变。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。
+
 ## 环境与运行
 
 先按[安装指南](../installation.zh-CN.md)准备 Evaluator 依赖。AgentBundle SDK 由 pnpm 从 GitHub 自动下载并构建，不需要同级源码仓库；即使不使用 AgentBundle Solver，内置插件的静态导入仍需要该依赖。
@@ -15,8 +19,8 @@ export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
 export KERNEL_MANIFEST=/absolute/path/to/cases/tasks.json
 export KERNEL_EVAL_PLACEHOLDER=unused-local-evaluation
 pnpm build
-node dist/cli.js run playbook/kernel/existing.yaml --dry-run
-node dist/cli.js run playbook/kernel/existing.yaml
+ember-evaluator run playbook/kernel/existing.yaml --dry-run
+ember-evaluator run playbook/kernel/existing.yaml
 ```
 
 示例 YAML 中的 service 是框架必填字段占位，地址不可用。现有配置加载器要求 `api_key` 引用非空环境变量，因此设置 `KERNEL_EVAL_PLACEHOLDER` 为上述普通文本即可，不要填写真实模型密钥。模型用量为零；离线 `report` 不需要该变量。
@@ -167,9 +171,9 @@ profiling.artifacts                        # 相对 verifier/ 的原始证据路
 
 ```bash
 # 使用 run 输出的结果目录；无需模型凭证或重新执行算子。
-node dist/cli.js report /absolute/path/to/results/run-id
+ember-evaluator report /absolute/path/to/results/run-id
 # 沿用同一配置续跑；仍须设置配置引用的环境变量。
-node dist/cli.js run playbook/kernel/existing.yaml --resume
+ember-evaluator run playbook/kernel/existing.yaml --resume
 ```
 
 `--dry-run` 通过只表示配置和任务来源可解析，不检查 NPU 是否可用。实际 `run` 缺少 torch、torch_npu 或 NPU 时会返回非零退出码，并留下无效评测记录；不能据此判断候选算子的正确性。
@@ -180,13 +184,13 @@ node dist/cli.js run playbook/kernel/existing.yaml --resume
 
 ```bash
 # 精度门：多 seed 双跑，对照 problem.Model 参照（默认容差 atol=1e-5 / rtol=1e-3）
-node dist/cli.js kernel precision --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel precision --problem <problem.py> --kernel <kernel.py> \
   --out <precision.json> [--seeds 0 1] [--python /usr/bin/python3]
 # 纯计时：与基准走同一 timing 模块（口径见上文"指标与结果"），不校验精度
-node dist/cli.js kernel bench --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
   --out <bench.json> [--python /usr/bin/python3]
 # msprof 采集：attach 重放脚本采集硬件指标，带缓存与重试；roofline 分类一体返回
-node dist/cli.js kernel profile --problem <problem.py> --kernel <kernel.py> \
+ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
   --out <profile.json> [--round 0] [--python /usr/bin/python3]
 ```
 

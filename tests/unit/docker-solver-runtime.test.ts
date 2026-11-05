@@ -154,10 +154,10 @@ test("the runtime install passes a validated npm registry and rejects credential
   vi.stubEnv("NPM_CONFIG_REGISTRY", "https://registry.example.test/npm/");
   const accepted = docker();
   await accepted.runtime().install(spec, signal);
-  expect(accepted.builds[0]!.args).toContain("NPM_CONFIG_REGISTRY=https://registry.example.test/npm/");
+  expect(accepted.builds[0]!.args).toContain("NPM_CONFIG_REGISTRY=https://registry.example.test/npm");
   vi.stubEnv("NPM_CONFIG_REGISTRY", "https://user:secret@registry.example.test/");
   const rejected = docker();
-  await expect(rejected.runtime().install(spec, signal)).rejects.toMatchObject({ code: "ENV_RUNTIME_INSTALL_FAILED" });
+  expect(() => rejected.runtime()).toThrow(/network.sources.npm.registry/);
   expect(rejected.builds).toEqual([]);
 });
 

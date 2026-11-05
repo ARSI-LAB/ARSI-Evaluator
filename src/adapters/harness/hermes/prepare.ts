@@ -10,7 +10,7 @@ import type { AttemptContext, PreparedSolver } from "../../../core/contracts/sol
 import { canonicalJson } from "../../../core/run-manifest.js";
 import { AgentBundleError, cliJson, parseInstalledBundle, parseVerifiedBundle, type VerifiedBundle } from "../../agentbundle/cli.js";
 
-import { HERMES_PIP_INDEX, HERMES_VERSION, hermesRuntimeInstallation } from "./runtime.js";
+import { HERMES_VERSION, hermesRuntimeInstallation } from "./runtime.js";
 import { HERMES_AUTH_ENV, hermesModelSettings } from "./model.js";
 import { consumeHermes } from "./protocol.js";
 
@@ -84,7 +84,6 @@ export async function prepareHermes(
     // v0.21.6 plugin deps are installed by `hermes plugins enable` via PM `uv sync --frozen` against
     // the checkout's uv.lock (URLs pinned to files.pythonhosted.org). PIP_INDEX_URL is a no-op for
     // that path (R8): mirroring needs a uv.lock re-lock at provision time (see runtime.ts R8 note).
-    PIP_INDEX_URL: HERMES_PIP_INDEX,
     HOME: state,
     USERPROFILE: state,
     HERMES_HOME: state,
@@ -95,7 +94,7 @@ export async function prepareHermes(
     executable: node,
     args: [cli, "--json", ...args, "--harness-version", version],
     cwd: runtime.root,
-    env: { ...env, HERMES_HOME: provisionHome },
+    env: { ...(preparation.network?.environment("runtime", env, runtime.persistent ? "host" : "container") ?? env), HERMES_HOME: provisionHome },
     inheritEnv: false,
     input: null,
   });

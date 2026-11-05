@@ -51,20 +51,20 @@ function lfsDownload(value: unknown, expected: GitLfsObject): GitLfsDownload {
 
 /** Basic Git LFS downloads backed by the framework's verified byte cache. */
 export class GitLfsCache {
-  constructor(private readonly cache: DatasetCache) {}
+  constructor(private readonly cache: DatasetCache, private readonly network?: import("../../../core/contracts/network.js").NetworkAccess) {}
 
   async fetch(batchUrl: string, pointerBytes: Uint8Array, signal: AbortSignal): Promise<string> {
     signal.throwIfAborted();
     const pointer = parseGitLfsPointer(pointerBytes);
     const cached = await this.cache.cached(pointer.sha256, signal);
     if (cached) return this.checkSize(cached.path, pointer, signal);
-    const response = await fetchNetworkResponse(batchUrl, {
+    const response = await fetchNetworkResponse(this.network?.sourceUrl(batchUrl) ?? batchUrl, {
       method: "POST",
       headers: { accept: "application/vnd.git-lfs+json", "content-type": "application/vnd.git-lfs+json" },
       body: JSON.stringify({ operation: "download", transfers: ["basic"],
         objects: [{ oid: pointer.sha256, size: pointer.size }], hash_algo: "sha256" }),
       signal,
-    });
+    }, { ...(this.network ? { network: this.network } : {}) });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`Git LFS batch HTTP ${response.status}`);

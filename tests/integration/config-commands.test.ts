@@ -20,34 +20,33 @@ async function setup() {
   return { root, path, config, stdout, stderr, io: { out: (line: string) => { stdout.push(line); }, error: (line: string) => { stderr.push(line); } } };
 }
 
-test("explain and resolve show provenance and reloadable YAML without credentials or dataset I/O", async () => {
+test("inspect shows reloadable configuration without credentials or dataset I/O", async () => {
   const { path, stdout, stderr, io } = await setup();
   vi.stubEnv("UNSET_CONFIG_TEST_KEY", undefined);
-  expect(await runCli(["config", "explain", path, "--model", "overridden"], io)).toBe(0);
-  expect(stdout.join("\n")).toContain('services.default.model: "overridden"  [CLI override]');
-  expect(stdout.join("\n")).toContain("profile deepswe@1.1");
-  expect(await runCli(["config", "resolve", path], io)).toBe(0);
-  const exported = parse(stdout.at(-1) ?? "");
+  expect(await runCli(["inspect", path], io)).toBe(0);
+  expect(JSON.parse(stdout.at(-1) ?? "").experiment.services.default.model).toBe("fixture");
+  expect(await runCli(["inspect", path], io)).toBe(0);
+  const exported = JSON.parse(stdout.at(-1) ?? "").experiment;
   expect(exported.benchmark.solver).toEqual({ name: "simpleagent", config: {}, service: "default" });
   expect(exported.services.default.api_key).toBe("${UNSET_CONFIG_TEST_KEY}");
   expect(stderr.join("\n")).not.toMatch(/source|enumerate|bootstrap|ERROR/);
 });
 
-test("config commands explain, export and reload offset and maxTasks", async () => {
+test("inspect explain, export and reload offset and maxTasks", async () => {
   const { root, path, config, stdout, stderr, io } = await setup();
   await writeFile(path, stringify({ ...config, run: { offset: 10, maxTasks: 5 } }));
-  expect(await runCli(["config", "explain", path], io), stderr.join("\n")).toBe(0);
-  expect(stdout.join("\n")).toContain("run.offset: 10  [user YAML]");
-  expect(await runCli(["config", "resolve", path], io), stderr.join("\n")).toBe(0);
-  const exported = stdout.at(-1) ?? "";
+  expect(await runCli(["inspect", path], io), stderr.join("\n")).toBe(0);
+  expect(JSON.parse(stdout.at(-1) ?? "").experiment.run.offset).toBe(10);
+  expect(await runCli(["inspect", path], io), stderr.join("\n")).toBe(0);
+  const exported = stringify(JSON.parse(stdout.at(-1) ?? "").experiment);
   expect(parse(exported).run).toMatchObject({ offset: 10, maxTasks: 5 });
   const resolvedPath = join(root, "resolved.yaml");
   await writeFile(resolvedPath, exported);
-  expect(await runCli(["config", "resolve", resolvedPath], io), stderr.join("\n")).toBe(0);
-  expect(parse(stdout.at(-1) ?? "").run).toMatchObject({ offset: 10, maxTasks: 5 });
+  expect(await runCli(["inspect", resolvedPath], io), stderr.join("\n")).toBe(0);
+  expect(JSON.parse(stdout.at(-1) ?? "").experiment.run).toMatchObject({ offset: 10, maxTasks: 5 });
 });
 
-test.each(["local", "ray"])("%s config commands do not call factories, resolve datasets or instantiate execution resources", async scheduler => {
+test.each(["local", "ray"])("%s inspect do not call factories, resolve datasets or instantiate execution resources", async scheduler => {
   const { root, path, config, stdout, io } = await setup();
   await mkdir(join(root, "profiles"));
   // A dataset author can ship just a declaration; the generic Harbor implementation supplies the behavior.
@@ -62,15 +61,15 @@ test.each(["local", "ray"])("%s config commands do not call factories, resolve d
   const patchPath = join(root, "patch.yaml");
   await writeFile(patchPath, stringify([{ insert: [{ id: "fixture-provider", name: "./plugin.mjs" }] }]));
   await writeFile(path, stringify({ ...config, benchmark: "fixture-profile", scheduler }));
-  expect(await runCli(["config", "resolve", path, "--patch", patchPath], io)).toBe(0);
-  const exported = parse(stdout[0] ?? "");
+  expect(await runCli(["inspect", path, "--patch", patchPath], io)).toBe(0);
+  const exported = JSON.parse(stdout[0] ?? "").experiment;
   expect(exported.run.timeoutSeconds).toBe(42);
   if (scheduler === "ray") {
     expect(exported.deployment).toMatchObject({ kind: "ray-jobs", managedLocal: true });
-    expect(await runCli(["config", "explain", path, "--patch", patchPath], io)).toBe(0);
-    expect(stdout.at(-1)).toContain('deployment.managedLocal: true  [framework default]');
+    expect(await runCli(["inspect", path, "--patch", patchPath], io)).toBe(0);
+    expect(JSON.parse(stdout.at(-1) ?? "").experiment.deployment.managedLocal).toBe(true);
   } else expect(exported.deployment).toBeUndefined();
-  expect(await runCli(["config", "explain", path], io)).toBe(2);
+  expect(await runCli(["inspect", path], io)).toBe(2);
 });
 
 test("profile registrations roll back with their Cordis plugin lifecycle", async () => {
@@ -90,19 +89,20 @@ test("profile registrations roll back with their Cordis plugin lifecycle", async
   } finally { await ctx.fiber.dispose(); }
 });
 
-test("literal runtime credentials are masked and exported runs explain how to replace the placeholder", async () => {
+test("inspect preserves credential references without exposing their values", async () => {
   const { path, stdout, stderr, io } = await setup();
-  expect(await runCli(["config", "resolve", path, "--api-key", "never-echo-this-key"], io)).toBe(0);
+  vi.stubEnv("UNSET_CONFIG_TEST_KEY", "never-echo-this-key");
+  expect(await runCli(["inspect", path], io)).toBe(0);
   expect(stdout.join("\n")).not.toContain("never-echo-this-key");
-  expect(stdout.join("\n")).toContain("${EVALUATOR_API_KEY}");
-  expect(stderr.join("\n")).toContain("Provide credentials");
+  expect(stdout.join("\n")).toContain("${UNSET_CONFIG_TEST_KEY}");
+  expect(stderr).toEqual([]);
 });
 
 test("resolved relative paths retain the experiment-directory convention", async () => {
   const { root, path, config, stdout, io } = await setup();
   await writeFile(path, stringify({ ...config, benchmark: { name: "deepswe", solver: { name: "agentbundle", config: { path: "./agent" } } }, output: { directory: "./out" } }));
-  expect(await runCli(["config", "resolve", path], io)).toBe(0);
-  const result = parse(stdout[0] ?? "");
+  expect(await runCli(["inspect", path], io)).toBe(0);
+  const result = JSON.parse(stdout[0] ?? "").experiment;
   expect(result.output.directory).toBe(join(root, "out"));
   expect(result.benchmark.solver.config.path).toBe("./agent");
   expect(await readFile(path, "utf8")).toContain("./agent");
@@ -110,8 +110,10 @@ test("resolved relative paths retain the experiment-directory convention", async
 
 test("the built CLI resolves filename-based output from an unrelated working directory", async () => {
   const { root, path } = await setup();
-  const { stdout } = await promisify(execFile)(process.execPath, [resolve("dist/cli.js"), "config", "resolve", path], { cwd: root });
-  expect(parse(stdout).output.directory).toBe(resolve("results/deepswe/experiment"));
+  const network = join(root, "network.yaml");
+  await writeFile(network, "{}");
+  const { stdout } = await promisify(execFile)(process.execPath, [resolve("dist/cli.js"), "inspect", path, "--network", network], { cwd: root });
+  expect(JSON.parse(stdout).experiment.output.directory).toBe(resolve("results/deepswe/experiment"));
 });
 
 test("resolve preserves public credential-variable names without model budgets", async () => {
@@ -121,8 +123,8 @@ test("resolve preserves public credential-variable names without model budgets",
     scheduler: { name: "ray", nodes: 2 },
     deployment: { kind: "ray-jobs", endpoint: "https://cluster.invalid", caFile: "./ca.pem", tokenEnv: "GATEWAY_AUTH_KEY" },
   }));
-  expect(await runCli(["config", "resolve", path], io)).toBe(0);
-  const result = parse(stdout[0] ?? "");
+  expect(await runCli(["inspect", path], io)).toBe(0);
+  const result = JSON.parse(stdout[0] ?? "").experiment;
   expect(result.deployment.tokenEnv).toBe("GATEWAY_AUTH_KEY");
   expect(result.benchmark.solver.config.maxTokens).toBe(12345);
 });

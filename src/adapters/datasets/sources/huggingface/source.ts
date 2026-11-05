@@ -1,3 +1,4 @@
+import type { NetworkAccess } from "../../../../core/contracts/network.js";
 import { fetchNetworkResponse } from "../../../network/retry.js";
 import type { JsonValue, SourceLock } from "../../../../core/contracts/task.js";
 import { DatasetCache } from "../../cache.js";
@@ -15,9 +16,10 @@ export class HuggingFaceSource {
     cacheDir: string,
     private readonly definition: HuggingFaceDefinition,
     transport?: HuggingFaceTransport,
+    private readonly network?: NetworkAccess,
   ) {
-    this.cache = new DatasetCache(cacheDir);
-    this.transport = transport ?? huggingfaceTransport();
+    this.cache = new DatasetCache(cacheDir, network);
+    this.transport = transport ?? huggingfaceTransport(undefined, network);
   }
   private get sourceId(): string {
     return `huggingface:${this.definition.dataset}:${this.definition.subset}:${this.definition.split}`;
@@ -56,7 +58,7 @@ export class HuggingFaceSource {
     const url = `${this.transport.apiBase}/api/datasets/${dataset}/revision/${encodeURIComponent(revision)}?blobs=true`;
     let data: { sha?: unknown; siblings?: unknown };
     try {
-      const response = await fetchNetworkResponse(url, { signal });
+      const response = await fetchNetworkResponse(url, { signal }, { ...(this.network ? { network: this.network } : {}) });
       if (!response.ok) throw new Error(`Hugging Face metadata HTTP ${response.status}`);
       data = (await response.json()) as { sha?: unknown; siblings?: unknown };
     } catch (cause) {

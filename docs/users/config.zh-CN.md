@@ -38,17 +38,38 @@ Terminal-Bench 的版本、任务镜像与支持条件见 [Terminal-Bench 指南
 | environment | Agent 在哪里运行 | 当前机器的 `local`，或隔离的 `docker` |
 | scheduler | 同时跑多少任务、是否使用 Ray 节点 | `local`、`ray` |
 
-Benchmark 的 Profile 是一组默认配置。例如选 `workbuddy` 的 `office` 场景后，会自动带上对应数据来源、验证器和默认预算。先使用默认组合，有需要再改；用 `config explain` 查看最终用了什么。
+Benchmark 的 Profile 是一组默认配置。例如选 `workbuddy` 的 `office` 场景后，会自动带上对应数据来源、验证器和默认预算。先使用默认组合，有需要再改；用 `inspect` 查看最终用了什么。
 
 Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local，Reporter 默认 Markdown。省略 `output` 或 `output.directory` 时，结果保存在仓库根目录的 `results/<Benchmark 名>/<YAML 文件名（不含扩展名）>/<runId>/`。例如 `playbook/gsm8k/gsm8k-agentbundle.yaml` 对应 `results/gsm8k/gsm8k-agentbundle/<runId>/`；Benchmark 名使用配置中的名称，WorkBuddy 的各场景均归入 `workbuddy`。默认路径不受 YAML 所在目录或命令启动目录影响；安装包运行时，以 Evaluator 包根目录代替源码仓库根目录。
 
-显式填写 `output.directory` 可以覆盖默认位置；此时相对路径仍相对实验 YAML。已有运行需要续跑时，应保留原来的输出目录配置；`config resolve` 导出和运行保存的配置会记录实际输出目录，重载时不因文件改名而重新生成。Harbor 缓存默认使用系统用户缓存目录，可通过 EVALUATOR_CACHE_DIR 或 benchmark.config.cacheDir 覆盖；Security 必须使用 Linux 原生目录，不能解压到 Windows 或 /mnt/c、/mnt/d。
+显式填写 `output.directory` 可以覆盖默认位置；此时相对路径仍相对实验 YAML。已有运行需要续跑时，应保留原来的输出目录配置；`inspect` 输出和运行保存的配置会记录实际输出目录。Harbor 缓存默认使用系统用户缓存目录，可通过 EVALUATOR_CACHE_DIR 或 benchmark.config.cacheDir 覆盖；Security 必须使用 Linux 原生目录，不能解压到 Windows 或 /mnt/c、/mnt/d。
 
 本地默认使用环境准备流水线，准备并发跟随 `scheduler.concurrency`；每题求解和验证依赖都就绪后，有空闲执行位置即可开始解题。需要等整批准备完再执行时，设置 `run.preparation.mode: batch`；需要单独限制准备并发时，设置 `run.preparation.concurrency`。Ray 保留整批模式，AgentX Profile 保留串行整批准备。规则及示例见[并发与环境准备](concurrency.zh-CN.md)。
 
 组件支持字符串简写，例如 `reporter: markdown`、`metrics: [harbor-score, success-rate, duration, usage]`，以及 `{ name, config }` 完整写法。Environment 的 platform 与 Scheduler 的 concurrency、nodes 支持平铺；与 config 重复提供同一参数会报错。更换插件名称会清除上一实现的专属配置。
 
 默认运行全部任务，单题失败后继续其他题（`onError: continue`）。使用 `run experiment.yaml --resume [run-id]` 续跑；配置使用 `services` 与单个 `benchmark`，不接受旧 `benchmarks` 数组或顶层 `model`、`solver`。
+
+## NPU 与 GPU 选择
+
+在实验 YAML 顶层设置 `hardware`，作用于整个实验：
+
+```yaml
+hardware: npu # npu 或 gpu；省略时默认 npu
+```
+
+用户 YAML 覆盖 Profile 默认值，未指定时使用 NPU。`inspect` 和保存的运行配置记录实际选择，Ray 节点接收同一值。该字段不探测本机设备，不启动或切换远端模型服务，也不将 CUDA 题目转换为 NPU 题目。无需加速卡的任务在两种选择下行为相同。
+
+| 场景 | `npu` | `gpu` |
+| --- | --- | --- |
+| AgentX API 回放、vLLM 指标 | 支持 | 支持 |
+| AgentX `telemetry.ascend` | 使用 Ascend 采集 | 配置冲突，运行前报错 |
+| Kernel 精度、计时与 profiling | 使用 NPU | 运行前报 GPU 后端尚未实现 |
+| Harbor 题目明确要求 GPU | 报题目与所选硬件不匹配 | 报 GPU 任务执行尚未实现 |
+
+普通模型 API 调用不要求 Evaluator 所在机器有 GPU/NPU。GPU 硬件采集和任务设备挂载当前不支持。硬件不匹配的题目记录为失败，后续处理遵循 `run.onError`，不会静默跳过或替换硬件。
+
+旧配置省略该字段仍按 NPU 读取；缺省与显式 `npu` 的续跑配置指纹相同，改为 `gpu` 后需要新建 run。源码、插件版本和数据来源变化仍受原有续跑检查约束。离线 `report` 不访问硬件。
 
 ## 按需增加参数
 
@@ -96,7 +117,7 @@ run:
 
 旧字段 `benchmark.config.defaults.verifyTimeoutSeconds` 已删除，改用 `run.verifyTimeoutSeconds`，不自动兼容或迁移。更新 Ray 部署时，coordinator、worker 和 Jobs 运行包需要一起更新，确保阶段参数传递一致。
 
-Docker 可通过 `environment.config.pullProxy` 为镜像获取单独指定 HTTP/HTTPS 代理，不影响构建、容器和模型请求；配置、凭据和节点地址说明见 [Docker 代理说明](faq/docker.zh-CN.md#如何只为拉取镜像指定代理)。
+下载源、代理及镜像获取方式使用独立的 [网络 YAML](network.zh-CN.md)，由 `--network` 指定。
 
 Pi / SimpleAgent 和内置 Judge 对显式 `base_url` 的 OpenAI Chat Completions 服务遵循同一输出规则：配置 `services.<服务>.maxTokens` 时发送该上限；省略时不发送 `max_tokens` 或 `max_completion_tokens`，由 API 服务决定回复上限。SDK 必需的模型预算仍用于本地上下文管理，不构成隐含的请求输出限制。通过已注册 Provider 使用模型时保留其 SDK 协议默认值；其他外部 Agent 保留各自的模型配置机制。
 
@@ -120,7 +141,7 @@ run:
 
 准备超时记为 `ENV_PREPARATION_TIMEOUT`，不产生评分，也不自动重试；`onError: continue` 时允许其他正常任务继续，清理或存储故障仍可能要求停止。基础值 600 秒、有效并发 32 时，单环境最多等待 6000 秒；基础值 1800 秒则为 18000 秒。需要缩短等待时降低基础值，或显式设置整轮上限。
 
-旧 Harbor 字段 `benchmark.config.environmentBuildTimeoutMultiplier` 已删除，不能继续叠乘。旧配置需移除该字段；若需要整轮限制，改为显式 `roundTimeoutSeconds`，若需要调整单环境基础值，使用 `environmentTimeoutSeconds`。新旧执行包、Profile 与配置身份检查仍然生效；升级后无法匹配原 run 时新建 run，或使用原版本完成续跑，不修改旧 manifest。历史整批预算按原含义保留，离线报告不把它当成单环境时限。
+旧 Harbor 字段 `benchmark.config.environmentBuildTimeoutMultiplier` 已删除，不能继续叠乘。旧配置需移除该字段；若需要整轮限制，改为显式 `roundTimeoutSeconds`，若需要调整单环境基础值，使用 `environmentTimeoutSeconds`。Profile 展开后的配置身份检查仍然生效；升级后配置无法匹配原 run 时新建 run，或使用原配置完成续跑，不修改旧 manifest。Evaluator 代码允许更新并重新构建后续跑。历史整批预算按原含义保留，离线报告不把它当成单环境时限。
 
 ## 指定起始题目与题数
 
@@ -180,14 +201,13 @@ Web 必须使用裁判模型，最简配置默认绑定默认服务。增加 ser
 ## 查看实际配置
 
 ```bash
-ember-evaluator config explain experiment.yaml
-ember-evaluator config resolve experiment.yaml > resolved.yaml
-ember-evaluator config explain experiment.yaml --patch ./patch.yaml --model my-model
+ember-evaluator inspect experiment.yaml
+ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-explain 逐项显示最终值及来源；resolve 输出完整的新版用户 YAML。两者使用正式运行相同的注册与校验路径，不调用工厂，不下载数据、枚举题目、启动容器或访问模型。模型名和地址等非敏感环境变量仍需提供，密钥变量可以未设置。输出保留密钥环境变量引用；CLI 直接提供的密钥替换为 ${EVALUATOR_API_KEY} 引用，运行导出文件时需设置该变量或通过 CLI 重新提供认证。将导出文件放在原实验目录，保证 Bundle 等相对路径含义一致。
+`inspect` 输出包含实际实验配置与网络设置的 JSON，保留密钥环境变量引用。它校验配置，不启动组件工厂、下载、任务枚举、容器或模型调用。模型设置从 YAML 读取；模型覆盖参数仅由 run 支持。
 
-优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑要求运行包和插件版本与原 run 匹配。
+优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑允许更新 Evaluator 代码，配置、来源、外部插件和 Solver 身份仍需匹配，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## Ray 与执行节点
 
@@ -244,9 +264,9 @@ scheduler:
 
 ## 发现、初始化与诊断
 
-benchmark list/info 从组件注册和 Profile 获取能力，不调用组件工厂。init --benchmark <name> --output <yaml> 生成新版最小配置，以 wx 写入，已有文件不会覆盖。上述命令及 doctor 都支持显式 --patch。
+benchmark list/info 从组件注册和 Profile 获取能力，不调用组件工厂。init --benchmark <name> --output <yaml> 生成新版最小配置，以 wx 写入，已有文件不会覆盖。benchmark list/info、init、inspect 和 doctor 都支持显式 --patch。
 
-doctor <yaml> 复用正式配置和 Benchmark 组合校验，检查所需 Docker/Python、本地路径及 Ray 网络连接。不会发送模型请求、下载数据、构建镜像或启动集群。通过、失败和未检查分别显示为 passed、failed、not-checked；本地连通不等于远端节点环境或模型权限有效。发现失败返回 1，配置错误返回 2，取消返回 130。
+doctor <yaml> 复用正式配置和 Benchmark 组合校验，检查所需 Docker/Python、本地路径及 Ray 网络连接。会执行临时下载和 Docker 构建探针，不发送模型请求或执行任务。通过、失败和未检查分别显示为 passed、failed、not-checked；本地连通不等于远端节点环境或模型权限有效。发现失败返回 1，配置错误返回 2，取消返回 130。
 
 --dry-run 会解析来源、检查缓存并按需下载，最终枚举所选任务 ID。与 doctor 的副作用范围不同。
 
@@ -258,6 +278,6 @@ SimpleQA/HealthBench 通过 benchmark.config.judgeService 显式选择 services 
 
 ## 网络故障补测
 
-`ember retry --run <run-id>` 为原 Run 的当前网络失败任务创建新 Attempt。有效零分、普通阶段超时和非网络错误不补测。网络访问仅在对应操作内有限重试，不自动补测整题；每次显式手动请求可为符合条件的任务追加一个 Attempt。`run.taskRetry` 已删除，旧 YAML 需要移除此字段。Ray Jobs 使用本页的独立 `deployment` 连接原网关，未注册为 Scheduler 插件。详见[网络故障补测](network-retry.zh-CN.md)。
+`ember-evaluator retry --run <run-id>` 为原 Run 的当前网络失败任务创建新 Attempt。有效零分、普通阶段超时和非网络错误不补测。网络访问仅在对应操作内有限重试，不自动补测整题；每次显式手动请求可为符合条件的任务追加一个 Attempt。`run.taskRetry` 已删除，旧 YAML 需要移除此字段。Ray Jobs 使用本页的独立 `deployment` 连接原网关，未注册为 Scheduler 插件。详见[网络故障补测](network-retry.zh-CN.md)。
 
 [返回用户手册](README.zh-CN.md) · [快速上手](quick-start.zh-CN.md)

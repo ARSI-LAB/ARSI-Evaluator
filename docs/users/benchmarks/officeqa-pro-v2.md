@@ -32,18 +32,18 @@ Set `HF_TOKEN`, `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY` in the execu
 Run from the repository root:
 
 ```bash
-node dist/cli.js benchmark info officeqa-pro-v2
-node dist/cli.js doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
+ember-evaluator benchmark info officeqa-pro-v2
+ember-evaluator doctor playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --dry-run
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml
 ```
 
-`doctor` checks configuration/local dependencies without downloading questions/corpus. `--dry-run` queries sources, reads the question CSV, and prints task IDs under normal CLI rules. It requires access and may download approximately 225KB initially, but does not download corpus, build images, or call models.
+`doctor` checks configuration, local dependencies and network access with temporary download/build probes; it does not download the full questions/corpus. `--dry-run` queries sources, reads the question CSV, and prints task IDs under normal CLI rules. It requires access and may download approximately 225KB initially, but does not download corpus, build images, or call models.
 
 JSON/PDF, single-machine, and Ray Playbooks have no task limits and run all 90 questions. These commands use the [full parsed-JSON configuration](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml):
 
 ```bash
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml
 ```
 
 For a small check, add `run.maxTasks: 2`. Select an ID with `run.taskIds: ["0"]`; quote numeric IDs to keep strings. Limiting questions does not shrink the corpus. Start a new run when switching to all tasks.
@@ -87,8 +87,8 @@ Reference answers are omitted from results by default. `run.includeTaskAnswer: t
 Resume and offline reports:
 
 ```bash
-node dist/cli.js run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --resume
-node dist/cli.js report /absolute/path/to/run-directory
+ember-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml --resume
+ember-evaluator report /absolute/path/to/run-directory
 ```
 
 Resume pins the original commit, file manifest, and SHA-256. Complete valid caches require no HF access; missing/corrupt caches redownload original URLs/digests. Explicit YAML `hfToken: ${HF_TOKEN}` still requires that variable at configuration load. Modified public build directories fail explicitly rather than using changed documents. Scoring script/package changes retain plugin-version checks. Offline reporting requires no model key, HF token, or scoring rerun.

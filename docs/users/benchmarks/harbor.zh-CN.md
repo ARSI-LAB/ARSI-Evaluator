@@ -4,6 +4,12 @@
 
 Harbor 数据集通过任务目录中的指令、环境声明和验证入口完成评测。本文说明自定义来源配置、镜像选择、网络和文件交付；WorkBuddy 的场景与裁判要求见[WorkBuddy 指南](workbuddy.zh-CN.md)。
 
+## 任务硬件要求
+
+实验顶层 `hardware` 选择 `npu`（默认）或 `gpu`。题目中的 `gpu`、`gpus`、`gpu_types` 不会被覆盖：选择 NPU 时，GPU 题目报硬件不匹配；选择 GPU 时，报 GPU 任务执行尚未实现。诊断包含题目和声明位置，错误分类为 `BENCHMARK_UNSUPPORTED`，后续处理遵循 `run.onError`。
+
+检查覆盖求解环境、独立验证环境、多阶段任务和可识别的 Compose GPU 声明，在构建镜像或启动任务容器前拒绝。不声明 GPU 的题目保持现有行为；选择 NPU 不会自动挂载设备或移植 CUDA 代码。
+
 ## 一个新数据集只增加 YAML
 
 数据集含 `tasks/<目录>/task.toml`、`instruction.md`、`environment/` 和 `tests/` 时，可以配置固定归档：

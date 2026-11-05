@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../core/contracts/hardware.js";
 import type { JsonValue, PhaseTimeoutOverrides } from "../core/contracts/task.js";
 
 export type CliOverrides = {
@@ -32,6 +33,8 @@ export type SolverSelection = Selection & { service: string };
 export type VerifierSelection = Selection & { service?: string };
 
 export type EffectiveConfig = {
+  /** Defaults to NPU for existing callers and saved configurations. */
+  hardware?: HardwareKind;
   /** Every declared model service. Callers bind the one they reference. */
   services: Record<string, ModelConfig>;
   benchmark: Selection;
@@ -66,6 +69,9 @@ export type RuntimeAuth = {
 };
 
 export type LoadedConfig = {
+  /** User-selected profile name, before expansion to an implementation such as harbor. */
+  benchmarkName?: string;
+  network?: import("../core/contracts/network.js").NetworkDocument;
   deployment?: import("./deployment.js").Deployment;
   experiment: EffectiveConfig;
   /** Secrets for services whose credentials were resolved. The solver's service is always present. */
@@ -99,6 +105,8 @@ export function solverBinding(config: LoadedConfig): { service: string; model: M
   if (!model || !auth) throw new TypeError(`solver references unknown service ${service}`);
   return { service, model, auth };
 }
+
+export const DEFAULT_LOCAL_CONCURRENCY = 1;
 
 export const DEFAULT_METRICS: readonly Selection[] = [
   { name: "success-rate", config: {} },

@@ -14,11 +14,11 @@ export class GitHubLfsSource {
 
   constructor(private readonly options: GitHubLfsSourceOptions, private readonly transport: GitHubLfsTransport = {
     apiBase: "https://api.github.com", lfsBase: "https://github.com",
-  }) {
+  }, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(options.repository)) throw new TypeError("Invalid GitHub repository");
     if (!options.revision.trim()) throw new TypeError("GitHub revision must not be empty");
-    this.cache = new GitBlobCache(options.cacheDir);
-    this.lfs = new GitLfsCache(this.cache.bytes);
+    this.cache = new GitBlobCache(options.cacheDir, network);
+    this.lfs = new GitLfsCache(this.cache.bytes, network);
   }
 
   async fetch(path: string, signal: AbortSignal): Promise<string> {

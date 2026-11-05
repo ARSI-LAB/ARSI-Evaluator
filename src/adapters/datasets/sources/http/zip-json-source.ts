@@ -11,10 +11,10 @@ export class HttpZipJsonSource implements DatasetRecordSource {
   private readonly cache: DatasetCache;
   private readonly sourceId: string;
   private readonly definitionHash: string;
-  constructor(cacheDir: string, private readonly definition: HttpZipJsonDefinition) {
+  constructor(cacheDir: string, private readonly definition: HttpZipJsonDefinition, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
     if (new URL(definition.url).protocol !== "https:" || !/^[a-f0-9]{64}$/.test(definition.sha256))
       throw new TypeError("HTTP ZIP data requires an HTTPS URL and SHA-256");
-    this.cache = new DatasetCache(cacheDir);
+    this.cache = new DatasetCache(cacheDir, network);
     this.sourceId = `http-zip:${definition.url}`;
     this.definitionHash = fingerprintConfig(definition);
   }

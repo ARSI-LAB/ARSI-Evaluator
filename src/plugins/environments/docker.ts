@@ -1,10 +1,11 @@
+import { NetworkRuntime } from "../../adapters/network/runtime.js";
+import type { NetworkAccess } from "../../core/contracts/network.js";
 import { declaredErrorCode } from "../../core/errors/classify.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { connect } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { DEFAULT_PIP_INDEX_URL, DEFAULT_DEBIAN_MIRROR, dockerBuildNetwork } from "../../adapters/containers/build-network.js";
+import { dockerBuildNetwork } from "../../adapters/containers/build-network.js";
 import { constants } from "node:fs";
 import { access, chmod, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,11 +14,10 @@ import { removeDockerContainer, stopDockerContainer } from "./docker-cleanup.js"
 import { captureDockerLogOwnership, makeDockerLogsWritable, restoreDockerLogOwnership } from "./docker-log-ownership.js";
 import { dockerExecutionOwner, ownDockerRuntimeUpload, type DockerExecutionOwner } from "./docker-runtime-upload.js";
 import { assertDockerCapacity, readDockerCapacity, type DockerCapacity } from "./docker-resources.js";
-import { aptMirrorInstructions } from "./docker-apt-mirror.js";
-import { insertDockerfileStageSettings } from "../../adapters/containers/dockerfile.js";
 import { applyBuildPipConstraints, parseBuildPipConstraints } from "../../adapters/containers/pip-constraints.js";
 import { readDirectoryModes, restoreDirectoryModes } from "../../adapters/filesystem/directory-modes.js";
-import { createDockerImagePuller, parseDockerPullProxy, type DockerImagePull } from "./docker-image-pull.js";
+import { createDockerImagePuller, type DockerImagePull } from "./docker-image-pull.js";
+import { DockerTaskArchive } from "./docker-task-archive.js";
 import { dockerImageName, type DockerImageScope } from "./docker-image-name.js";
 import { resolvePinnedTaskImage } from "./docker-base-image.js";
 import { dockerActivity, observeDockerCommand, withDockerActivity } from "./docker-progress.js";
@@ -78,8 +78,8 @@ import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 const DOCKER_OUTPUT_LIMIT = 4 * 1024 * 1024;
 const PROCESS_STOP_GRACE_MS = 500;
 // Direct egress to pypi.org/deb.debian.org is unreliable on CN networks, so the
-// task builds default to domestic mirrors. Override each source independently.
-const DEFAULT_NODE_MIRROR = "https://npmmirror.com/mirrors/node";
+// Task builds receive explicit per-run network settings.
+
 
 export class DockerEnvironmentError extends Error {
   constructor(
@@ -145,11 +145,11 @@ function killDockerClient(child: ChildProcess): Promise<void> {
 export async function runDockerCommand(
   dockerExecutable: string,
   args: string[],
-  options: { input?: Uint8Array | null; signal?: AbortSignal; maxBuffer?: number;
+  options: { env?: NodeJS.ProcessEnv; input?: Uint8Array | null; signal?: AbortSignal; maxBuffer?: number;
     onOutput?: (stream: "stdout" | "stderr", chunk: Uint8Array) => void } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   options.signal?.throwIfAborted();
-  const child = spawn(dockerExecutable, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+  const child = spawn(dockerExecutable, args, { env: options.env ?? process.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   let observationFailure: unknown;
@@ -349,8 +349,8 @@ export type DockerEnvironmentOptions = {
   buildPipConstraints?: Record<string, string[]>;
   /** Exact, one-step mapping to explicitly prepared public task images. */
   imageOverrides?: Record<string, string>;
-  /** Proxy for evaluator-owned image acquisition only, never build/container/model traffic. */
-  pullProxy?: string;
+  network?: import("../../core/contracts/network.js").NetworkAccess | undefined;
+  benchmarkName?: string | undefined;
   dockerExecutable?: string;
   nodeImage?: string;
   modelEndpoint?: string | null;
@@ -807,25 +807,6 @@ class DockerSession implements EnvironmentSession {
   }
 }
 
-let forwardableProxy: boolean | undefined;
-/** A stale proxy variable must not cut container egress; check reachability once per process. */
-async function proxyReachable(proxy: string): Promise<boolean> {
-  if (forwardableProxy === undefined) {
-    const target = new URL(proxy);
-    forwardableProxy = await new Promise<boolean>(resolve => {
-      const socket = connect({ host: target.hostname, port: Number(target.port) || 80 });
-      const settle = (value: boolean) => {
-        socket.destroy();
-        resolve(value);
-      };
-      socket.setTimeout(1500, () => settle(false));
-      socket.once("connect", () => settle(true));
-      socket.once("error", () => settle(false));
-    });
-  }
-  return forwardableProxy;
-}
-
 export class DockerEnvironment implements Environment {
   private readonly prepareBuild: DockerEnvironmentOptions["prepareBuild"];
   readonly supportsRuntimeInstallation = true;
@@ -839,7 +820,10 @@ export class DockerEnvironment implements Environment {
   private readonly command: DockerCommand;
   private readonly imageInventory: DockerImageInventory;
   private readonly imageConfigFingerprint: string | undefined;
+  private readonly network: NetworkAccess;
   private readonly pullImage: DockerImagePull;
+  private readonly pullTaskImage: DockerImagePull;
+  private readonly taskArchive: DockerTaskArchive | undefined;
   private readonly platformSelection: DockerPlatformSelection;
   private readonly allowEmulation: boolean;
   private readonly capabilities: PlatformCapabilityDetector;
@@ -850,13 +834,13 @@ export class DockerEnvironment implements Environment {
   /** Base task image used when the benchmark's environment spec has no image. */
   private readonly defaultImage: string | null;
   constructor(options: DockerEnvironmentOptions = {}) {
+    this.network = options.network ?? new NetworkRuntime();
     this.prepareBuild = options.prepareBuild;
     this.platformSelection = parseDockerPlatform(options.platform);
     this.allowEmulation = parseDockerEmulation(options.allowEmulation);
     this.containerEnv = parseDockerContainerEnv(options.containerEnv);
     this.buildPipConstraints = parseBuildPipConstraints(options.buildPipConstraints);
     this.imageOverrides = parseDockerImageOverrides(options.imageOverrides);
-    const pullProxy = options.pullProxy === undefined ? undefined : parseDockerPullProxy(options.pullProxy);
     this.dockerExecutable = options.dockerExecutable ?? "docker";
     this.command = observeDockerCommand(platformImageCommand(async (args, commandOptions) => {
       try { return await runDockerCommand(this.dockerExecutable, args, commandOptions); }
@@ -872,7 +856,11 @@ export class DockerEnvironment implements Environment {
     this.imageInventory = new DockerImageInventory(this.command);
     this.command = this.imageInventory.command;
     this.imageConfigFingerprint = options.imageConfigFingerprint;
-    this.pullImage = createDockerImagePuller(this.command, pullProxy);
+    this.pullImage = createDockerImagePuller(this.command, { network: this.network });
+    const acquisition = options.benchmarkName ? this.network.settings.docker.benchmarks[options.benchmarkName] : undefined;
+    this.taskArchive = acquisition?.method === "archive" ? new DockerTaskArchive(this.command, acquisition, this.network) : undefined;
+    this.pullTaskImage = createDockerImagePuller(this.command, { network: this.network,
+      acquisition: acquisition?.method === "archive" ? undefined : acquisition });
     this.nodeImage = new DockerRuntime(this.command, options.nodeImage, DOCKER_PLATFORM, this.pullImage, this.dockerExecutable).nodeImage;
     this.capabilities = new PlatformCapabilityDetector(this.command, options.onWarning);
     this.modelEndpoint = options.modelEndpoint ?? null;
@@ -880,11 +868,11 @@ export class DockerEnvironment implements Environment {
   }
   private async platformContext(spec: Pick<EnvironmentSpec, "platform">, signal: AbortSignal) {
     const native = await this.capabilities.nativePlatform(signal);
-    const resolution = resolveDockerPlatform(this.platformSelection, spec.platform, native, this.allowEmulation);
+    const resolution = resolveDockerPlatform(this.platformSelection, this.taskArchive ? undefined : spec.platform, native, this.allowEmulation);
     let runtimes = this.runtimes.get(resolution.platform);
     if (!runtimes) {
       const runtime = new DockerRuntime(this.command, this.nodeImage, resolution.platform, this.pullImage, this.dockerExecutable);
-      runtimes = { runtime, solverRuntime: new DockerSolverRuntime(this.command, runtime) };
+      runtimes = { runtime, solverRuntime: new DockerSolverRuntime(this.command, runtime, this.network) };
       this.runtimes.set(resolution.platform, runtimes);
     }
     const { runtime, solverRuntime } = runtimes;
@@ -931,7 +919,7 @@ export class DockerEnvironment implements Environment {
       );
     const sourceModes = await readDirectoryModes(context.context, signal);
     let network;
-    try { network = dockerBuildNetwork(); }
+    try { network = dockerBuildNetwork(this.network); }
     catch (cause) { throw new DockerEnvironmentError("CONFIG_INVALID", "Invalid Docker build network settings", cause); }
     const key = createHash("sha256")
       .update(
@@ -940,9 +928,6 @@ export class DockerEnvironment implements Environment {
           permissions: sourceModes,
           mirrorPolicy: "ca-bootstrap-v5-apt-network-defaults",
           platform,
-          pipIndex: process.env.PIP_INDEX_URL || DEFAULT_PIP_INDEX_URL,
-          debianMirror: process.env.EVALUATOR_DEBIAN_MIRROR || DEFAULT_DEBIAN_MIRROR,
-          nodeMirror: process.env.EVALUATOR_NODE_MIRROR || DEFAULT_NODE_MIRROR,
           network: network.identity,
           dockerfile: relative(context.context, context.dockerfile).replaceAll("\\", "/"),
           ...(pipConstraints.length ? { pipConstraints } : {}),
@@ -992,74 +977,10 @@ export class DockerEnvironment implements Environment {
           dockerfile: relative(snapshot, dockerfile).replaceAll("\\", "/") } }, buildSignal, dockerActivity());
         buildSignal.throwIfAborted();
         await applyBuildPipConstraints(snapshot, dockerfile, pipConstraints, buildSignal);
-        const pipIndex = process.env.PIP_INDEX_URL || DEFAULT_PIP_INDEX_URL;
-        const debianMirror = process.env.EVALUATOR_DEBIAN_MIRROR || DEFAULT_DEBIAN_MIRROR;
-        const nodeMirror = process.env.EVALUATOR_NODE_MIRROR || DEFAULT_NODE_MIRROR;
-        let nodeUrl: URL;
-        try {
-          nodeUrl = new URL(nodeMirror);
-        } catch (cause) {
-          throw new DockerEnvironmentError("CONFIG_INVALID", "EVALUATOR_NODE_MIRROR must be a URL", cause);
-        }
-        if (!["http:", "https:"].includes(nodeUrl.protocol) || nodeUrl.username || nodeUrl.password ||
-          nodeUrl.search || nodeUrl.hash || /[\s\\"'`$]/u.test(nodeUrl.href)) {
-          throw new DockerEnvironmentError("CONFIG_INVALID", "EVALUATOR_NODE_MIRROR must be a credential-free HTTP(S) URL without shell metacharacters");
-        }
-        const buildArgs: string[] = [...network.buildArgs];
-        const buildInstructions: string[] = [];
-        // Build arguments need stage-local declarations to reach npm/pnpm and
-        // Corepack RUN instructions, including separate verifier images.
-        if (network.identity.npmRegistry !== undefined) buildInstructions.push("ARG NPM_CONFIG_REGISTRY", "ARG npm_config_registry", "ARG COREPACK_NPM_REGISTRY");
-        if (network.identity.pipIgnoreInstalled !== undefined) buildInstructions.push("ARG PIP_IGNORE_INSTALLED");
-        if (pipIndex) {
-          let url: URL;
-          try {
-            url = new URL(pipIndex);
-          } catch (cause) {
-            throw new DockerEnvironmentError("CONFIG_INVALID", "PIP_INDEX_URL must be a URL", cause);
-          }
-          if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
-            throw new DockerEnvironmentError(
-              "CONFIG_INVALID",
-              "PIP_INDEX_URL must be a credential-free HTTP(S) URL",
-            );
-          }
-          buildInstructions.push("ARG PIP_INDEX_URL");
-        }
-        if (debianMirror) {
-          let url: URL;
-          try {
-            url = new URL(debianMirror);
-          } catch (cause) {
-            throw new DockerEnvironmentError("CONFIG_INVALID", "EVALUATOR_DEBIAN_MIRROR must be a URL", cause);
-          }
-          if (
-            !["http:", "https:"].includes(url.protocol) ||
-            url.username ||
-            url.password ||
-            url.pathname !== "/" ||
-            url.search ||
-            url.hash
-          ) {
-            throw new DockerEnvironmentError(
-              "CONFIG_INVALID",
-              "EVALUATOR_DEBIAN_MIRROR must be a credential-free HTTP(S) origin",
-            );
-          }
-          buildInstructions.push(...aptMirrorInstructions(url));
-        }
-        if (buildInstructions.length) {
-          const recipe = await readFile(dockerfile, "utf8");
-          // A non-root base can switch to root later. Retry guarded setup after
-          // USER while preserving heredoc bodies and continued instructions.
-          const mirroredRecipe = insertDockerfileStageSettings(recipe, buildInstructions, undefined, true);
-          if (mirroredRecipe === recipe)
-            throw new DockerEnvironmentError("CONFIG_INVALID", "Dockerfile has no FROM instruction");
-          // Rewrite only the literal Node distribution URL in the public snapshot;
-          // preserve the dataset files, version variables and other downloads.
-          await writeFile(dockerfile, mirroredRecipe.replaceAll("https://nodejs.org/dist/", `${nodeUrl.href.replace(/\/$/u, "")}/`));
-        }
+        const buildArgs = network.buildArgs;
+        await writeFile(dockerfile, network.recipe(await readFile(dockerfile, "utf8")));
         await this.command(["build", "--platform", platform, ...(spec.build?.noCache ? ["--no-cache"] : []), ...buildArgs, "--tag", buildTag, "--file", dockerfile, snapshot], {
+          env: network.environment,
           signal: buildSignal,
           maxBuffer: 8 * 1024 * 1024,
         });
@@ -1073,10 +994,12 @@ export class DockerEnvironment implements Environment {
     return tag;
   }
   private async baseImage(spec: EnvironmentSpec, platform: ContainerPlatform, key: AttemptKey, signal: AbortSignal, observe?: (source: PreparationCacheSource) => void, useImageOverrides = true, scope?: DockerImageScope): Promise<ResolvedBaseImage> {
+    if (this.taskArchive && scope) return this.taskArchive.load(scope, platform, signal, observe);
     // Validate the public build context on every phase before consulting the
     // task-image cache, while keeping a mutable image tag pinned per attempt.
     const reference = await this.taskImage(spec, platform, signal, observe, useImageOverrides, scope);
-    const pinned = await resolvePinnedTaskImage(this.command, reference, platform, scope, signal, observe, this.pullImage);
+    const pull: DockerImagePull = (image, target, active) => this.pullTaskImage(image, target, active, scope);
+    const pinned = await resolvePinnedTaskImage(this.command, reference, platform, scope, signal, observe, pull);
     if (pinned) return pinned;
     const attempt = JSON.stringify([key.runId, key.taskId, key.attemptId, platform, reference, scope]);
     const cached = this.attemptBaseImages.get(attempt);
@@ -1088,7 +1011,7 @@ export class DockerEnvironment implements Environment {
         inspected = await this.command(["image", "inspect", "--platform", platform, reference, "--format", "{{.Id}}"], { signal });
       } catch (inspectError) {
         try {
-          localReference = (await this.pullImage(reference, platform, signal)).reference;
+          localReference = (await pull(reference, platform, signal)).reference;
         } catch (pullError) {
           throw new DockerEnvironmentError(
             "ENV_IMAGE_PULL_FAILED",
@@ -1277,25 +1200,11 @@ export class DockerEnvironment implements Environment {
     // The directory is empty during solve. No hidden grading material is placed
     // here until the Benchmark starts verification in a shared environment.
     if (phase === "solve") mounts.push({ source: verifier, target: "/logs/verifier" });
-    // Network egress of task containers is deployment-dependent; forward only the
-    // well-known proxy variables so in-container installs and
-    // model calls follow the coordinator's network setup. A loopback proxy address
-    // belongs to the coordinator host, so containers reach it via host-gateway;
-    // an unreachable proxy is skipped so stale variables keep direct egress working.
-    const containerProxy = (value: string): string =>
-      value
-        .replaceAll("//127.0.0.1:", "//host.docker.internal:")
-        .replaceAll("//localhost:", "//host.docker.internal:")
-        .replaceAll("//[::1]:", "//host.docker.internal:");
-    const proxySource = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY;
-    const useProxy =
-      proxySource !== undefined && proxySource !== "" && (await proxyReachable(containerProxy(proxySource)));
-    const forwardedEnv = (useProxy ? ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY"] : [])
-      .flatMap(key => {
-        const value = process.env[key];
-        if (value === undefined || value === "") return [];
-        return ["--env", `${key}=${key === "NO_PROXY" ? value : containerProxy(value)}`];
-      });
+    // Keep runtime routes explicit. An unavailable proxy is an error, never an implicit direct fallback.
+    const runtimeEnvironment = this.network.environment("runtime", {}, "container");
+    const forwardedEnv = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+      .flatMap(key => ["--env", `${key}=${runtimeEnvironment[key] ?? ""}`]);
+    if (runtimeEnvironment.HTTP_PROXY || runtimeEnvironment.HTTPS_PROXY) forwardedEnv.push("--env", "NODE_USE_ENV_PROXY=1");
     // "model-api" keeps the task container itself on --network none; only the
     // gateway container holds external network, and isolated containers must
     // not inherit host proxy settings that could bypass the policy.
@@ -1318,8 +1227,8 @@ export class DockerEnvironment implements Environment {
     // Apply deployment package mirrors to both standalone and Compose main
     // containers. Explicit task/config values win; model-only isolation stays.
     if (!isolatedGateway) for (const key of ["NPM_CONFIG_REGISTRY", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_DEFAULT_INDEX"]) {
-      const value = process.env[key];
-      if (containerEnv[key] === undefined && value !== undefined && value !== "") containerEnv[key] = containerProxy(value);
+      const value = this.network.environment("runtime")[key];
+      if (containerEnv[key] === undefined && value !== undefined && value !== "") containerEnv[key] = value;
     }
     if (spec.resources?.cpus !== undefined)
       containerEnv.NODE_OPTIONS = await cpuBudgetNodeOptions(this.command, launchImage, containerEnv.NODE_OPTIONS, signal);

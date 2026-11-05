@@ -10,6 +10,10 @@ import { storeKey, storeRecord, storeRun } from "../fixtures/results/store-fixtu
 import { harness, source } from "../fixtures/engine/fakes.js";
 import { fingerprintConfig } from "../../src/core/run-manifest.js";
 import { runEngine } from "../../src/core/engine.js";
+import type { SchedulerContext } from "../../src/core/contracts/scheduler.js";
+import { BUILTIN_RUNTIME_ID } from "../../src/core/builtin-runtime.js";
+import { PACKAGE_RUNTIME_ID } from "../../src/core/package-provenance.js";
+import { assertWorkerVersions } from "../../src/adapters/ray/protocol.js";
 
 const roots: string[] = []; const stores: LocalRunStore[] = [];
 async function root() { const value = await mkdtemp(join(tmpdir(), "evaluator-resume-")); roots.push(value); return value; }
@@ -132,20 +136,36 @@ test.each(["config", "plugins", "source"])("resume rejects changed %s before a m
   expect(value.inputs).toEqual([]);
 });
 
-test("resume rejects a changed or historically missing builtin runtime lock before source or environment access", async () => {
-  for (const previous of [undefined, `sha256:${"a".repeat(64)}`]) {
-    const value = await interrupted(); value.events.length = 0;
-    if (previous !== undefined) {
-      await writeFile(join(value.resumeDirectory, "manifest.json"), JSON.stringify({ ...value.run,
-        pluginVersions: { ...value.run.pluginVersions, "ember-evaluator:builtin-runtime": previous } }));
-    }
-    value.components.pluginVersions = {
-      ...value.components.pluginVersions,
-      "ember-evaluator:builtin-runtime": `sha256:${"b".repeat(64)}`,
-    };
-    await expect(runEngine({ ...value, signal: new AbortController().signal }))
-      .rejects.toMatchObject({ code: "SOURCE_CHANGED" });
-    expect(value.events).toEqual([]);
-    expect(value.inputs).toEqual([]);
-  }
+test.each([[], [BUILTIN_RUNTIME_ID], [PACKAGE_RUNTIME_ID], [BUILTIN_RUNTIME_ID, PACKAGE_RUNTIME_ID]].map(historicalIds => ({ historicalIds })))(
+  "resume accepts updated Evaluator code with historical locks $historicalIds", async ({ historicalIds }) => {
+    const value = await interrupted();
+    const previousVersions = { ...value.run.pluginVersions,
+      ...Object.fromEntries(historicalIds.map(id => [id, `sha256:${"a".repeat(64)}`])) };
+    const previousProvenance = { bundle: "same-candidate", harnessVersion: "1", installation: "old-installation", bridgeDigest: "old-bridge" };
+    await writeFile(join(value.resumeDirectory, "manifest.json"), JSON.stringify({ ...value.run,
+      pluginVersions: previousVersions, solverProvenance: previousProvenance }));
+    const currentVersions = { ...value.components.pluginVersions,
+      [BUILTIN_RUNTIME_ID]: `sha256:${"b".repeat(64)}`, [PACKAGE_RUNTIME_ID]: `sha256:${"c".repeat(64)}` };
+    const currentProvenance = { ...previousProvenance, installation: "new-installation", bridgeDigest: "new-bridge" };
+    value.components.pluginVersions = currentVersions;
+    value.components.solver.provenance = async () => currentProvenance;
+    const setup = vi.fn(async (context: SchedulerContext) => {
+      assertWorkerVersions(context.run.pluginVersions, currentVersions, context.run.pluginVersions[PACKAGE_RUNTIME_ID]!, currentVersions[PACKAGE_RUNTIME_ID]!);
+      expect(context.run.solverProvenance).toEqual(currentProvenance);
+    });
+    value.components.scheduler.setup = setup;
+    const solve = vi.spyOn(value.components.solver, "solve");
+    const snapshot = await runEngine({ ...value, signal: new AbortController().signal });
+    expect(snapshot.run.status).toBe("completed");
+    expect(snapshot.run.runId).toBe(value.run.runId);
+    expect(value.inputs.map(input => input.id)).toEqual(["b", "c"]);
+    expect(solve).toHaveBeenCalledTimes(2);
+    expect(setup).toHaveBeenCalledOnce();
+    expect(snapshot.records.find(record => record.key.taskId === "a")!.key.attemptId).toBe("a-old");
+    expect(await value.components.store.listAttempts()).toHaveLength(5);
+    expect(snapshot.run.pluginVersions).toEqual(previousVersions);
+    expect(snapshot.run.solverProvenance).toEqual(previousProvenance);
+    await value.components.store.close();
+    expect((await runEngine({ ...value, signal: new AbortController().signal })).digest).toBe(snapshot.digest);
+    expect(solve).toHaveBeenCalledTimes(2);
 });

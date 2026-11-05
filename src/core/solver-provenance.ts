@@ -60,3 +60,18 @@ export function assertSolverProvenance(
     });
   }
 }
+
+function resumeIdentity(value: SolverProvenance | undefined): SolverProvenance | undefined {
+  if (value === undefined) return undefined;
+  // Installation recipes and the AgentX bridge include Evaluator-owned code.
+  // Keep them for runtime caches and worker checks, but allow updates between sessions.
+  const { installation: _installation, bridgeDigest: _bridgeDigest, ...identity } = value;
+  return identity;
+}
+
+export function assertResumeSolverProvenance(
+  expected: SolverProvenance | undefined,
+  actual: SolverProvenance | undefined,
+): void {
+  assertSolverProvenance(resumeIdentity(expected), resumeIdentity(actual));
+}

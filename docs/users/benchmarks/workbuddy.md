@@ -15,7 +15,7 @@ WorkBuddy provides Code, Office, Web, and Security through Harbor task protocols
 | Web | Docker, judge model; image-capable judge for visual checks | [Web](../../../playbook/workbuddy/workbuddy-web.yaml) |
 | Security | Native Linux filesystem, Docker, task networking | [Security](../../../playbook/workbuddy/workbuddy-security.yaml) |
 
-Run `node dist/cli.js doctor <config.yaml>` then `node dist/cli.js run <config.yaml>` from the root. See [quick start](../quick-start.md) for model variables/global CLI. Office requires SimpleAgent or file-capable AgentBundle; see [Dify limitations](../solvers.md#dify).
+Run `ember-evaluator doctor <config.yaml>` then `ember-evaluator run <config.yaml>` from the root. See [quick start](../quick-start.md) for model variables/global CLI. Office requires SimpleAgent or file-capable AgentBundle; see [Dify limitations](../solvers.md#dify).
 
 ## Upstream WorkBuddy CompositeVerifier
 

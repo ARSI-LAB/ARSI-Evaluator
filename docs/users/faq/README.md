@@ -4,7 +4,7 @@
 
 Choose the entry matching your issue. Dedicated guides define full configuration, execution policies, and scoring.
 
-[User documentation](../README.md) · [Download FAQ](downloads.md) · [Docker FAQ](docker.md)
+[User documentation](../README.md) · [Download FAQ](downloads.md) · [Docker FAQ](docker.md) · [Network diagnosis](network.md)
 
 ## Installation and Configuration
 
@@ -18,7 +18,7 @@ Evaluator needs the AgentBundle SDK when importing built-in plugins, so pnpm dow
 
 ### Why can execution fail after doctor passes?
 
-`doctor` sends no model requests, downloads no data, and builds no images. `not-checked` is not a pass. `run --dry-run` locks sources and enumerates tasks, without proving model/task execution works. Run a small sample; see [quick start](../quick-start.md#4-check-then-run).
+`doctor` checks selected downloads and Docker builds without model requests. `not-checked` means a check is incomplete. After checks pass, warm up and run a small task sample; see the [quick start](../quick-start.md#4-check-then-run).
 
 ## Downloads, Containers, and Resources
 
@@ -78,14 +78,14 @@ Successful exit means the process completed, not that answers were correct. Insp
 
 ### Why can I not resume after changing configuration?
 
-Resume requires matching sources, selection, model settings, code, and plugin versions to keep experimental conditions consistent. Start a new run after task count, concurrency, preparation, or model changes. Old results still support offline reports. See [resume](../usage.md#resume-and-rebuild-reports).
+Resume requires matching sources, selection, model settings, external plugins, candidate bundles, and harness versions. Evaluator code may be updated and rebuilt before resuming; valid saved results remain, and other tasks use the new code. Start a new run after task count, concurrency, preparation, or model changes. Old results still support offline reports. See [resume](../usage.md#resume-and-rebuild-reports).
 
 ## Debug Logs
 
 Errors show phase, task, cause, and suggested action. Full attempt diagnostics are in `result.json`; preparation diagnostics are in `manifest.json`. For extra detail, run from the repository root:
 
 ```bash
-EVALUATOR_DEBUG=1 node dist/cli.js run playbook/gsm8k/gsm8k-simpleagent.yaml
+EVALUATOR_DEBUG=1 ember-evaluator run playbook/gsm8k/gsm8k-simpleagent.yaml
 ```
 
 `1`/`true` enables debug; unset or `0`/`false` disables it. PowerShell: `$env:EVALUATOR_DEBUG="1"`. Progress/errors use stderr; final result paths use stdout. See [error codes](../reference/errors.md) for classification and recovery.

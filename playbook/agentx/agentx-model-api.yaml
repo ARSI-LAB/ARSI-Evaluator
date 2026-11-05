@@ -6,6 +6,8 @@
 # tokenizer 必须改为与服务模型匹配的 Hugging Face 仓库或本地目录；
 # 服务商模型 ID 只有在同时是有效 tokenizer 仓库名时才可直接沿用。
 # 本地部署并采集 NPU 指标请改用 agentx-npu-local.yaml。
+hardware: npu
+
 services:
   default:
     model: ${MODEL_NAME}

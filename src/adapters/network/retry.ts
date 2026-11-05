@@ -30,12 +30,13 @@ export async function retryNetworkOperation<T>(operation: () => Promise<T>, opti
 
 /** Consume the response within the retry boundary so an interrupted body is retried too. */
 export async function fetchNetworkResponse(url: string, init: Omit<RequestInit, "body"> & { body?: string; signal: AbortSignal }, options: {
+  network?: import("../../core/contracts/network.js").NetworkAccess;
   context?: ErrorContext;
   maxAttempts?: number;
   backoffMs?: number;
 } = {}): Promise<Response> {
   return retryNetworkOperation(async () => {
-    const response = await fetch(url, init);
+    const response = await (options.network?.fetch ?? fetch)(url, init);
     const bytes = await response.arrayBuffer();
     if (response.status === 429 && options.context?.component === "model" &&
         /insufficient_quota|quota[ _-]exceeded|insufficient_credit|billing/iu.test(new TextDecoder().decode(bytes))) {

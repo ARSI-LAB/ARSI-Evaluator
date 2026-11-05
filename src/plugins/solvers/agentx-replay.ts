@@ -63,6 +63,7 @@ export class AgentXReplaySolver implements Solver {
   private readonly binding: ServiceBinding;
   private lexicon: Promise<AgentXLexicon> | undefined;
   constructor(private readonly config: AgentXReplayConfig, private readonly runtime: PluginFactoryContext) {
+    if (config.telemetry) parseTelemetryConfig(config.telemetry, runtime.hardware);
     this.binding = bindSolverService(runtime);
     if (config.telemetry?.ascend && "mode" in config.telemetry.ascend && !["local", "docker"].includes(runtime.environmentName ?? ""))
       throw new TypeError("Local Ascend telemetry requires a local Docker host or local environment");
@@ -76,7 +77,7 @@ export class AgentXReplaySolver implements Solver {
 
   private vocabulary(signal: AbortSignal, previous?: SolverProvenance): Promise<AgentXLexicon> {
     return this.lexicon ??= lockAgentXLexicon(this.config.tokenizer ?? this.binding.model.name, this.config.tokenizerRevision,
-      this.runtime.resolvePath(this.config.cacheDir), this.runtime.resolvePath, signal, previous);
+      this.runtime.resolvePath(this.config.cacheDir), this.runtime.resolvePath, signal, previous, this.runtime.network);
   }
 
   async provenance(signal: AbortSignal, previous?: SolverProvenance): Promise<SolverProvenance> {

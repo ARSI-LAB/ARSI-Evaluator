@@ -68,7 +68,7 @@ test.each([
 
 test("help does not bootstrap an experiment", async () => {
   const { io, stdout } = output(); expect(await runCli(["--help"], io)).toBe(0);
-  expect(stdout.join("\n")).toContain("--api-key-env"); expect(stdout.join("\n")).toContain("report <run-dir>");
+  expect(stdout.join("\n")).toContain("run [options] <yaml>"); expect(stdout.join("\n")).toContain("report <run-dir>");
 });
 
 test("offline third-party reporting loads only selected report factories and checks locked versions", async () => {
@@ -297,7 +297,7 @@ test("ordinary run still requires model authentication", async () => {
 
 test("CLI dry-run rejects resume and documents patch selection", async () => {
   const { io, stdout, stderr } = output();
-  expect(await runCli(["--help"], io)).toBe(0);
+  expect(await runCli(["run", "--help"], io)).toBe(0);
   expect(stdout.join("\n")).toContain("--dry-run");
   expect(stdout.join("\n")).toContain("--patch");
   expect(await runCli(["run", "x.yaml", "--dry-run", "--resume"], io)).toBe(2);
@@ -347,9 +347,8 @@ test("CLI reports source preparation failures with the network cause before any 
   expect(diagnostic).toContain("cli-fixture");
   expect(diagnostic).toContain("fetch failed");
   expect(diagnostic).toContain("ECONNRESET");
-  expect(diagnostic).toContain("hf-mirror.com");
-  expect(diagnostic).toContain("HF_ENDPOINT");
-  expect(diagnostic).toContain("HTTP_PROXY/HTTPS_PROXY");
+  expect(diagnostic).toContain("huggingface.co");
+  expect(diagnostic).toContain("--network");
   expect(diagnostic).not.toContain("[solve]");
   expect(stdout).toHaveLength(1);
 });

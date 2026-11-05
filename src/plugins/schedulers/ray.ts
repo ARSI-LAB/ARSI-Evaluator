@@ -1,3 +1,4 @@
+import { networkSnapshot } from "../../config/network.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -209,6 +210,7 @@ export class RayScheduler implements TaskScheduler {
               concurrency: nodeConcurrency, defaultTimeoutSeconds: plan.preparation.defaultTimeoutSeconds,
               environmentTimeoutSeconds: preparationContext.settings?.environmentTimeoutSeconds ?? null };
             const remote = validateRemoteJob({ ...projectRemoteJob({
+      ...(this.runtime.network ? { network: networkSnapshot(this.runtime.network, this.runtime.benchmarkName ?? "unknown") } : {}),
               job: preparationJob, run: context.session, config: context.safeConfig as unknown as EffectiveConfig,
               packageDigest: this.packageDigest, uploadEndpoint: this.collectorUrl(), previousAttempts: [],
               ...(this.configTransport ? { configTransport: this.configTransport } : {}),
@@ -289,6 +291,7 @@ export class RayScheduler implements TaskScheduler {
     const key = { runId: job.runId, taskId: job.taskId, attemptId: job.attemptId };
     const config = context.safeConfig as unknown as EffectiveConfig;
     const projected = projectRemoteJob({
+      ...(this.runtime.network ? { network: networkSnapshot(this.runtime.network, this.runtime.benchmarkName ?? "unknown") } : {}),
       job,
       run: context.run,
       config: { ...config, run: { ...config.run, timeoutSeconds } },

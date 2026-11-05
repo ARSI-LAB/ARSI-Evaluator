@@ -1,3 +1,4 @@
+import type { NetworkAccess } from "../../../../core/contracts/network.js";
 import { fetchNetworkResponse } from "../../../network/retry.js";
 import type { JsonValue, SourceLock } from "../../../../core/contracts/task.js";
 import { fingerprintConfig } from "../../../../core/run-manifest.js";
@@ -27,13 +28,13 @@ export class HuggingFaceSnapshotSource implements DatasetFileSource {
   private readonly sourceId: string;
 
   constructor(cacheDir: string, private readonly definition: HuggingFaceSnapshotDefinition,
-    token?: string, transport?: HuggingFaceTransport) {
+    token?: string, transport?: HuggingFaceTransport, private readonly network?: NetworkAccess) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(definition.dataset) || !definition.revision ||
       !definition.selections.length || definition.selections.some(selection => "path" in selection
         ? !safeHubPath(selection.path) : !safeHubPath(`${selection.prefix}x`) || !/^\.[A-Za-z0-9]+$/u.test(selection.suffix)))
       throw new TypeError("Invalid Hugging Face snapshot selection");
-    this.cache = new DatasetCache(cacheDir);
-    this.transport = transport ?? huggingfaceTransport();
+    this.cache = new DatasetCache(cacheDir, network);
+    this.transport = transport ?? huggingfaceTransport(undefined, network);
     this.headers = token ? { Authorization: `Bearer ${token}` } : undefined;
     this.definitionHash = fingerprintConfig(definition as unknown as JsonValue);
     this.sourceId = `huggingface-snapshot:${definition.dataset}`;
@@ -72,7 +73,7 @@ export class HuggingFaceSnapshotSource implements DatasetFileSource {
     const url = `${this.transport.apiBase}/api/datasets/${this.definition.dataset}/revision/${encodeURIComponent(this.definition.revision)}?blobs=true`;
     let data: unknown;
     try {
-      const response = await fetchNetworkResponse(url, { signal, ...(this.headers ? { headers: this.headers } : {}) });
+      const response = await fetchNetworkResponse(url, { signal, ...(this.headers ? { headers: this.headers } : {}) }, { ...(this.network ? { network: this.network } : {}) });
       if (!response.ok) throw new Error([401, 403].includes(response.status)
         ? `Hugging Face dataset ${this.definition.dataset} access denied (HTTP ${response.status}); check dataset access and HF token environment variable`
         : `Hub metadata HTTP ${response.status}`);

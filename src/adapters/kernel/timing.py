@@ -13,11 +13,9 @@
 # limitations under the License.
 
 """
-通用kernel级基准测试模块
+NPU kernel 级基准测试模块
 
 NPU: 使用torch_npu.profiler采集kernel_details.csv，读取Duration(us)
-GPU: 使用torch.profiler采集CUDA活动，从prof.events()提取self_device_time_us
-CPU: 回退到time.perf_counter
 
 这是最精确的设备侧计时方式，不包含CPU launch时延。
 """
@@ -33,51 +31,26 @@ from pathlib import Path
 
 import torch
 
-# ============ 设备检测 ============
-IS_NPU = False
-try:
-    IS_NPU = hasattr(torch, 'npu') and callable(getattr(torch.npu, 'is_available', None)) and torch.npu.is_available()
-except Exception:
-    IS_NPU = False
+# Explicit NPU execution: never probe CUDA or substitute CPU timing.
+import torch_npu
 
-IS_GPU = torch.cuda.is_available()
+# Explicit backend identity consumed by precision.py, including external timers.
+IS_NPU = True
 
-if IS_NPU:
-    try:
-        import torch_npu  # noqa
-    except ImportError:
-        IS_NPU = False
-        IS_GPU = torch.cuda.is_available()
 
-    def _logical_npu_device_id() -> int:
-        requested = os.environ.get("KERNEL_NPU_DEVICE") or os.environ.get("ASCEND_DEVICE_ID") or os.environ.get("DEVICE_ID")
-        visible = os.environ.get("ASCEND_RT_VISIBLE_DEVICES") or os.environ.get("ASCEND_VISIBLE_DEVICES")
-        if visible:
-            visible_ids = [item.strip() for item in visible.split(",") if item.strip()]
-            if requested and requested in visible_ids:
-                return visible_ids.index(requested)
-            return 0
-        return int(requested or "0")
-
-    NPU_DEVICE_ID = _logical_npu_device_id()
-    DEVICE = f"npu:{NPU_DEVICE_ID}"
-    DEVICE_NAME = "NPU"
-    torch.npu.set_device(NPU_DEVICE_ID)
-elif IS_GPU:
-    DEVICE = "cuda:0"
-    DEVICE_NAME = "GPU"
-else:
-    DEVICE = "cpu"
-    DEVICE_NAME = "CPU"
-
-print(f"[bench_kernel] Device: {DEVICE_NAME} ({DEVICE})")
+def _logical_npu_device_id() -> int:
+    requested = os.environ.get("KERNEL_NPU_DEVICE") or os.environ.get("ASCEND_DEVICE_ID") or os.environ.get("DEVICE_ID")
+    visible = os.environ.get("ASCEND_RT_VISIBLE_DEVICES") or os.environ.get("ASCEND_VISIBLE_DEVICES")
+    if visible:
+        visible_ids = [item.strip() for item in visible.split(",") if item.strip()]
+        if requested and requested in visible_ids:
+            return visible_ids.index(requested)
+        return 0
+    return int(requested or "0")
 
 
 def device_synchronize():
-    if IS_NPU:
-        torch.npu.synchronize()
-    elif IS_GPU:
-        torch.cuda.synchronize()
+    torch.npu.synchronize()
 
 
 # ============ NPU Profiler计时 ============
@@ -234,95 +207,15 @@ def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
     return avg_us / 1e3  # us -> ms
 
 
-# ============ GPU Profiler计时 ============
-def _bench_cuda_profiler(fn, warmup=5, active=20):
-    """
-    GPU: 使用torch.profiler采集CUDA活动
-    从prof.events()中提取kernel的self_device_time_us
-    返回: 平均kernel执行时间(ms)
-    """
-    # warmup
-    for _ in range(warmup):
-        fn()
-    device_synchronize()
-
-    total = warmup + active
-    with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            record_shapes=False,
-            profile_memory=False,
-            with_stack=False,
-            with_flops=False,
-    ) as prof:
-        for _ in builtins.range(total):
-            fn()
-            device_synchronize()
-
-    # 从profiler events提取CUDA kernel时间
-    events = prof.key_averages()
-    cuda_kernel_times_us = []
-
-    for evt in events:
-        if evt.key.startswith("aten::") or evt.key.startswith(
-                "triton_") or evt.device_type == torch.profiler.ProfilerActivity.CUDA:
-            # device_time 是该kernel自身在设备上的时间(不含子kernel)
-            if evt.device_time > 0:
-                cuda_kernel_times_us.append(evt.device_time)
-
-    if not cuda_kernel_times_us:
-        # 回退: 使用events遍历
-        all_events = prof.events()
-        for evt in all_events:
-            if evt.device_type == torch.profiler.ProfilerActivity.CUDA:
-                if evt.device_time > 0:
-                    cuda_kernel_times_us.append(evt.device_time)
-
-    if not cuda_kernel_times_us:
-        return float("inf")
-
-    # 跳过warmup, 取active的平均
-    # 注意: key_averages已经聚合了, 直接用
-    avg_us = sum(cuda_kernel_times_us) / len(cuda_kernel_times_us)
-    # 估算单次调用时间 = 总时间 / active轮次
-    single_call_us = avg_us * len(cuda_kernel_times_us) / active
-    # 简化: 直接用平均
-    return avg_us / 1e3  # us -> ms
-
-
-# ============ 通用接口 ============
 def bench_kernel(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
                  triton_only=False):
-    """
-    通用kernel级基准测试
-
-    NPU: torch_npu.profiler -> kernel_details.csv -> Duration(us)
-    GPU: torch.profiler -> CUDA events -> device_time
-    CPU: time.perf_counter (回退)
-
-    triton_only: NPU 专用，True 时只统计 Triton kernel 耗时（排除 aclnn 框架算子）。
-        用于编排器的基准和晋升判断。
-
-    返回: 平均kernel执行时间(ms)
-    """
-    if IS_NPU:
-        return _bench_npu_profiler(fn, warmup=warmup, active=active,
-                                   prof_dir=prof_dir, keep_res=keep_res,
-                                   triton_only=triton_only)
-    elif IS_GPU:
-        return _bench_cuda_profiler(fn, warmup=warmup, active=active)
-    else:
-        # CPU回退
-        import time
-        for _ in range(warmup):
-            fn()
-        times = []
-        for _ in range(active):
-            t0 = time.perf_counter()
-            fn()
-            t1 = time.perf_counter()
-            times.append((t1 - t0) * 1000)
-        times.sort()
-        return times[len(times) // 2]
+    """NPU profiler duration in ms; triton_only excludes framework kernels."""
+    if not torch.npu.is_available():
+        raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
+    torch.npu.set_device(_logical_npu_device_id())
+    return _bench_npu_profiler(fn, warmup=warmup, active=active,
+                               prof_dir=prof_dir, keep_res=keep_res,
+                               triton_only=triton_only)
 
 
 def bench_kernel_ms(fn, **kwargs):
@@ -355,7 +248,7 @@ def _bench_atom_main():
     try:
         if not torch.npu.is_available():
             raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
-        torch.npu.set_device(0)
+        torch.npu.set_device(_logical_npu_device_id())
         from precision import CandidateError, clone_tree, load_module, load_task_module
 
         problem = load_task_module(args.problem, str(Path(args.problem).resolve().parent), "problem")

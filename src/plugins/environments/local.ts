@@ -393,6 +393,7 @@ export class LocalEnvironment implements Environment {
   constructor(
     private readonly temporaryRoot = tmpdir(),
     private readonly installationRoot = runtimeCacheRoot(),
+    private readonly network?: import("../../core/contracts/network.js").NetworkAccess,
   ) {}
 
   async materialize(spec: EnvironmentSpec, signal: AbortSignal): Promise<EnvironmentSpec> {
@@ -412,7 +413,7 @@ export class LocalEnvironment implements Environment {
     const configuration = JSON.stringify(installation);
     const cached = this.materializedRuntimes.get(installation);
     if (cached?.configuration === configuration) return structuredClone(cached.location);
-    const location = await prepareLocalRuntime(installation, this.installationRoot, signal);
+    const location = await prepareLocalRuntime(installation, this.installationRoot, signal, this.network);
     aborted(signal);
     // Only successful shared-dependency preparation is reusable; sessions stay task-specific.
     if (JSON.stringify(installation) === configuration)
@@ -423,7 +424,7 @@ export class LocalEnvironment implements Environment {
   /** The first install happens here; prepare() then finds the ready marker and only probes. */
   async installRuntime(installation: RuntimeInstallation, signal: AbortSignal): Promise<void> {
     aborted(signal);
-    await prepareLocalRuntime(installation, this.installationRoot, signal);
+    await prepareLocalRuntime(installation, this.installationRoot, signal, this.network);
   }
 
   async prepare(
@@ -451,7 +452,7 @@ export class LocalEnvironment implements Environment {
       throw new LocalEnvironmentError("ENV_PREPARATION_FAILED", "Invalid local preparation receipt");
     const receipt = prepared as { runtime: RuntimeLocation | null } | undefined;
     const runtime = receipt ? receipt.runtime ?? undefined : spec.installation
-      ? await prepareLocalRuntime(spec.installation, this.installationRoot, signal)
+      ? await prepareLocalRuntime(spec.installation, this.installationRoot, signal, this.network)
       : undefined;
     aborted(signal);
 

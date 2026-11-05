@@ -1,3 +1,4 @@
+import "../fixtures/network-fetch.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vitest";
 import { GitBlobCache } from "../../src/adapters/datasets/sources/github/blob-cache.js";

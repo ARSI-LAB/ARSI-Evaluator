@@ -33,7 +33,7 @@ Identical source/seed repeats selection. After source changes, seed alone cannot
 ### Preview and Save Actual Task IDs
 
 ```bash
-node dist/cli.js run first-run.yaml --dry-run > task-ids.json
+ember-evaluator run first-run.yaml --dry-run > task-ids.json
 ```
 
 dry-run locks sources, checks caches, downloads as needed, and enumerates without Solver execution. Output uses this JSON format; example GSM8K IDs differ from other benchmarks:
@@ -45,7 +45,7 @@ dry-run locks sources, checks caches, downloads as needed, and enumerates withou
 Select those IDs explicitly later:
 
 ```bash
-node dist/cli.js run first-run.yaml --task-ids-file task-ids.json
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json
 ```
 
 CLI ID files replace YAML IDs and clear offset/maxTasks/sampling. YAML `run.taskIds` still undergoes those later filters; omit all three to fix only the listed tasks.
@@ -55,18 +55,20 @@ CLI ID files replace YAML IDs and clear offset/maxTasks/sampling. YAML `run.task
 Use independent `warmup` with production YAML:
 
 ```bash
-ember warmup first-run.yaml
-# From the source directory, alternatively:
-node dist/cli.js warmup first-run.yaml --progress plain
+ember-evaluator warmup first-run.yaml
+# Use plain-text progress output:
+ember-evaluator warmup first-run.yaml --progress plain
 ```
 
-Selection follows taskIds/sampling/offset/maxTasks. It prepares solve/separate-verification/sidecar images, Evaluator runtimes, and Solver layers, using production pulls/builds/layer composition/pullProxy/concurrency/budgets. Temporary build containers may install dependencies. Warmup calls no models, starts no solve/scoring sessions, and creates no evaluation results/metrics/reports.
+Selection follows taskIds/sampling/offset/maxTasks. It prepares solve/separate-verification/sidecar images, Evaluator runtimes, and Solver layers, using production pulls/builds/layer composition/network YAML/concurrency/budgets. Temporary build containers may install dependencies. Warmup calls no models, starts no solve/scoring sessions, and creates no evaluation results/metrics/reports.
+
+Final output contains one ready/failed count line followed by each failed task's ID, error code, and reason. Successful task details and the full JSON are omitted. An entirely successful warmup prints only the count line; failures return exit code `1`.
 
 For fixed IDs/external plugins:
 
 ```bash
-ember warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
-ember run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator warmup first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
+ember-evaluator run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
 ```
 
 task-ids-file overrides selection exactly as run. Matching configuration/task versions/platform/daemon reuse caches in later evaluations; repeated warmup checks/reuses them. Model keys are unnecessary, but model names/endpoints/bundle paths must be valid. Unlike dry-run's data download/enumeration, warmup accepts neither dry-run nor resume.
@@ -85,15 +87,15 @@ External plugins require benchmark.planRun()/scheduler.prepareTasks(); local env
 
 ```bash
 # Preview task images and dependencies prepared by this configuration
-ember cleanup images first-run.yaml
-ember cleanup images first-run.yaml --yes
+ember-evaluator cleanup images first-run.yaml
+ember-evaluator cleanup images first-run.yaml --yes
 
 # All recognized evaluation images in the current Docker daemon
-ember cleanup images --all
-ember cleanup images --all --yes
+ember-evaluator cleanup images --all
+ember-evaluator cleanup images --all --yes
 
 # Connect to Ray using YAML and clean evaluation images on all target nodes
-ember cleanup images first-run.yaml --all --yes
+ember-evaluator cleanup images first-run.yaml --all --yes
 ```
 
 Supports local Docker/Ray Client/Jobs. Add --patch for external YAML plugins. Cleanup calls no models/downloads/tasks and does not start/rebuild clusters. Jobs still requires gateway authentication/TLS; update all deployment roles together.
@@ -138,35 +140,42 @@ Wrong answers, ordinary timeouts, and preparation failures are not all retried. 
 
 Preparation/cleanup budgets are separate from run.timeoutSeconds. `run.preparation` configures local pipelines; Ray pipelines are unsupported. See [preparation](concurrency.md).
 
-## Inspect and Export Configuration
+## Inspect Configuration
 
 ```bash
-node dist/cli.js config explain first-run.yaml
-node dist/cli.js config resolve first-run.yaml > resolved.yaml
+ember-evaluator inspect first-run.yaml
 ```
 
-`explain` shows final values/origins; `resolve` exports reloadable YAML. Keys remain variable references without credentials. Set nonsensitive model/endpoint variables.
+`inspect` prints JSON with effective experiment and network settings, preserving credential references. Its output is for inspection, not a standalone experiment YAML. Result `config.yaml` remains an internal execution record.
 
-Keep `resolved.yaml` beside original YAML for bundle/certificate-relative paths. Result `config.yaml` is an internal execution record, not an editable rerun template.
-
-CLI can override the Solver-bound model service:
+The `run` command can override the Solver-bound model service:
 
 ```bash
-node dist/cli.js doctor first-run.yaml --model your-other-model
-node dist/cli.js run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
+ember-evaluator run first-run.yaml --model your-other-model --api-key-env OTHER_MODEL_API_KEY
 ```
 
 Supports --model/--endpoint/--api-key-env or literal --api-key. Last two are mutually exclusive; prefer variables. Independent judges remain unchanged.
 
+`warmup`, `doctor`, and `inspect` read model settings from YAML and do not accept these overrides. Edit the YAML or its referenced environment variables before checking or preparing a different configuration.
+
 ## Resume and Rebuild Reports
 
 ```bash
-node dist/cli.js run first-run.yaml --resume
-node dist/cli.js run first-run.yaml --resume <RUN_ID>
-node dist/cli.js report results/first-run/<RUN_ID>
+ember-evaluator run first-run.yaml --resume
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+ember-evaluator report results/first-run/<RUN_ID>
 ```
 
-Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Keep sources/config/code/plugins matching. Model/selection/preparation/concurrency changes need new runs.
+Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Evaluator code may be updated and rebuilt before resuming, with no extra flag; unfinished or invalid tasks use the updated code. Sources, experiment configuration, external plugins, candidate bundles, and harness versions must still match. Model/selection/preparation/concurrency changes need new runs.
+
+When running from a source checkout, run `pnpm build` from the repository root after changing Evaluator code, then run the resume command. The CLI uses the build output in `dist/`; without rebuilding, it still runs the old code:
+
+```bash
+pnpm build
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+```
+
+Resume no longer compares historical and current digests for the Evaluator package, builtin runtime, solver installation assets, or AgentX bridge code. The original manifest retains its version and solver provenance records; the scheduler receives the current code/runtime identity for this session. With Ray, the client, coordinator, and execution nodes must still deploy the same current version. Saved-result format validation and execution-mode compatibility checks still apply.
 
 Resume recovers cleanup first, then creates attempts for unfinished/invalid tasks. Valid results, including valid agent-timeout zeros, skip solving. Failed AgentX points rerun wholly rather than continuing requests.
 
@@ -272,9 +281,9 @@ See [Ray config](config.md#ray-and-execution-nodes), [cluster examples](../../pl
 ## Load External Plugins
 
 ```bash
-node dist/cli.js benchmark list --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
-node dist/cli.js run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator benchmark list --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator doctor experiment.yaml --patch experiments/plugins/cordis.patch.yaml
+ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yaml
 ```
 
 Replace paths with actual files. Omitted `--patch` scans nothing. Discovery/init/config/doctor/run must share the patch. Patch paths use current directory; modules use patch directory; business paths use YAML directory.
@@ -291,10 +300,10 @@ See [plugin loading](../development/plugins.en.md), [benchmark development](../d
 | Long prepare | Identify pulls/builds/runtime installs, disk/network/budgets |
 | Docker unavailable/architecture mismatch | Daemon/platform/emulation |
 | Truncated model output | Actual stop reason; adjust explicit `maxTokens` or server limits |
-| Resume source/version mismatch | Changed config/source/package/plugins; start new run if needed |
+| Resume source/version mismatch | Check configuration/source/external-plugin/solver identity changes; Evaluator code updates alone allow resume |
 | `cleanupStatus: unconfirmed` | Recover resources before global cleanup around other evaluations |
 
-Bash debug: EVALUATOR_DEBUG=1 node dist/cli.js run first-run.yaml. PowerShell sets `$env:EVALUATOR_DEBUG="1"` first. Progress/errors use stderr; final paths stdout.
+Bash debug: EVALUATOR_DEBUG=1 ember-evaluator run first-run.yaml. PowerShell sets `$env:EVALUATOR_DEBUG="1"` first. Progress/errors use stderr; final paths stdout.
 
 ### Live Execution Previews
 
@@ -303,8 +312,8 @@ Framework terminal prompts/progress/warnings/actions use English. Task/tool/thir
 run/retry default `--progress auto`: interactive terminals show task steps/elapsed time/up to 10 recent lines. Panels use at most half terminal height and20 lines, prioritizing statuses; small windows/high concurrency reduce previews. Success clears previews/leaves completion; failure retains up to 5 redacted lines. plain disables panels; tty requests them but noninteractive/TERM=dumb uses logs. CI disables panels; `NO_COLOR` only disables colors.
 
 ```bash
-node dist/cli.js run first-run.yaml --progress auto
-node dist/cli.js retry --run <run-id> --progress plain
+ember-evaluator run first-run.yaml --progress auto
+ember-evaluator retry --run <run-id> --progress plain
 ```
 
 Docker uses actual pull/build output. Pi/DSH/DeepAgents show existing model activity/tools/output; Dify workflow/nodes; AgentX harness activity. Hermes/JiuwenSwarm lack live tool details and state this. Reply/reasoning bodies/private verification are excluded. Incomplete lines report activity before displaying complete text to avoid secret leakage across chunks.
@@ -324,6 +333,19 @@ Previews create no files/results/trajectories/Ray logs. Each step stores up to 1
 |`2`|Configuration/arguments|
 |`130`|User cancellation|
 
-See [error codes](reference/errors.md) for full recovery/retry rules. `node dist/cli.js --help` lists current arguments.
+See [error codes](reference/errors.md) for full recovery/retry rules. `ember-evaluator --help` lists current arguments.
 
 [User guide](README.md) · [Quick start](quick-start.md) · [Configuration](config.md)
+
+## Discover Benchmarks
+
+`ember-evaluator benchmark list` displays a table of names, versions (equivalent definitions grouped in parentheses), default versions, scenarios, default scenarios, and implementations. Plugins without version metadata show `undeclared`. Metadata comes from registered plugins and profiles; listing does not check dataset or image availability.
+
+```bash
+ember-evaluator benchmark list
+ember-evaluator benchmark list --json
+ember-evaluator benchmark info terminalbench
+ember-evaluator benchmark list --patch ./patch.yaml
+```
+
+`list --json` preserves all version names and alias groups. `info` prints JSON including resolved settings per version. External plugins require an explicit `--patch`. Running `benchmark` without a subcommand shows group help.

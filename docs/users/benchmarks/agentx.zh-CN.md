@@ -8,6 +8,12 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 
 两种并发分别计数：外层 Scheduler 一次执行一个测量点，负载并发表示该点内的活动会话树数。子 Agent 可能增加实际请求并发，因此会话树数不等于同时发出的请求数。测量摘要进入性能报告，不产生质量分数。
 
+## 硬件选择
+
+实验顶层 `hardware: npu`（缺省值）使用现有 NPU 路径。设置 `hardware: gpu` 后，API 回放和 `telemetry.vllm` 仍可用；不要求回放机器安装 GPU。`telemetry.ascend` 与 GPU 选择冲突，`doctor`、`--dry-run` 和正式运行都会在启动采样前报错。GPU 硬件指标采集当前不支持。字段含义和续跑规则见[配置指南](../config.zh-CN.md#npu-与-gpu-选择)。
+
+可使用 [GPU 服务 API 示例](../../../playbook/agentx/agentx-gpu-api.yaml)；该示例只回放请求，不采集设备指标。
+
 ## 准备与运行
 
 推荐使用 `environment: local`。AgentX 在 Evaluator 所在环境通过模型 API 回放 Trace，不执行 Trace 中记录的真实工具操作，也不创建任务镜像或任务容器。可以在管理容器内运行，也可以直接在裸机运行；推理服务由用户提前手动启动，Evaluator 不启动或停止推理服务。
@@ -16,7 +22,7 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 
 模型服务需支持流式 OpenAI Chat Completions、`ignore_eos` 和 trace 指定的输出长度。默认使用官方 062126 256k 语料，服务应有至少 256k 上下文及足够余量；`full` 用于支持约 1M 上下文的服务。不会自动截断 trace 以适应较短的上下文。
 
-第一次使用按 [AgentX 性能入门](../quick-start/agentx.zh-CN.md)完成安装、模型变量和 tokenizer 设置，再按 `doctor`、`run --dry-run`、`run` 的顺序执行配置检查和正式测评。该页提供完整命令；本文说明负载、测量口径和指标采集。`doctor` 不下载、不推理；`--dry-run` 会按需下载数据并列出测量点。
+第一次使用按 [AgentX 性能入门](../quick-start/agentx.zh-CN.md)完成安装、模型变量和 tokenizer 设置，再按 `doctor`、`run --dry-run`、`run` 的顺序执行配置检查和正式测评。该页提供完整命令；本文说明负载、测量口径和指标采集。`doctor` 执行下载探针，不推理；`--dry-run` 会按需下载数据并列出测量点。
 
 按测评目标选择配置，不需要依次全部运行：
 
@@ -144,8 +150,8 @@ networkLatency: # 放在 benchmark.solver.config 下
 `upstreamSubmissionValid` 保留 Harness 的判断，`comparable` 另行检查场景、来源和测量完整性。比较结果时应保持语料 commit、场景、tokenizer、并发及部署条件一致。完成一次回放不代表满足排行榜提交条件。
 
 ```bash
-node dist/cli.js run playbook/agentx/agentx-standard.yaml --resume
-node dist/cli.js report results/agentx-standard/RUN_ID
+ember-evaluator run playbook/agentx/agentx-standard.yaml --resume
+ember-evaluator report results/agentx-standard/RUN_ID
 ```
 
 完成点跳过，失败、取消和超时点使用新 attempt 整点重跑，不续接某条请求。性能超时不产生零分。`report` 同时重建目录页和各点报告，可修复缺失或损坏的子报告；仅使用保存结果和内置报告插件，不需要 Python、模型认证或原数据缓存。显式 `--resume` 将续跑报告及各点子报告另存到 `reports/resume-N/`，保留旧报告；`retry` 和离线 `report` 更新当前报告，保存方式见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。

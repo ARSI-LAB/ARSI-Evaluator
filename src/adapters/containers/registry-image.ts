@@ -4,11 +4,13 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Transform } from "node:stream";
+import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createZstdDecompress } from "node:zlib";
 import { create as createTar } from "tar";
-import { ProxyAgent, request } from "undici";
+import { request, type Dispatcher } from "undici";
+import { createNetworkDispatcher } from "../network/dispatcher.js";
+import type { NetworkProxy } from "../../core/contracts/network.js";
 import type { ContainerPlatform } from "../../core/contracts/environment.js";
 import type { ActivityListener } from "../../core/contracts/activity.js";
 import { dockerRegistryCredential, type RegistryCredential } from "./registry-auth.js";
@@ -20,16 +22,7 @@ type Descriptor = { digest: string; size: number; mediaType: string };
 type ImageReference = { registry: string; origin: string; repository: string; selector: string; digest?: string };
 export type DownloadedRegistryImage = { archive: string; sourceDigest: string; configDigest: string; manifestDigest: string };
 
-export function parseDockerPullProxy(value: unknown): string {
-  const invalid = () => new TypeError("docker pullProxy must be an HTTP(S) proxy URL without a path, query or fragment");
-  if (typeof value !== "string" || !value || /[\s\0]/u.test(value)) throw invalid();
-  let url: URL;
-  try { url = new URL(value); decodeURIComponent(url.username); decodeURIComponent(url.password); } catch { throw invalid(); }
-  if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.pathname !== "/" || url.search || url.hash) throw invalid();
-  return url.href;
-}
-
-function imageReference(value: string): ImageReference {
+export function imageReference(value: string): ImageReference {
   if (!value || /[\s\0?#\\]/u.test(value) || value.includes("://")) throw new Error("Invalid registry image reference");
   const [name, digest, extra] = value.split("@");
   if (!name || extra !== undefined || digest !== undefined && !DIGEST.test(digest)) throw new Error("Invalid registry image digest");
@@ -77,14 +70,11 @@ function verify(bytes: Uint8Array, digest: string, size?: number): void {
 
 /** An operation-local client; no environment changes or global HTTP dispatcher. */
 class RegistryClient {
-  readonly agent: ProxyAgent;
+  readonly agent: Dispatcher;
   private authorization: string | undefined;
   private credentials: Promise<RegistryCredential | undefined> | undefined;
-  constructor(readonly image: ImageReference, proxy: string, private readonly signal: AbortSignal) {
-    const url = new URL(proxy);
-    const token = url.username || url.password
-      ? `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}` : undefined;
-    this.agent = new ProxyAgent({ uri: url.origin, ...(token === undefined ? {} : { token }) });
+  constructor(readonly image: ImageReference, proxy: NetworkProxy, private readonly signal: AbortSignal) {
+    this.agent = createNetworkDispatcher(proxy);
   }
 
   private async http(url: URL, headers: Record<string, string>, method: "GET" | "POST" = "GET", body?: string) {
@@ -193,12 +183,34 @@ class RegistryClient {
   }
 }
 
-/** Download verified OCI content and a Docker-save-compatible archive without extracting layers. */
-export async function downloadRegistryImage(reference: string, platform: ContainerPlatform, proxy: string,
+export interface RegistryContentSource {
+  read(path: string, limit: number): Promise<{ bytes: Buffer; response: { headers: Record<string, string | string[] | undefined> } }>;
+  get(path: string): Promise<{ body: Readable }>;
+}
+
+export function mirrorImageReference(reference: string, mirrors: Readonly<Record<string, string>>): string {
+  const image = imageReference(reference);
+  const mirror = mirrors[image.registry];
+  if (!mirror) return reference;
+  const name = reference.split("@")[0]!;
+  const tag = image.digest && name.lastIndexOf(":") > name.lastIndexOf("/") ? name.slice(name.lastIndexOf(":")) : "";
+  return `${new URL(mirror).host}/${image.repository}${tag}${image.digest ? "@" : ":"}${image.selector}`;
+}
+
+/** Docker-save drops compressed registry layers; prove its config against the original manifest chain. */
+
+export async function downloadRegistryImage(reference: string, platform: ContainerPlatform, proxy: NetworkProxy,
+  directory: string, tag: string, signal: AbortSignal, activity?: ActivityListener): Promise<DownloadedRegistryImage> {
+  const client = new RegistryClient(imageReference(reference), proxy, signal);
+  try { return await packRegistryImage(reference, platform, client, directory, tag, signal, activity); }
+  finally { await client.agent.destroy(); }
+}
+
+/** Verify OCI bytes from either registry implementation before producing a Docker archive. */
+export async function packRegistryImage(reference: string, platform: ContainerPlatform, client: RegistryContentSource,
   directory: string, tag: string, signal: AbortSignal, activity?: ActivityListener): Promise<DownloadedRegistryImage> {
   signal.throwIfAborted();
   const image = imageReference(reference);
-  const client = new RegistryClient(image, proxy, signal);
   const blobs = join(directory, "blobs", "sha256");
   const entries = new Set<string>();
   const blobPath = (digest: string) => join(blobs, digest.slice(7));
@@ -289,19 +301,8 @@ export async function downloadRegistryImage(reference: string, platform: Contain
       dockerLayers.push(unpacked);
       entries.add(unpacked);
     }
-    await writeFile(join(directory, "manifest.json"), JSON.stringify([{ Config: blobName(config.digest), RepoTags: [tag], Layers: dockerLayers }]));
-    await writeFile(join(directory, "oci-layout"), JSON.stringify({ imageLayoutVersion: "1.0.0" }));
-    await writeFile(join(directory, "index.json"), JSON.stringify({ schemaVersion: 2, manifests: [{
-      mediaType: typeof manifest.mediaType === "string" ? manifest.mediaType : "application/vnd.oci.image.manifest.v1+json",
-      digest: manifestDigest, size: (await readFile(blobPath(manifestDigest))).length,
-      annotations: { "io.containerd.image.name": `docker.io/${tag}`, "org.opencontainers.image.ref.name": `docker.io/${tag}` },
-    }] }));
-    for (const entry of ["manifest.json", "oci-layout", "index.json"]) entries.add(entry);
-    const archive = join(directory, "image.tar");
     activity?.({ message: "Packing verified image for Docker import", activity: true });
-    signal.throwIfAborted();
-    const pack = createTar({ cwd: directory, portable: true }, [...entries]);
-    await pipeline(pack, createWriteStream(archive, { mode: 0o600 }), { signal });
+    const archive = await packDockerImageArchive(directory, tag, manifestDigest, config.digest, dockerLayers, entries, signal);
     return { archive, sourceDigest: sourceDigest ?? manifestDigest, manifestDigest, configDigest: config.digest };
   } catch (error) {
     signal.throwIfAborted();
@@ -309,7 +310,29 @@ export async function downloadRegistryImage(reference: string, platform: Contain
       throw new EvaluatorError("NETWORK_FAILURE", error.message, error.details);
     // Undici can include authenticated URLs in low-level errors; never propagate them.
     if (error instanceof Error && !["TypeError", "RequestAbortedError"].includes(error.name) &&
-        /^(?:Invalid |Registry |Image |Unsupported |Unsafe |Cannot |Docker |Packing )/u.test(error.message)) throw error;
+        /^(?:Invalid |Registry |Image |Unsupported |Unsafe |Cannot |Docker |Packing |Skopeo )/u.test(error.message)) throw error;
     throw new Error("Registry image download failed; check the proxy, registry and credentials");
-  } finally { await client.agent.destroy(); }
+  }
+}
+
+/** Include OCI metadata so containerd and classic image stores import the same verified identity. */
+export async function packDockerImageArchive(directory: string, tag: string, manifestDigest: string, configDigest: string,
+  layers: string[], entries: Set<string>, signal: AbortSignal): Promise<string> {
+  const blobName = (digest: string) => `blobs/sha256/${digest.slice(7)}`;
+  const manifest = await readFile(join(directory, blobName(manifestDigest)));
+  const mediaType = json(manifest).mediaType;
+  await writeFile(join(directory, "manifest.json"), JSON.stringify([{ Config: blobName(configDigest), RepoTags: [tag], Layers: layers }]));
+  await writeFile(join(directory, "oci-layout"), JSON.stringify({ imageLayoutVersion: "1.0.0" }));
+  const tagged = imageReference(tag);
+  const canonicalTag = `${tagged.registry}/${tagged.repository}:${tagged.selector}`;
+  await writeFile(join(directory, "index.json"), JSON.stringify({ schemaVersion: 2, manifests: [{
+    mediaType: typeof mediaType === "string" ? mediaType : "application/vnd.oci.image.manifest.v1+json",
+    digest: manifestDigest, size: manifest.length,
+    annotations: { "io.containerd.image.name": canonicalTag, "org.opencontainers.image.ref.name": canonicalTag },
+  }] }));
+  for (const entry of ["manifest.json", "oci-layout", "index.json"]) entries.add(entry);
+  const archive = join(directory, "image.tar");
+  signal.throwIfAborted();
+  await pipeline(createTar({ cwd: directory, portable: true }, [...entries]), createWriteStream(archive, { mode: 0o600 }), { signal });
+  return archive;
 }

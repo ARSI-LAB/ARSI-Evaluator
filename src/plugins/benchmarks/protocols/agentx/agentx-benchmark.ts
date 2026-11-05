@@ -1,3 +1,5 @@
+import { LocalRecordSource } from "../../../../adapters/datasets/sources/local/files-source.js";
+import { localDatasetConfig } from "../../local-data.js";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown, type EffectiveConfig } from "../../../../config/schema.js";
@@ -23,11 +25,12 @@ export type AgentXConfig = {
   traceCount?: number;
   cacheDir: string;
   hfToken?: string;
+  localPath?: string;
 };
 
 export function parseAgentXConfig(value: unknown): AgentXConfig {
   const v = expectRecord(value, "agentx");
-  rejectUnknown(v, ["variant", "mode", "concurrency", "durationSeconds", "seed", "traceCount", "cacheDir", "hfToken"], "agentx");
+  rejectUnknown(v, ["variant", "mode", "concurrency", "durationSeconds", "seed", "traceCount", "cacheDir", "hfToken", "localPath"], "agentx");
   if (v.variant !== undefined && v.variant !== "256k" && v.variant !== "full") throw new TypeError("agentx.variant must be 256k or full");
   if (v.mode !== undefined && !["standard", "replay"].includes(String(v.mode))) throw new TypeError("agentx.mode must be standard or replay");
   const mode = v.mode === "replay" ? "replay" : "standard";
@@ -42,7 +45,7 @@ export function parseAgentXConfig(value: unknown): AgentXConfig {
   const traceCount = mode === "replay" ? expectPositiveInteger(v.traceCount, "agentx.traceCount") : undefined;
   if (mode !== "replay" && v.traceCount !== undefined) throw new TypeError("agentx.traceCount requires mode=replay");
   if (traceCount !== undefined && concurrency.some(n => n > traceCount)) throw new TypeError("AgentX replay concurrency must not exceed traceCount");
-  return { variant: v.variant === "full" ? "full" : "256k", mode, concurrency, durationSeconds, seed: Number(seed),
+  return { ...localDatasetConfig(v), variant: v.variant === "full" ? "full" : "256k", mode, concurrency, durationSeconds, seed: Number(seed),
     ...(traceCount === undefined ? {} : { traceCount }),
     cacheDir: expectNonEmptyString(v.cacheDir ?? ".cache/agentx", "agentx.cacheDir"),
     ...(v.hfToken === undefined ? {} : { hfToken: expectNonEmptyString(v.hfToken, "agentx.hfToken") }) };
@@ -54,11 +57,14 @@ export class AgentXBenchmark implements Benchmark {
   private readonly source: DatasetRecordSource;
   private readonly cache: DatasetCache;
   private readonly dataset: string;
-  constructor(readonly config: AgentXConfig, private readonly environmentName: string, source?: DatasetRecordSource) {
+  constructor(readonly config: AgentXConfig, private readonly environmentName: string, source?: DatasetRecordSource, network?: import("../../../../core/contracts/network.js").NetworkAccess) {
     this.dataset = `semianalysisai/cc-traces-weka-062126${config.variant === "256k" ? "-256k" : ""}`;
-    this.cache = new DatasetCache(config.cacheDir);
-    this.source = source ?? new HuggingFaceFilesSource(config.cacheDir, "agentx", { dataset: this.dataset, revision: "main",
-      selections: [{ key: "traces", format: "jsonl", path: "traces.jsonl" }] }, config.hfToken ?? process.env.HF_TOKEN);
+    this.cache = new DatasetCache(config.cacheDir, network);
+    const definition = { dataset: this.dataset, revision: "main",
+      selections: [{ key: "traces", format: "jsonl" as const, path: "traces.jsonl" }] };
+    this.source = source ?? (config.localPath === undefined
+      ? new HuggingFaceFilesSource(config.cacheDir, "agentx", definition, config.hfToken ?? process.env.HF_TOKEN, undefined, network)
+      : new LocalRecordSource(config.localPath, definition));
   }
 
   validateRun(config: EffectiveConfig): void {
@@ -67,7 +73,7 @@ export class AgentXBenchmark implements Benchmark {
     if (!["local", "docker"].includes(config.environment.name) || config.scheduler.name !== "local" ||
       config.scheduler.config.concurrency !== 1) throw new TypeError("AgentX supports local/Docker with local scheduler concurrency=1");
     if (config.solver.config.telemetry !== undefined) {
-      const ascend = parseTelemetryConfig(config.solver.config.telemetry).ascend;
+      const ascend = parseTelemetryConfig(config.solver.config.telemetry, config.hardware).ascend;
       if (ascend && "mode" in ascend && !["local", "docker"].includes(config.environment.name))
         throw new TypeError("Local Ascend telemetry requires a local Docker host or local environment");
     }
@@ -99,18 +105,19 @@ export class AgentXBenchmark implements Benchmark {
     if (!this.config.concurrency.includes(concurrency) || ref.id !== this.id(concurrency)) throw new TypeError("Invalid AgentX point selection");
     const file = source.files.find(file => file.path === "traces.jsonl");
     const metadata = expectRecord(source.metadata, "AgentX source metadata");
-    if (!file || source.files.length !== 1 || metadata.dataset !== this.dataset || !/^[a-f0-9]{40}$/u.test(source.revision))
+    if (!file || source.files.length !== 1 || metadata.dataset !== this.dataset || !/^(?:[a-f0-9]{40}|local:[a-f0-9]{64})$/u.test(source.revision))
       throw new TypeError("Invalid locked AgentX corpus");
     const token = this.config.hfToken ?? process.env.HF_TOKEN;
-    const trace = await this.cache.fetch(file.origin, file.sha256, signal,
-      token ? { Authorization: `Bearer ${token}` } : undefined);
+    const tracePath = this.source instanceof LocalRecordSource
+      ? await this.source.files.file(source, "traces.jsonl", signal)
+      : (await this.cache.fetch(file.origin, file.sha256, signal, token ? { Authorization: `Bearer ${token}` } : undefined)).path;
     const payload: AgentXWorkload = { schemaVersion: 1, kind: "agentx", variant: this.config.variant, mode: this.config.mode,
       concurrency, durationSeconds: this.config.durationSeconds, seed: this.config.seed, dataset: this.dataset,
       loader: `semianalysis_cc_traces_weka_062126${this.config.variant === "256k" ? "_256k" : ""}`,
       revision: source.revision, sha256: file.sha256, tracePath: "input/traces.jsonl",
       ...(this.config.traceCount === undefined ? {} : { traceCount: this.config.traceCount }) };
     return { input: { id: ref.id, prompt: `AgentX ${this.config.variant} ${this.config.mode}: ${concurrency} concurrent session trees`, payload },
-      verification: payload, solveEnv: { workdir: ".", image: null, initialFiles: [{ source: trace.path, target: payload.tracePath }],
+      verification: payload, solveEnv: { workdir: ".", image: null, initialFiles: [{ source: tracePath, target: payload.tracePath }],
         runtime: [], ...(this.environmentName === "docker" ? { network: "host", build: { context: agentXAssets,
           dockerfile: "Dockerfile", sourceHash: await agentXBridgeDigest(signal) } } : {}) },
       verifyEnv: null, transfer: null, verificationMode: "none",

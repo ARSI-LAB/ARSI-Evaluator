@@ -2,12 +2,6 @@
 set -euo pipefail
 docker_real="${EVALUATOR_DOCKER_CLI:-docker}"
 
-# Opt-in adapter for local Linux toolbox evaluations; other commands pass through.
-if [[ "${1:-}" == "build" ]]; then
-  shift
-  exec "$docker_real" build --network host "$@"
-fi
-
 if [[ "${1:-}" == "image" && "${2:-}" == "inspect" && "${3:-}" == "--platform" ]]; then
   api_version="$("$docker_real" version --format '{{.Server.APIVersion}}')"
   if [[ ! "$api_version" =~ ^([0-9]+)\.([0-9]+)$ ]]; then

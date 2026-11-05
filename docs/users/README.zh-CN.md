@@ -15,6 +15,7 @@
 | Docker 终端任务 | [Terminal-Bench 4.0 入门](quick-start/terminalbench.zh-CN.md) |
 | 模型服务性能链路 | [AgentX 性能入门](quick-start/agentx.zh-CN.md) |
 | 通过 SSH 压测已有模型服务 | [AISBench 独立插件](../../plugins/aisbench/README.md) |
+| 从本地目录或文件读取题库 | [本地数据集](local-datasets.zh-CN.md) |
 | 从 Node.js 业务项目调用评测 | [Node.js SDK](sdk.zh-CN.md) |
 
 ## 通用操作
@@ -63,11 +64,13 @@
 | 算子 | `kernel` | [已有 kernel 的正确性与 NPU 性能评测](benchmarks/kernel-npu.zh-CN.md)；本地串行，不调用模型 |
 
 ```bash
-node dist/cli.js benchmark list
-node dist/cli.js benchmark info workbuddy
-node dist/cli.js init --benchmark workbuddy --output workbuddy.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info workbuddy
+ember-evaluator init --benchmark workbuddy --output workbuddy.yaml
 ```
 
 WorkBuddy Web 需要裁判模型，Office 的模型评分可选。Security 数据和结果应放在 Linux 原生文件系统，不在 Windows 或 WSL 的 `/mnt/c`、`/mnt/d` 解压。具体限制见 [WorkBuddy 指南](benchmarks/workbuddy.zh-CN.md)。
 
 先限制样本实际运行，再增加题数、并发或节点。安装、评分、续跑和资源问题的说明见 [FAQ](faq/README.zh-CN.md)。
+
+- [网络下载、代理与镜像获取](network.zh-CN.md)

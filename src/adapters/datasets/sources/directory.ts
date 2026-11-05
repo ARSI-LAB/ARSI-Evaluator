@@ -32,6 +32,7 @@ export async function materializeDirectory(
   cacheDir: string,
   signal: AbortSignal,
   transport = { apiBase: "https://api.github.com", rawBase: "https://raw.githubusercontent.com" },
+  network?: import("../../../core/contracts/network.js").NetworkAccess,
 ): Promise<DirectorySnapshot> {
   signal.throwIfAborted();
   if (source.hostPlatform !== undefined && source.hostPlatform !== process.platform)
@@ -49,8 +50,8 @@ export async function materializeDirectory(
   const directory = join(parent, identity);
   const stage = await mkdtemp(join(parent, ".materialize-"));
   try {
-    if (source.kind === "archive") await extractHttpArchive(source, cacheDir, stage, signal);
-    else await materializeGitHubDirectory(source, cacheDir, stage, signal, transport);
+    if (source.kind === "archive") await extractHttpArchive(source, cacheDir, stage, signal, network);
+    else await materializeGitHubDirectory(source, cacheDir, stage, signal, transport, network);
     signal.throwIfAborted();
     const root = source.kind === "archive" ? source.root : source.path;
     const stagedRoot = root === "." ? stage : await checkedPath(stage, root);

@@ -27,10 +27,10 @@ Pi 就绪探针使用 ESM 模块解析查找依赖，支持依赖位于包内或
 需要手动运行 20 并发测试时，先设置 `MODEL_NAME`、`MODEL_ENDPOINT`、`MODEL_API_KEY`，在仓库根目录执行：
 
 ```bash
-node dist/cli.js run tests/fixtures/workbuddy-office-ray-20/experiment.yaml --dry-run
+ember-evaluator run tests/fixtures/workbuddy-office-ray-20/experiment.yaml --dry-run
 pnpm ray:ensure
 docker compose -f scripts/ray-smoke/compose.yaml -f scripts/ray-smoke/jobs.yaml -f tests/fixtures/workbuddy-office-ray-20/compose.yaml up -d --no-deps --no-build worker-a worker-b
-node dist/cli.js run tests/fixtures/workbuddy-office-ray-20/experiment.yaml
+ember-evaluator run tests/fixtures/workbuddy-office-ray-20/experiment.yaml
 ```
 
 [测试槽位覆盖文件](../../tests/fixtures/workbuddy-office-ray-20/compose.yaml) 将两个 worker 各设为 10 槽位。测试 YAML 用 `managedLocal: false` 复用显式准备的集群，避免运行时自动准备恢复默认槽位；已有评测结束后再调整 worker。测试结束后，可通过省略覆盖文件恢复默认槽位：

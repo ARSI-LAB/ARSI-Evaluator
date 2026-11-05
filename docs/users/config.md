@@ -28,6 +28,27 @@ See [Terminal-Bench](benchmarks/terminalbench.md) for versions, task images, and
 
 `loadConfig` fills configuration from registered profiles; `bootstrap` selects factories by component names. Authentication is service-bound; saved configuration retains references only. Registration/validation start no tasks.
 
+## NPU and GPU Selection
+
+Select hardware at the experiment YAML root:
+
+```yaml
+hardware: npu # npu or gpu; defaults to npu
+```
+
+User YAML overrides profile defaults; the framework default is NPU. `inspect`, saved configurations, and Ray workers carry the effective choice. This setting does not detect devices, start or switch remote model servers, or port CUDA tasks to NPU. Tasks without accelerator requirements behave the same under either choice.
+
+| Scenario | `npu` | `gpu` |
+| --- | --- | --- |
+| AgentX API replay and vLLM metrics | Supported | Supported |
+| AgentX `telemetry.ascend` | Ascend collection | Configuration conflict before execution |
+| Kernel precision, timing, profiling | NPU implementation | GPU backend not implemented; rejected before execution |
+| Harbor task requiring GPU | Hardware mismatch | GPU task execution not implemented |
+
+Model API calls do not require accelerators on the Evaluator host. GPU hardware telemetry and task device mounting are not supported. Incompatible tasks fail according to `run.onError`; their requirements are neither silently skipped nor rewritten.
+
+Historical configurations without this field mean NPU. Omitted hardware and explicit `npu` retain the same resume configuration fingerprint; changing to `gpu` requires a new run. Existing source and plugin version checks still apply. Offline reports do not access hardware.
+
 ## Names and Defaults
 
 | Name | Decision | Examples |
@@ -38,7 +59,7 @@ See [Terminal-Bench](benchmarks/terminalbench.md) for versions, task images, and
 | environment | Agent execution location | Host `local` or isolated `docker` |
 | scheduler | Concurrent task count and Ray use | `local`, `ray` |
 
-A benchmark profile supplies defaults. WorkBuddy `office`, for example, supplies sources, verifiers, and budgets. Start with defaults and override as needed; `config explain` shows final values.
+A benchmark profile supplies defaults. WorkBuddy `office`, for example, supplies sources, verifiers, and budgets. Start with defaults and override as needed; `inspect` shows final values.
 
 Defaults: Docker Environment, Local Scheduler concurrency 1, Local Store, Markdown Reporter. Omitted `output`/`output.directory` uses repository-root `results/<benchmark-name>/<YAML-basename>/<runId>/`. `playbook/gsm8k/gsm8k-agentbundle.yaml` maps to `results/gsm8k/gsm8k-agentbundle/<runId>/`. Names come from configuration; all WorkBuddy scenarios use workbuddy. This default is independent of YAML/current directories; installed packages use the Evaluator package root.
 
@@ -96,7 +117,7 @@ Whole-task/phase clocks run simultaneously; the first expiration stops execution
 
 Old `benchmark.config.defaults.verifyTimeoutSeconds` is removed; use `run.verifyTimeoutSeconds`, without automatic migration/compatibility. Update Ray coordinator, workers, and Jobs packages together to preserve phase settings.
 
-Docker `environment.config.pullProxy` configures HTTP/HTTPS image-fetch proxies separately from builds, containers, and models. See [Docker proxies](faq/docker.md#configure-a-proxy-only-for-image-pulls).
+Configure download sources, proxies and image acquisition with a separate [network YAML](network.md), selected by `--network`.
 
 Pi/SimpleAgent and built-in judges with explicit OpenAI Chat Completions `base_url` send `services.<service>.maxTokens` only when configured. Omission sends neither `max_tokens` nor `max_completion_tokens`; the API decides. SDK model budgets still manage local context without hidden output caps. Registered providers retain SDK protocol defaults; external agents retain their own mechanisms.
 
@@ -120,7 +141,7 @@ No round cap applies by default. Explicit `roundTimeoutSeconds` measures wall ti
 
 Timeout saves `ENV_PREPARATION_TIMEOUT` without scores or automatic retries. `onError: continue` permits other tasks; cleanup/storage may still stop work. Base 600/concurrency 32 allows 6000 seconds; base 1800 allows18000. Reduce base or set a round cap to shorten waits.
 
-Old `benchmark.config.environmentBuildTimeoutMultiplier` is removed and cannot compound. Remove it; use `roundTimeoutSeconds` for round caps or `environmentTimeoutSeconds` for base values. Package/profile/configuration identity checks remain. After upgrades, start new runs if identities differ or resume with original versions; do not edit old manifests. Historical batch budgets retain their meaning and are not interpreted as per-environment limits offline.
+Old `benchmark.config.environmentBuildTimeoutMultiplier` is removed and cannot compound. Remove it; use `roundTimeoutSeconds` for round caps or `environmentTimeoutSeconds` for base values. Configuration identity checks after profile expansion remain. After upgrades, start new runs if configurations differ or resume with the original configuration; do not edit old manifests. Evaluator code may be updated and rebuilt before resuming. Historical batch budgets retain their meaning and are not interpreted as per-environment limits offline.
 
 ## Task Offset and Count
 
@@ -180,14 +201,13 @@ Default metrics: harbor-score, success-rate, duration, usage; DeepSWE adds f2p/p
 ## Inspect Effective Configuration
 
 ```bash
-ember-evaluator config explain experiment.yaml
-ember-evaluator config resolve experiment.yaml > resolved.yaml
-ember-evaluator config explain experiment.yaml --patch ./patch.yaml --model my-model
+ember-evaluator inspect experiment.yaml
+ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-explain shows values/origins; resolve emits full new-format user YAML. Both share production registration/validation without factories, downloads, enumeration, containers, or model calls. Supply nonsensitive model/endpoint variables; key variables may be missing. Output retains key references; literal CLI keys become ${EVALUATOR_API_KEY}, requiring that variable or new CLI credentials when running exports. Keep exports in the original experiment directory for bundle-relative paths.
+`inspect` prints JSON containing the effective experiment and network settings, with credential references preserved. It validates configuration without factories, downloads, task enumeration, containers, or model calls. Model settings come from YAML; model override flags are supported only by run.
 
-Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume requires matching package/plugin versions.
+Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume allows updated Evaluator code while configuration, sources, external plugins, and solver identity must still match; see [resume](usage.md#resume-and-rebuild-reports).
 
 ## Ray and Execution Nodes
 
@@ -244,9 +264,9 @@ scheduler:
 
 ## Discovery, Initialization, and Diagnostics
 
-benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. These commands and doctor accept explicit --patch.
+benchmark list/info read registration/profiles without factories. init --benchmark `<name>` --output `<yaml>` writes minimal new YAML with wx and never overwrites. benchmark list/info, init, inspect, and doctor accept explicit --patch.
 
-doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It sends no model requests/downloads/builds/cluster starts. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
+doctor `<yaml>` shares production configuration/composition validation, checks Docker/Python, local paths, and Ray connectivity. It performs temporary downloads and Docker build probes without sending model requests or executing tasks. Results are passed, failed, or not-checked. Local connectivity proves neither remote node readiness nor model permissions. Exit: discovered failure1, configuration2, cancellation130.
 
 --dry-run resolves sources, checks caches, downloads as needed, and enumerates selected IDs; its side effects differ from doctor.
 
@@ -258,6 +278,6 @@ Plugin authors: see [profile publication](../development/benchmarks.en.md#publis
 
 ## Network Failure Recovery
 
-`ember retry --run <run-id>` creates attempts for current network failures in the original run. Valid zeros, ordinary phase timeouts, and non-network errors are ineligible. Network operations retry within their own bounds rather than whole tasks; each manual request may add one eligible attempt. Removed `run.taskRetry` must be deleted from old YAML. Ray Jobs connects the original gateway through separate `deployment`, not a Scheduler plugin. See [network recovery](network-retry.md).
+`ember-evaluator retry --run <run-id>` creates attempts for current network failures in the original run. Valid zeros, ordinary phase timeouts, and non-network errors are ineligible. Network operations retry within their own bounds rather than whole tasks; each manual request may add one eligible attempt. Removed `run.taskRetry` must be deleted from old YAML. Ray Jobs connects the original gateway through separate `deployment`, not a Scheduler plugin. See [network recovery](network-retry.md).
 
 [User guide](README.md) · [Quick start](quick-start.md)

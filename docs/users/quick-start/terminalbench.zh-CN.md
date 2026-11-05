@@ -10,11 +10,11 @@
 
 先按[源码安装](../installation.zh-CN.md#直接安装)配置 GitHub 读取权限并安装、构建 Evaluator。AgentBundle SDK 会自动下载和构建，无需手动克隆。
 
-以下命令在 Evaluator 仓库根目录执行，使用 `node dist/cli.js`，无需注册全局命令。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
+按安装指南注册 `ember-evaluator` 后，在 Evaluator 仓库根目录执行以下命令，以便读取仓库中的 Playbook。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
 
 ```bash
 docker version
-node dist/cli.js --help
+ember-evaluator --help
 ```
 
 官方 4.0 预构建镜像使用 `linux/amd64`，仓库示例已显式选择该平台；ARM64 节点需要可用的 QEMU/binfmt，见[Docker 平台选择](../deployment/docker-platform.zh-CN.md)。
@@ -26,14 +26,14 @@ node dist/cli.js --help
 使用 [terminalbench-4.0.yaml](../../../playbook/terminalbench/terminalbench-4.0.yaml)，先查看展开后的配置并检查运行条件：
 
 ```bash
-node dist/cli.js config explain playbook/terminalbench/terminalbench-4.0.yaml
-node dist/cli.js doctor playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator inspect playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator doctor playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
-`doctor` 不调用模型、不下载任务、不拉取镜像；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
+`doctor` 不调用模型，会读取任务归档样本并执行下载和镜像探针；`not-checked` 项需要在实际运行中确认。可用下面的命令预览实际任务，它可能下载任务数据：
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --dry-run
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --dry-run
 ```
 
 ## 3. 运行任务
@@ -46,7 +46,7 @@ run:
 ```
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ```
 
 Docker 按题目要求准备环境，Agent 在任务容器中操作，任务内验证器检查完成情况。首次拉取镜像可能较慢。环境、网络与验证材料的处理见[Harbor 执行与验证边界](../benchmarks/harbor.zh-CN.md#执行与验证边界)。确认链路正常后，删除 `run.maxTasks`，开始新的全量实验。
@@ -55,10 +55,10 @@ Docker 按题目要求准备环境，Agent 在任务容器中操作，任务内�
 
 示例的输出位于 `results/terminalbench-4.0/<RUN_ID>/`。打开 `report.md` 查看得分、耗时和失败原因，进入 `tasks/` 查看 attempt、轨迹与验证证据。
 
-保持配置、代码和插件版本不变时，可继续未完成任务：
+保持配置、来源、外部插件及待评测 Bundle、Harness 版本不变时，可继续未完成任务；Evaluator 代码允许更新并重新构建：
 
 ```bash
-node dist/cli.js run playbook/terminalbench/terminalbench-4.0.yaml --resume
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
 从两题切换到全量后，配置已经变化，应新建 run。续跑与离线报告见[日常操作](../usage.zh-CN.md#续跑与重建报告)。

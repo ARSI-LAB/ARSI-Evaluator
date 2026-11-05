@@ -52,9 +52,13 @@ output:
 
 如需限制当前服务回复，可以在该服务条目增加 `maxTokens: 8192`。模型请求重试使用 `services.<名称>.retry.maxAttempts`，耗尽后结束当前 Attempt，不自动从头求解。
 
-## SimpleAgent 与 Pi Bundle
+## SimpleAgent（基于 Pi）
 
-默认写法只需要 `benchmark: gsm8k`。要让内置 Pi Agent 使用你的 Bundle，修改为以下片段；保留原 services、environment 等字段：
+`simpleagent` 是 Evaluator 内置的 Solver，使用 Pi SDK 执行 Agent 循环、模型请求与工具调用。不配置 Bundle 时，使用 Evaluator 默认的指令和工具即可运行；例如 `benchmark: gsm8k` 会选择默认 SimpleAgent，无需额外准备 Pi Bundle。
+
+### 可选：加载 Pi Bundle
+
+需要定制指令、技能、扩展或设置时，可以提供 Pi Bundle。修改为以下片段，保留原 services、environment 等字段：
 
 ```yaml
 benchmark:
@@ -67,6 +71,10 @@ benchmark:
 ```
 
 路径指向已准备好的 Pi Bundle，不是任意源码目录。可用 `bundle.settings` 提供可序列化的 Pi 设置，框架在暂存副本中使用，不直接改原 Bundle。
+
+> 注：Pi Bundle 中的扩展通过 Pi 官方支持的 Extensions（插件）机制加载；这里的 Bundle 是这些扩展及相关资源的打包形式。
+
+### 工具命令超时
 
 工具命令另有超时，增加任务总预算不会自动让单条 shell 命令无限执行。需要调整时：
 
@@ -84,7 +92,7 @@ benchmark:
 
 ## 使用 AgentBundle
 
-先按[源码安装](installation.zh-CN.md#直接安装)准备 Evaluator；pnpm 会自动安装 AgentBundle SDK，无需同级源码仓库。下面的 `AGENT_BUNDLE_PATH` 指向已制作好的 **Agent Bundle 目录**，需要另行准备，不是 SDK 安装路径。
+先按[源码安装](installation.zh-CN.md#直接安装)准备 Evaluator；pnpm 会自动安装 AgentBundle SDK，无需同级源码仓库。下面的 `AGENT_BUNDLE_PATH` 指向已制作好的 **Agent Bundle 目录**，需要另行准备，不是 SDK 安装路径。Bundle 的概念、CLI 和示例见 [AgentBundle 项目](https://github.com/evolving-foundry/agentbundle)，各 Harness 的目录结构、清单及校验方法见 [Bundle 编写指南](https://github.com/evolving-foundry/agentbundle/blob/master/docs/bundle-formats.zh-CN.md)。
 
 ```yaml
 services:
@@ -121,7 +129,13 @@ output:
 
 已有安装位置可用 `dshhome`、`dshprofile`、`hermeshome`、`jiuwenswarmhome` 等 Solver 配置指定；`jiuwenswarmTimeoutSeconds` 只针对对应 Harness。pi 的额外设置放在 `benchmark.solver.config.pi.settings`，其他 Harness 不接受这个字段。
 
-输出上限优先放在 `services.<名称>.maxTokens`。AgentBundle 也接受 Solver 的 `maxTokens`，但两处同时填写会报错，不要重复配置。如何制作各 Harness 的 Bundle 属于对应 AgentBundle 项目的范围，本仓库负责校验和执行已有 Bundle。
+输出上限优先放在 `services.<名称>.maxTokens`。AgentBundle 也接受 Solver 的 `maxTokens`，但两处同时填写会报错，不要重复配置。Evaluator 的配置与执行方式见本页；Bundle 的制作、格式与安装见上述 AgentBundle 项目文档。
+
+## Docker 环境准备与网络
+
+Solver 决定 Agent 怎样执行；任务环境决定使用现成镜像还是构建 Dockerfile。选择 `simpleagent` 或 `agentbundle` 不会直接决定镜像下载方式。`warmup` 不调用模型，但会准备任务镜像、Evaluator 共享的 Node 运行环境，以及所选 Harness 需要的安装依赖；可用缓存会被复用。
+
+同一次预热可能既有 Dockerfile 的 `FROM` 拉取，也有 Evaluator 主动获取 Node 等现成镜像。前者使用 Docker daemon/BuildKit 的网络；后者才使用网络文件中的 `docker.mirrors` 和 `docker.pull`。即使 `docker.pull.method: docker`，Evaluator 仍会先替换镜像地址，再交给 Docker 下载。镜像获取、构建中安装依赖和运行时安装使用的配置边界见[预热期间的镜像与依赖下载](deployment/network.zh-CN.md#预热期间的镜像与依赖下载)。
 
 ## 使用 Dify
 

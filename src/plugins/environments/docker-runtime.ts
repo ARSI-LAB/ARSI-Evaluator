@@ -21,7 +21,7 @@ export const PROCESS_HELPER = "/opt/evaluator/docker-process.mjs";
 
 export type DockerCommand = (
   args: string[],
-  options?: { input?: Uint8Array | null; signal?: AbortSignal; maxBuffer?: number;
+  options?: { env?: NodeJS.ProcessEnv; input?: Uint8Array | null; signal?: AbortSignal; maxBuffer?: number;
     onOutput?: (stream: "stdout" | "stderr", chunk: Uint8Array) => void },
 ) => Promise<{ stdout: string; stderr: string }>;
 
@@ -210,36 +210,6 @@ export class DockerRuntime {
     return await this.nodeCache.get("node", signal, active => this.resolveNodeImage(active));
   }
 
-  private async mirrorReference(signal: AbortSignal): Promise<string> {
-    let origin = process.env.EVALUATOR_NODE_IMAGE_MIRROR;
-    if (!origin) {
-      // Read the executing daemon, including remote Docker/Ray workers. Never
-      // embed a user's accelerator address or mutate the daemon configuration.
-      let mirrors: unknown;
-      try {
-        mirrors = JSON.parse((await this.command(["info", "--format", "{{json .RegistryConfig.Mirrors}}"], { signal })).stdout);
-      } catch {
-        signal.throwIfAborted();
-        return PINNED_NODE_IMAGE;
-      }
-      if (Array.isArray(mirrors)) origin = mirrors.find((value: unknown): value is string => {
-        if (typeof value !== "string") return false;
-        try {
-          const url = new URL(value);
-          return url.protocol === "https:" && /(^|\.)(myhuaweicloud|huaweicloud)\.com$/u.test(url.hostname)
-            && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/";
-        } catch { return false; }
-      });
-    }
-    if (!origin) return PINNED_NODE_IMAGE;
-    let url: URL;
-    try { url = new URL(origin); }
-    catch { throw new DockerRuntimeError("ENV_RUNTIME_INSTALL_FAILED", "EVALUATOR_NODE_IMAGE_MIRROR must be an HTTPS registry origin"); }
-    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/")
-      throw new DockerRuntimeError("ENV_RUNTIME_INSTALL_FAILED", "EVALUATOR_NODE_IMAGE_MIRROR must be an HTTPS registry origin without credentials, path or query");
-    return `${url.host}/library/${PINNED_NODE_IMAGE}`;
-  }
-
   private async resolveNodeImage(signal: AbortSignal): Promise<string> {
     const expected = PINNED_NODE_IMAGE.slice(PINNED_NODE_IMAGE.lastIndexOf("@") + 1);
     let reference = this.nodeImage;
@@ -254,15 +224,12 @@ export class DockerRuntime {
       inspected = await inspect();
     } catch {
       signal.throwIfAborted();
-      reference = await this.mirrorReference(signal);
-      try { inspected = await inspect(); }
-      catch {
-        const pulled = await this.pullImage(reference, this.platform, signal);
-        reference = pulled.reference;
-        verifiedDigest = pulled.verifiedDigest;
-        inspected = await inspect();
-      }
+      const pulled = await this.pullImage(reference, this.platform, signal);
+      reference = pulled.reference;
+      verifiedDigest = pulled.verifiedDigest;
+      inspected = await inspect();
     }
+
     const match = /^(\S+) (\[[^\]]*\])$/u.exec(inspected.stdout.trim());
     if (!match)
       throw new DockerRuntimeError(

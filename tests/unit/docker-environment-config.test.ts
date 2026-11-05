@@ -20,13 +20,6 @@ test("validates and copies explicit task runtime environment settings", () => {
     expect(() => parseDockerContainerEnv(value)).toThrow("containerEnv");
 });
 
-test("pullProxy validation does not contact Docker and proxy credentials are redacted", () => {
-  expect(() => new DockerEnvironment({ pullProxy: "http://user:secret@127.0.0.1:7890", dockerExecutable: "must-not-run" })).not.toThrow();
-  for (const pullProxy of ["", "socks5://localhost:7890", "http://localhost/path"])
-    expect(() => new DockerEnvironment({ pullProxy, dockerExecutable: "must-not-run" })).toThrow(/pullProxy/);
-  const config = { environment: { config: { pullProxy: "http://user:secret@127.0.0.1:7890" } } };
-  for (const redact of [redactConfig, redactSecrets]) expect(JSON.stringify(redact(config))).not.toContain("secret");
-});
 
 test("validates and snapshots explicit image overrides without contacting Docker", () => {
   expect(parseDockerImageOverrides()).toEqual({});

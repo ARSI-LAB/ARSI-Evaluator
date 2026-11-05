@@ -15,9 +15,9 @@ export async function officeQAScoringProgram(): Promise<string> {
   return `${source}\nimport json, sys\nrequest = json.load(sys.stdin)\nprint(json.dumps({"score": score_answer(request["answer"], request["prediction"], request["tolerance"])}))\n`;
 }
 
-export function officeQAVerificationRuntime(docker: string): VerificationRuntime {
+export function officeQAVerificationRuntime(docker: string, network?: import("../../../core/contracts/network.js").NetworkAccess): VerificationRuntime {
   return {
-    materialize: async (_task, signal) => ({ image: await materializeVerifierImage(docker, "python:3.12-slim", signal) }),
+    materialize: async (_task, signal) => ({ image: await materializeVerifierImage(docker, "python:3.12-slim", signal, network) }),
     recoverAttempts: (keys, signal) => recoverVerifierContainers(docker, keys, signal),
     async prepare(task, receipt, { key, signal }) {
       const verification = expectRecord(task.verification, "OfficeQA verification");

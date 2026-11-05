@@ -26,9 +26,9 @@ HumanEval 的 Python 验证镜像和 `harbor-python` 的辅助验证镜像也计
 
 有效准备并发在本轮分配完成后固定：Local 取配置准备并发和待准备任务数的较小值，Ray 再受该节点槽位数限制，不使用集群总槽位。尾部任务不缩短已经确定的时限。基础值 600 秒时，1、4、32 并发分别允许每个环境准备 600、2400、6000 秒；该规则放宽等待时间，不保证准备速度。执行并发与解题、评分时限保持各自配置。
 
-本地两种模式的准备并发都由 `run.preparation.concurrency` 控制，省略时使用 `scheduler.concurrency`；执行并发也未设置时，二者均为 1。Ray 按节点槽位容量分配任务，该字段限制每节点准备并发，缺省采用 Scheduler 上限或已发现槽位。Docker 的共享运行时安装、任务镜像和验证器依赖都计入对应环境的准备时限。`manifest.json` 的 `preparationRounds` 保存准备政策、可选整轮上限、每题每环境的基础时限、有效并发、倍率、实际时限和时间记录；Ray 另记 `nodeConcurrency`。续跑创建新轮次，重新计算时限并保留历史。duration 指标与报告支持离线读取；历史记录没有单环境预算时显示未知，不根据整批预算推算。
+本地两种模式的准备并发都由 `run.preparation.concurrency` 控制，省略时使用 `scheduler.concurrency`；执行并发也未设置时，二者默认均为 1；Profile 显式声明的并发（例如 AgentX 的串行准备）仍采用该声明值。Ray 按节点槽位容量分配任务，该字段限制每节点准备并发，缺省采用 Scheduler 上限或已发现槽位。Docker 的共享运行时安装、任务镜像和验证器依赖都计入对应环境的准备时限。`manifest.json` 的 `preparationRounds` 保存准备政策、可选整轮上限、每题每环境的基础时限、有效并发、倍率、实际时限和时间记录；Ray 另记 `nodeConcurrency`。续跑创建新轮次，重新计算时限并保留历史。duration 指标与报告支持离线读取；历史记录没有单环境预算时显示未知，不根据整批预算推算。
 
-续跑要求配置、来源、代码和插件版本匹配。更换准备模式或升级运行包后，应新建 run；历史结果可离线报告。
+续跑要求配置、来源、外部插件和 Solver 身份匹配，允许使用更新并重新构建后的 Evaluator 代码。更换准备模式后应新建 run；历史结果可离线报告，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 网络访问只在对应请求、下载或拉取操作内有限重试。重试耗尽后记录失败，不自动创建新 Attempt。运行中和结束后的显式手动命令见[网络操作重试与手动补测](network-retry.zh-CN.md)。
 
@@ -116,8 +116,8 @@ Docker 的 `cpus` 是单容器使用上限，不是预留核心。等待模型�
 独立预热使用相同分配和准备代码，支持直接 Ray Client 与 Ray Jobs：
 
 ```bash
-ember warmup ray-experiment.yaml
-ember run ray-experiment.yaml
+ember-evaluator warmup ray-experiment.yaml
+ember-evaluator run ray-experiment.yaml
 ```
 
 预热不启动 Solver 或评分；摘要的 `placements` 列出每题所属节点。相同选题顺序、节点集合和槽位配置得到相同分配；节点或容量发生变化后重新计算，新节点准备自己的任务镜像。预热不替代正式运行的准备回执检查，也不增加跨节点缓存复制、故障迁移或 Ray 流水线。

@@ -1,3 +1,4 @@
+import type { HardwareKind } from "./contracts/hardware.js";
 import type { PhaseTimeoutOverrides } from "./contracts/task.js";
 import { Service, type Context } from "@deepseek-ai/cordis";
 
@@ -40,6 +41,10 @@ export type ReportingFactoryContext = {
 export type FactoryContext<R extends PluginRole> = R extends "metrics" | "reporter" ? ReportingFactoryContext : PluginFactoryContext;
 
 export type PluginFactoryContext = {
+  benchmarkName?: string;
+  network?: import("./contracts/network.js").NetworkAccess;
+  /** Bootstrap always supplies this; omitted by historical SDK callers means NPU. */
+  hardware?: HardwareKind;
   phaseTimeouts?: PhaseTimeoutOverrides;
   imageConfigFingerprint?: string;
   /** Optional component composed by the Benchmark, owned by the same Cordis context. */

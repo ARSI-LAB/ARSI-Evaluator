@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({ calls: [] as string[][], missing: false, start
 vi.mock("../../src/plugins/environments/docker.js", () => ({
   runDockerCommand: async (_docker: string, args: string[]) => {
     state.calls.push(args);
+    if (args[0] === "version") return { stdout: "linux/amd64", stderr: "" };
     if (args[0] === "pull") { state.missing = false; return { stdout: "", stderr: "" }; }
     if (args[0] === "image") { if (state.missing) throw new Error("No such image"); return { stdout: state.image, stderr: "" }; }
     if (args[0] === "rm" && state.removalError) throw new Error("Docker unavailable");
@@ -32,7 +33,7 @@ const signal = () => AbortSignal.timeout(5000);
 test("missing verifier images are pulled during materialization and resolved to immutable IDs", async () => {
   state.missing = true;
   expect(await materializeVerifierImage("fixture", "python:3.12-slim", signal())).toBe(state.image);
-  expect(state.calls.map(args => args[0])).toEqual(["image", "pull", "image"]);
+  expect(state.calls.map(args => args[0])).toEqual(["image", "version", "pull", "image"]);
 });
 
 test.each([0, 1])("HumanEval requires completed tests in a prepared, labelled offline container (exit %s)", async code => {

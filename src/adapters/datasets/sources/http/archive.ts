@@ -7,8 +7,8 @@ import { datasetActivity } from "../../activity.js";
 export type HttpArchiveSource = { kind: "archive"; url: string; sha256: string; root: string };
 
 /** Fetch pinned bytes and reject unsafe entries before extracting any archive content. */
-export async function extractHttpArchive(source: HttpArchiveSource, cacheDir: string, stage: string, signal: AbortSignal): Promise<void> {
-  const archive = await new DatasetCache(cacheDir).fetch(source.url, source.sha256, signal);
+export async function extractHttpArchive(source: HttpArchiveSource, cacheDir: string, stage: string, signal: AbortSignal, network?: import("../../../../core/contracts/network.js").NetworkAccess): Promise<void> {
+  const archive = await new DatasetCache(cacheDir, network).fetch(source.url, source.sha256, signal);
   let entries = 0;
   let total = 0;
   let problem: unknown;

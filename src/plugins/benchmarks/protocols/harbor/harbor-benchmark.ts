@@ -1,3 +1,4 @@
+import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import type { PhaseTimeoutOverrides } from "../../../../core/contracts/task.js";
 import type { Benchmark } from "../../../../core/contracts/benchmark.js";
 import type { Verifier } from "../../../../core/contracts/verifier.js";
@@ -25,8 +26,10 @@ export class HarborBenchmark implements Benchmark {
     transport: HarborTransport = transportDefault,
     private readonly verifier: Verifier = new HarborShellVerifier(),
     phaseTimeouts: PhaseTimeoutOverrides = {},
+    hardware: HardwareKind = "npu",
+    network?: import("../../../../core/contracts/network.js").NetworkAccess,
   ) {
-    const source = config.source ? createDirectoryBenchmarkSource(config, verifier, transport, phaseTimeouts) : createHarborSource(config, transport, verifier, phaseTimeouts);
+    const source = config.source ? createDirectoryBenchmarkSource(config, verifier, transport, phaseTimeouts, hardware, network) : createHarborSource(config, transport, verifier, phaseTimeouts, hardware, network);
     this.resolveSource = source.resolveSource;
     this.enumerate = source.enumerate;
     this.prepare = source.prepare;
