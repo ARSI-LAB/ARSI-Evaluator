@@ -10,13 +10,13 @@
 
 使用独立的网络 YAML，通过 `--network network.yaml` 传入。`docker.pull.method` 选择 Docker 原生拉取或 Registry API 下载，`docker.mirrors` 临时替换 registry 地址，`docker.benchmarks` 可为指定题库选择 ModelScope/Hugging Face 镜像归档。
 
-Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配置在 `proxy` 中；执行进程、daemon、构建步骤和安装容器分别使用 `host`、`daemon`、`build`、`runtime` 覆盖值。完整配置、凭据、节点地址和归档固定路径说明见[网络配置](../network.zh-CN.md)。
+Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配置在 `proxy` 中；执行进程、daemon、构建步骤和安装容器分别使用 `host`、`daemon`、`build`、`runtime` 覆盖值。凭据和节点地址见[代理配置](../reference/network.zh-CN.md)，归档固定路径见[镜像下载](../image-downloads.zh-CN.md)。
 
 `FROM` 和外部 `COPY --from` 由 Docker 自带构建器下载，使用 daemon 已生效的网络设置。`doctor experiment.yaml` 检查镜像获取、`FROM` 和 `RUN`，并生成配置建议，不修改配置或重启 Docker；管理员应用建议后再次运行诊断。
 
 ## 如何按任务区分和查看镜像？
 
-框架生成的本地镜像使用 `ember-evaluator/<任务短名>:<用途>-<种类>-<hash>`。`solve` 表示解题，`verify` 表示验证；任务短名取任务 ID 的最后一段并转成 Docker 允许的小写字符，哈希包含完整任务 ID，避免不同题库的同名任务混用标签。
+本地镜像名称采用 `ember-evaluator/<任务短名>:<用途>-<种类>-<hash>`。`solve` 表示解题，`verify` 表示验证；名称后缀用于区分不同任务和内容。可按任务短名或用途查找镜像：
 
 以 `terminal-bench/atrx-vep-crispr` 为例：
 
@@ -33,7 +33,7 @@ Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配
 | 所有任务共享的 Agent 安装镜像 | `ember-evaluator/shared:solver-install-<hash>` |
 | 内部网关的固定引用（按需生成） | `ember-evaluator/shared:gateway-base-<hash>` |
 
-带 `@sha256:` 的外部任务镜像在本地改用 Evaluator 名称。程序先核对摘要、平台和镜像 ID，保存本地校验记录，再移除对应的官方摘要引用及仍指向同一镜像的声明标签；不删除镜像内容，不使用强制删除。任务声明及结果中的官方来源保持原样。只有 Solver 需要安装 Agent 时才生成 Agent 镜像；上述镜像不一定每题都有。直接调用 `materialize` 且未提供任务上下文时，生成名称放在 `ember-evaluator/shared` 下，默认用途为 `solve`，不执行官方引用迁移。可变标签、Evaluator 已生成的镜像及固定 Node 镜像保持原处理方式。
+固定摘要的官方任务镜像在本地会使用 Evaluator 名称，原官方标签可能被移除，但镜像内容和结果中的官方来源不变。只有需要安装 Agent 时才生成 Agent 镜像，因此表中的种类不一定每题都有。
 
 查看某一道题、所有任务的验证镜像或共享镜像：
 
@@ -43,13 +43,13 @@ docker image ls --filter 'reference=ember-evaluator/*:verify-*'
 docker image ls --filter 'reference=ember-evaluator/shared:*'
 ```
 
-固定摘要任务镜像的 `base` 标签按官方仓库、摘要、平台、任务和用途生成，同一内容重复准备不再新增随机标签；可变标签仍按本次准备或 attempt 固定引用。Runtime、Agent 和 Dockerfile 构建镜像也按内容及任务、用途生成，相同内容的同任务同用途可跨运行复用。多个标签可以指向同一个 IMAGE ID，不会因此复制整份镜像；不同 IMAGE ID 之间也可能共享层，不能把 `docker image ls` 的每行 SIZE 直接相加作为磁盘占用。查看 Docker 统计可执行 `docker system df`。
+相同任务、用途和内容可以复用已有镜像。多个标签可能指向同一个 IMAGE ID，不会因此复制整份镜像；不同镜像也可能共享镜像层。查看磁盘占用请执行 `docker system df`，不要直接累加 `docker image ls` 的 SIZE。
 
-后续运行先检查 Evaluator 标签。校验可以使用镜像 ID、RepoDigests 或先前保存的来源记录；不会仅凭标签名称信任镜像内容。记录保存在 `EVALUATOR_CACHE_DIR/docker-images/`，未设置该变量时默认在应用缓存目录的 `docker-images/` 下，管理容器通常是 `/toolbox-home/.cache/ember-evaluator/docker-images/`。经典 Docker 存储移除官方引用后可能没有 RepoDigests，此时依靠记录中的官方摘要、平台和镜像 ID 核对。另一题使用相同来源时可从已校验的镜像创建自己的名称，无需重新拉取。
+除 Docker 中的镜像外，Evaluator 还会保存复用所需的本地记录，位于 `EVALUATOR_CACHE_DIR/docker-images/`；未设置该变量时使用应用缓存目录，管理容器中通常为 `/toolbox-home/.cache/ember-evaluator/docker-images/`。只复制镜像、没有对应记录时，仍可能重新下载。
 
-来源记录丢失且现有镜像不能证明匹配官方摘要时，需要重新取得官方来源以验证。Evaluator 标签被替换或平台不符时明确报错；官方引用无法移除时保留已生成的 Evaluator 标签和记录并报告失败，不强制删除、不报告完成。已有历史 Evaluator 标签不自动删除；本机首次处理旧官方引用时会迁移它们，其他未参与准备的镜像不变。
+本地镜像标签被替换或平台不符时，准备会报错。先确认 Docker context、目标平台和缓存目录是否正确；需要清理后重新准备时，按[删除评测镜像](../usage.zh-CN.md#删除评测镜像)操作，再执行 `warmup`。
 
-从旧版只有种类前缀和哈希的名称升级后，程序会查找新名称，**首次准备可能重新触发构建**；Docker 仍可复用旧构建层。程序不自动为旧镜像补新标签，也不删除旧标签，正在使用旧镜像的容器不受改名影响。已有准备凭据继续按保存的镜像身份校验。命名变化本身不会减少磁盘占用。
+升级后若镜像名称发生变化，首次准备可能重新构建，但 Docker 仍可复用已有构建层。旧镜像和正在使用它们的容器不会自动删除；改名本身不会释放磁盘空间。
 
 ## 中断后重跑会重新下载或构建全部镜像吗？
 
@@ -57,17 +57,12 @@ docker image ls --filter 'reference=ember-evaluator/shared:*'
 
 | 镜像种类 | 再次运行时的处理 |
 | --- | --- |
-| 固定摘要的官方解题、验证及 Sidecar 镜像 | 先校验稳定的 Evaluator 标签和本地来源记录；标签缺失时可从已验证 ID 创建，无法取得有效本地内容时才拉取。完成后移除对应官方本地引用 |
-| 可变标签任务镜像及固定 Node 镜像 | 先检查原本地引用与目标平台，无法读取时才尝试拉取；缺失的镜像层仍需下载 |
-| 从 Dockerfile 构建的任务镜像 | 按公开构建文件、构建参数和平台等计算标签，已有对应镜像时复用 |
-| `ember-evaluator/<任务>:solve-runtime-…` / `verify-runtime-…` | 按任务镜像标识、Node 镜像标识、Runtime 程序、平台及任务用途等计算标签，已有对应镜像时复用 |
-| `ember-evaluator/shared:solver-install-…` | 按安装文件、安装命令、探针、安装程序、共享构建配方、Node 镜像标识和平台等计算标签，已有对应镜像时复用 |
-| `ember-evaluator/<任务>:solve-agent-…` | 按 Runtime 镜像标识、共享安装镜像标识、派生构建内容及任务用途等计算标签，已有对应镜像时复用 |
-| `ember-evaluator/<任务>:solve-base-…` / `verify-base-…` | 固定摘要任务按内容复用同一标签；可变标签按本次准备固定引用，可能新增标签 |
+| 官方任务镜像、服务镜像和 Node 镜像 | 本地内容仍可用时复用；缺少所需镜像时下载 |
+| 从 Dockerfile 构建的任务镜像 | 构建文件、参数和平台未变时复用 |
+| Runtime 镜像 | 任务镜像、Node 镜像、运行时代码和平台未变时复用 |
+| Agent 安装镜像和最终解题镜像 | 相关基础镜像、Agent 文件、安装命令和参数未变时复用 |
 
 重新运行仍会检查所选任务的环境，因此会再次输出 `Preparing solve image and runtime environment`、`Task image ready` 等日志。这些日志不代表重新下载或构建；`source=explicit image reference` 只说明配置提供了镜像地址，也不区分本地命中和实际拉取。镜像就绪后还可能继续准备 Runtime 和 Solver，详见[并发与环境准备](../concurrency.zh-CN.md)。
-
-Agent 目录的递归读取和执行权限在共享安装镜像中设置一次，`state` 目录同时设置为 `1777`。每题最终镜像复制时保留这些权限，随后以任务镜像原来的用户检查 Agent 是否可加载，不再为每题递归执行 `chmod`。共享构建配方改变后会生成新的镜像标签，首次使用需要重新构建相关镜像。
 
 解题和验证可以使用不同的官方镜像，也各自需要准备 Runtime。上次只看到“用途=解题”的镜像就绪，不代表验证镜像已经拉取、整题环境已经准备完成；后续重新运行可能首次下载此前尚未准备的验证镜像。
 
@@ -76,7 +71,7 @@ Agent 目录的递归读取和执行权限在共享安装镜像中设置一次�
 - 上次中断时，该镜像还没有构建完成。
 - 镜像或对应标签被删除，或改用了另一个 Docker context / daemon；例如本地与 Ray 节点不会自动共享镜像缓存。
 - 任务镜像、Node 镜像、目标平台、Runtime 程序、Solver 安装文件、依赖或构建参数等发生变化。
-- Docker 后端或 API 检查方式变化，使参与缓存计算的镜像标识不同。
+- 切换 Docker 后端，导致之前的镜像或构建缓存不可用。
 - 从旧命名版本升级，或任务 ID、解题／验证用途改变，导致程序查找不同标签。
 
 即使需要重新构建，Docker 仍可能复用已有构建层；是否完整执行每一步，由 Docker 的构建缓存决定。
@@ -135,7 +130,7 @@ environment:
         - anyio<4.15
 ```
 
-Evaluator 在任务 Dockerfile 的每个构建阶段复制约束文件并设置 `PIP_CONSTRAINT`，原有 `pip install` 因而遵守版本限制。只修改构建快照，数据集文件不变；约束加入镜像缓存摘要。生成的镜像保留约束文件和环境变量，后续容器内的 pip 安装也会遵守它。
+这些约束用于构建任务镜像时的 pip 安装，也会在生成的容器中继续生效。修改约束后会重新构建相关镜像，原始数据集文件不变。
 
 仅支持包名与版本比较，不接受 URL、命令选项、extras、条件标记或多行内容。`*` 键可以为未单独配置的主任务镜像提供默认列表；具体 task ID 的列表优先，空数组表示该题不加限制。sidecar 不应用这些约束。未配置时保持原行为；预构建镜像不重新安装依赖。不能把整个旧题库都限制为低版本：有些题目会明确依赖新版 pytest，应按已确认不兼容的题目配置。
 

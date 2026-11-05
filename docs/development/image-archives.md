@@ -12,14 +12,19 @@
 
 ```yaml
 docker:
+  # 共享镜像（如 Node）：通过 docker pull 获取。
+  # 未单独配置获取方式的题库任务镜像也使用此设置。
   pull:
     method: docker
+  # Terminal-Bench 任务镜像：从 ModelScope 下载归档并加载到 Docker。
   benchmarks:
     terminalbench:
       method: archive
       provider: modelscope
       baseUrl: https://modelscope.cn/datasets/evolving-foundry/ember-evaluator/resolve/master/terminalbench4.0
 ```
+
+`docker.pull` 控制 Node 等共享镜像及未单独配置的题库任务镜像；`docker.benchmarks.terminalbench` 为 Terminal-Bench 任务镜像指定 ModelScope 归档来源。前者执行 `docker pull`，后者下载归档后执行 `docker load`。
 
 Hugging Face 使用 `provider: huggingface`，根地址示例为 `https://huggingface.co/datasets/your-org/task-images/resolve/main/terminalbench4.0`。`baseUrl` 必须是文件下载根地址，不是仓库预览页面；建议使用固定的仓库 revision 或发布目录。
 
@@ -50,7 +55,7 @@ docker image save --output solve.tar <本机镜像引用>
 gzip solve.tar
 ```
 
-分别导出解题、验证及任务服务镜像。一个文件只放一个镜像；使用 `docker save`，不使用 `docker export`。文件名必须与上述路径相符。无需生成 catalog.json、SHA256SUMS 或原始 Manifest。
+分别导出解题、验证及任务服务镜像。一个文件只放一个镜像；使用 `docker save`，不使用 `docker export`。文件名必须与上述路径相符。无需额外生成下载清单或校验文件。
 
 ## 上传到 ModelScope
 
@@ -104,7 +109,7 @@ ms-hub upload "$repo" ./terminalbench4.0 terminalbench4.0 \
 baseUrl: https://modelscope.cn/datasets/evolving-foundry/ember-evaluator/resolve/master/terminalbench4.0
 ```
 
-上传到其他仓库、分支或目录时，替换 URL 中对应部分。使用下方 `warmup` 命令验证选中任务的镜像能下载、加载；需要确认镜像与官方版本一致时，按[镜像 ID 核验方法](../users/network.zh-CN.md#核验-modelscope-镜像)检查。
+上传到其他仓库、分支或目录时，替换 URL 中对应部分。使用下方 `warmup` 命令验证选中任务的镜像能下载、加载；需要确认镜像与官方版本一致时，按[镜像 ID 核验方法](../users/image-downloads.zh-CN.md#核验-modelscope-镜像)检查。
 
 ## 在 Evaluator 中使用
 
@@ -115,11 +120,11 @@ ember-evaluator warmup experiment.yaml --network network.yaml
 ember-evaluator run experiment.yaml --network network.yaml
 ```
 
-下载完成后直接 `docker load --input`，读取返回的镜像引用并添加 Evaluator 标签。Evaluator 不检查归档格式、镜像平台、文件 SHA-256、原 Registry 摘要或导入身份。下载器仍处理连接失败、取消、流错误和不完整响应；Docker 的加载错误直接使本次准备失败。程序不改变 Docker 对归档的原生处理，包内原始标签可能被恢复或覆盖。
+下载后由 `docker load --input` 加载归档，加载失败会停止本次准备。归档中的原始镜像标签可能被恢复或覆盖。Evaluator 不确认归档是否与原仓库镜像相同；需要确认时，按[镜像 ID 核验方法](../users/image-downloads.zh-CN.md#核验-modelscope-镜像)检查。
 
-本机按下载 URL 对应的 Evaluator 镜像标签缓存。标签存在时不重新下载；镜像 ID 等元数据仍用于 Runtime/Solver 构建。覆盖远端同名文件后，清理对应本机镜像或换用新版本地址。内部下载文件的内容摘要仅用于缓存命名，不要求发布者提供校验值。
+相同下载地址对应的本地镜像仍在时会复用，不重新下载。覆盖远端同名文件后，清理对应本地镜像或换用新版本地址，再执行 `warmup`。
 
-HF 请求使用执行节点的 `HF_TOKEN`；ModelScope 使用 `MODELSCOPE_API_TOKEN`。公开文件不需要 Token，认证不写进配置或归档。`doctor` 无法仅凭根目录确认具体镜像可用，会提示执行 `warmup`。
+公开归档不需要 Token。私有归档在执行下载的节点设置 `HF_TOKEN`（Hugging Face）或 `MODELSCOPE_API_TOKEN`（ModelScope），不要把 Token 写入网络文件或归档。使用 `warmup` 检查实际选中任务的归档能否下载并加载。
 
 ## 从清单方式迁移
 

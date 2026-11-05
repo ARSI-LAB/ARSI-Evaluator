@@ -4,7 +4,7 @@
 
 按实际遇到的问题选择入口。完整配置、执行政策和评分定义分别在对应指南中维护。
 
-[用户文档](../README.zh-CN.md) · [下载与镜像 FAQ](downloads.zh-CN.md) · [Docker FAQ](docker.zh-CN.md)
+[用户文档](../README.zh-CN.md) · [下载与镜像 FAQ](downloads.zh-CN.md) · [Docker FAQ](docker.zh-CN.md) · [网络诊断](network.zh-CN.md)
 
 ## 安装与配置
 
@@ -18,7 +18,7 @@ Evaluator 导入内置插件时需要 AgentBundle SDK，因此 pnpm 会自动下
 
 ### doctor 通过后，为什么正式运行仍可能失败？
 
-`doctor` 不发送模型请求，但会执行临时下载和 Docker 构建探针，`not-checked` 也不是通过。`run --dry-run` 可以锁定来源并枚举任务，但仍不证明模型调用和任务执行成功；先限制样本实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
+`doctor` 检查部分下载和 Docker 构建操作，不发送模型请求。`not-checked` 表示该项未完成检查。即使检查通过，仍需先预热、再选少量题目实际运行，见[快速上手](../quick-start.zh-CN.md#4-先检查再运行)。
 
 ## 下载、容器与资源
 

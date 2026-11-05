@@ -115,6 +115,15 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 >
 > 由 Ember Evaluator 官方维护，存放部分 Benchmark 的官方任务镜像归档。可用任务和平台以仓库目录为准。
 
+在仓库根目录使用现成的网络配置；实验 YAML 选择题库、模型和题目，`--network` 后的 YAML 指定镜像下载来源：
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+```
+
+先按 [Terminal-Bench 入门](docs/users/quick-start/terminalbench.zh-CN.md)准备 Docker、模型和选题。示例默认全量选题，仅能下载仓库中已发布的任务和平台；其他下载仍使用默认配置。如何选择镜像源、组合配置和设置默认文件，见 [--network 使用步骤](docs/users/network.zh-CN.md#1-先选一份网络配置)。
+
 ## 📖 使用指南
 
 按操作目标阅读对应文档：

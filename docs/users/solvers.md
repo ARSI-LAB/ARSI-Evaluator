@@ -135,7 +135,7 @@ Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts S
 
 The solver selects agent behavior; the task environment selects an existing image or a Dockerfile build. Choosing `simpleagent` or `agentbundle` does not directly select an image download method. `warmup` makes no model calls, but prepares task images, Evaluator's shared Node runtime and installation dependencies required by the selected harness. Available caches are reused.
 
-A single warmup may include both Dockerfile `FROM` pulls and explicit acquisition of existing images such as Node. The former uses Docker daemon/BuildKit networking; the latter uses the network file's `docker.mirrors` and `docker.pull`. Even with `docker.pull.method: docker`, Evaluator rewrites the image reference before asking Docker to download it. See [warmup downloads](network.md#image-and-dependency-downloads-during-warmup) for configuration boundaries across image acquisition, build-time dependency installation and runtime installation.
+A single warmup may include both Dockerfile `FROM` pulls and explicit acquisition of existing images such as Node. The former uses Docker daemon/BuildKit networking; the latter uses the network file's `docker.mirrors` and `docker.pull`. Even with `docker.pull.method: docker`, Evaluator rewrites the image reference before asking Docker to download it. See [warmup downloads](deployment/network.md#image-and-dependency-downloads-during-warmup) for configuration boundaries across image acquisition, build-time dependency installation and runtime installation.
 
 ## Dify
 
