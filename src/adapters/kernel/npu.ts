@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import type { EnvironmentSession } from "../../core/contracts/environment.js";
 import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
 import { expectRecord } from "../../config/schema.js";
@@ -42,6 +43,9 @@ export class NpuKernelBackend implements KernelBackend {
     try { value = JSON.parse(process.stdout); }
     catch { throw new VerificationError("Kernel worker returned invalid JSON", { stderr: process.stderr.slice(-4000) }); }
     const record = expectRecord(value, "kernel result");
+    const persisted: unknown = JSON.parse(await readFile(join(session.verifierOutputDir, "kernel-result.json"), "utf8"));
+    if (!isDeepStrictEqual(value, persisted))
+      throw new VerificationError("Native kernel evidence differs from the worker result", {});
     if (this.config.profiling.enabled && record.status === "passed")
       await this.collectProfiling(request, session, signal, record);
     return value;

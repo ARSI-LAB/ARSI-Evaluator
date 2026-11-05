@@ -65,6 +65,8 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     details.assessment = finiteJson(assessment, "assessment");
     if (r.status === "passed" && (assessment.errorOwnership !== null || assessment.checks.some(c => c.status !== "passed")))
       throw new VerificationError("Strict checks did not pass", details);
+    if (r.status === "passed" && Object.values(assessment.environment).some(value => value === null))
+      throw new VerificationError("Strict measurement environment identity unavailable", details);
     if ((r.status === "incorrect" || r.status === "candidate_error") &&
       (assessment.errorOwnership !== "candidate" || !assessment.checks.some(c => c.status === "failed")))
       throw new VerificationError("Candidate failure lacks strict evidence", details);
@@ -101,4 +103,35 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
   const reference = details.referenceMs as number, candidate = details.candidateMs as number, speedup = details.speedup as number;
   if (Math.abs(reference / candidate - speedup) > 1e-8 * Math.max(1, speedup)) throw new Error("Inconsistent kernel speedup");
   return { passed: true, score: 1, details };
+}
+
+/** Validate independent capture receipts at the Benchmark boundary before publishing a diagnostic verdict. */
+export function kernelProfileVerdict(value: unknown, candidateSha256: string, referenceKind: string, expected: {
+  caseId: string; seed: number; warmup: number; collection: "Default" | "PipeTimeline,Default";
+  problemSha256: string; contractSha256?: string;
+}): VerifyResult {
+  const profiling = parseKernelProfiling(expectRecord(value, "kernel result").profiling);
+  const metadata = expectRecord(profiling.metadata, "profile metadata");
+  const protocol = { caseId: expected.caseId, seeds: [expected.seed], warmup: expected.warmup,
+    collection: expected.collection, scope: "original-first-triton-kernel-or-file-stem",
+    capture: "after-warmup-mstx-range", selectionPolicy: "last" };
+  if (profiling.status === "completed") {
+    const actual = expectRecord(metadata.diagnosticProtocol, "diagnosticProtocol");
+    if (Object.entries(protocol).some(([name, value]) => JSON.stringify(actual[name]) !== JSON.stringify(value)) || metadata.collection !== expected.collection)
+      throw new VerificationError("Diagnostic effective protocol mismatch", {});
+    const trace = expectRecord(metadata.trace, "diagnostic trace");
+    if (expected.collection === "Default" ? trace.status !== "unavailable" || trace.reason !== "not-requested-by-default-protocol" : trace.status !== "available")
+      throw new VerificationError("Diagnostic trace availability mismatch", {});
+    const sources = expectRecord(metadata.sources, "diagnostic sources");
+    if (expectRecord(sources.candidate, "candidate source").sha256 !== candidateSha256 ||
+        expectRecord(sources.problem, "problem source").sha256 !== expected.problemSha256)
+      throw new VerificationError("Diagnostic native source mismatch", {});
+    const replay = expectRecord(metadata.replay, "diagnostic replay");
+    if (replay.seed !== expected.seed || replay.warmup !== expected.warmup || replay.logicalDevice !== 0)
+      throw new VerificationError("Diagnostic replay protocol mismatch", {});
+  }
+  return { passed: null, details: { protocol: "kernel-profile/v1", operation: "profile", candidateSha256, referenceKind,
+    status: profiling.status === "completed" ? "completed" : "unavailable", cleanup: "confirmed",
+    diagnosticProtocol: protocol, profiling,
+    ...(expected.contractSha256 === undefined ? {} : { contractSha256: expected.contractSha256 }) } };
 }

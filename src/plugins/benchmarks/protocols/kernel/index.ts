@@ -10,7 +10,7 @@ import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { assertKernelHardware, createKernelBackend, type KernelBackend } from "../../../../adapters/kernel/backend.js";
 import { VerificationError } from "../../../../core/errors/verification-error.js";
 import { parseKernelContract, kernelContractDigest, parseKernelAssessment } from "./strict.js";
-import { kernelVerdict, parseKernelProfiling } from "./result.js";
+import { kernelVerdict, kernelProfileVerdict } from "./result.js";
 
 export function relativeFile(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
@@ -196,16 +196,15 @@ export class KernelBenchmark implements Benchmark {
     const value = await this.backend.execute(request, session, active);
     const record = expectRecord(value, "kernel result");
     if (this.config.operation === "profile") {
-      const profiling = parseKernelProfiling(record.profiling);
-      const metadata = profiling.metadata;
-      if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) throw new TypeError("Invalid profile metadata");
-      const details = { protocol: "kernel-profile/v1", operation: "profile",
-        candidateSha256: String(request.candidateSha256), referenceKind: String(request.referenceKind),
-        status: profiling.status === "completed" ? "completed" : "unavailable", cleanup: "confirmed",
-        diagnosticProtocol: metadata.diagnosticProtocol ?? null, profiling,
-        ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }) };
-      await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(details, null, 2), "utf8");
-      return { passed: null, details };
+      const hashes = expectRecord(request.hashes, "kernel source hashes");
+      const verdict = kernelProfileVerdict(value, String(request.candidateSha256), String(request.referenceKind), {
+        caseId: String(request.caseId), seed: this.config.seeds[0]!, warmup: this.config.profiling.warmup ?? 25,
+        collection: this.config.profiling.collection,
+        problemSha256: expectNonEmptyString(hashes[String(request.problem)], "problem source hash"),
+        ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
+      });
+      await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
+      return verdict;
     }
     if (request.contract !== undefined) {
       const assessment = parseKernelAssessment(record.assessment, parseKernelContract(request.contract), this.config.seeds);

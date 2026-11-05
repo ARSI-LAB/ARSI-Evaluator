@@ -20,7 +20,7 @@ const parsed = parseKernelContract(contract);
 const assessment = () => ({ schemaVersion: 1, contractSha256: kernelContractDigest(parsed),
   checks: [0, 1].flatMap(call => KERNEL_CHECK_IDS.map(id => ({ id, seed: 42, call, status: "passed", message: "" }))),
   effectiveProtocol: { seeds: [42], rtol: 0, atol: 0, warmup: 5, repeat: 20, timingScope: "all-device-kernels", aggregation: "iteration-mean", timingSeed: 42 },
-  environment: { python: "fixture", torch: "fixture", torchNpu: "fixture", triton: "fixture", cann: null, driver: null, device: "fixture", visibleDevices: "0" }, errorOwnership: null });
+  environment: { python: "fixture", torch: "fixture", torchNpu: "fixture", triton: "fixture", cann: "fixture", driver: "fixture", device: "fixture", visibleDevices: "0" }, errorOwnership: null });
 test("strict assessment requires complete unique per-seed and per-call evidence", () => {
   expect(parseKernelAssessment(assessment(), parsed, [42]).checks).toHaveLength(16);
   const missing = assessment(); missing.checks.pop();
@@ -37,4 +37,12 @@ test("strict verdict refuses not-run checks and unattributed candidate defects",
   value.assessment.checks[0]!.status = "not-run";
   expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", false, parsed, [42])).toThrow(/Strict checks/);
   expect(() => kernelVerdict({ ...value, status: "candidate_error", referenceMs: null, candidateMs: null, speedup: null }, value.candidateSha256, "pytorch", false, parsed, [42])).toThrow(/evidence/);
+});
+
+
+test("strict performance verdict requires the observed environment identity", () => {
+  const checks = { ...assessment(), environment: { ...assessment().environment, driver: null } };
+  const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+    status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: checks };
+  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", false, parsed, [42])).toThrow(/environment/);
 });
