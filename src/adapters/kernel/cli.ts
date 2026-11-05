@@ -8,20 +8,20 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 
 /**
- * kernel 测量执行桥：Evaluator CLI 的 `kernel` 子命令族。
+ * Execution bridge for the Evaluator CLI kernel subcommands.
  *
- * python 执行体只保留三个 NPU 关注点入口（`src/adapters/kernel/`）：
- * - precision.py：精度门（多 seed 双跑 + kernel 官方容差，对照 problem.Model 参照）；
- * - timing.py：纯计时（bench_kernel_ms，--triton-only，warmup25/repeat100 同口径）；
- * - msprof_replay.py：msprof 采集目标（被 msprof 进程 attach 跑算子的唯一 py）。
- * msprof 采集编排/解析/缓存/roofline 分类在 ./profile.ts。每个入口进程 stdout
- * 只承载一份 JSON（末行）；业务失败 payload.error
- * 非空正常返回，解释器缺失/超时/取消/无 JSON 按 infra 故障抛 KernelExecError。
- * measure/verify 编排（产物三件套、verify.json、workdir 扫描）在 RSI 侧：
- * 它们是 RSI run 语义；本仓只提供三个纯测量原子。
+ * Python workers in src/adapters/kernel/ cover three NPU operations:
+ * - precision.py: compare two runs per seed against problem.Model using kernel tolerances;
+ * - timing.py: benchmark device kernels with --triton-only, 25 warmups and 100 repeats;
+ * - msprof_replay.py: replay the operator under the msprof process.
+ * Profiling orchestration, parsing, caching and roofline classification live in ./profile.ts.
+ * Each worker returns one JSON payload on the final stdout line. Evaluation failures
+ * return a nonempty payload.error; missing interpreters, timeouts, cancellation and missing JSON throw KernelExecError.
+ * RSI owns measure/verify orchestration, including artifact sets, verify.json and workdir scans.
+ * These workers expose only the three measurement operations required by that orchestration.
  */
 
-/** 执行目录定位失败/解释器缺失等执行环境故障。 */
+/** Execution environment failures, including missing worker directories or interpreters. */
 export class KernelExecError extends Error {
   override readonly name = "KernelExecError";
 
@@ -34,15 +34,15 @@ export class KernelExecError extends Error {
 export interface KernelExecOptions {
   python?: string;
   env?: Readonly<Record<string, string>>;
-  /** NPU 卡号（逻辑卡）：透传为子进程 KERNEL_NPU_DEVICE，缺省由执行体按环境决定。 */
+  /** Logical NPU index passed as KERNEL_NPU_DEVICE; the worker uses its environment when omitted. */
   device?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
 
 /**
- * 执行目录定位（纯逻辑，moduleDir 可注入）：KERNEL_ATOM_DIR 显式覆盖 →
- * 从 moduleDir 逐级向上找 `<root>/src/adapters/kernel/precision.py`。
+ * Locate the worker directory: use KERNEL_ATOM_DIR when explicitly configured;
+ * otherwise search ancestors of the injectable moduleDir for src/adapters/kernel/precision.py.
  */
 export function resolveAtomDir(sub: string, options: KernelExecOptions = {},
   moduleDir: string = dirname(fileURLToPath(import.meta.url))): string {
@@ -63,7 +63,7 @@ export function resolveAtomDir(sub: string, options: KernelExecOptions = {},
     `kernel ${sub} cannot locate the kernel python entries: set KERNEL_ATOM_DIR to the adapters/kernel directory`, true);
 }
 
-/** 子进程失败的关键字段（ExecFileException 的窄化视图）。 */
+/** Relevant child-process failure fields, narrowed from ExecFileException. */
 interface ExecFailure {
   code?: unknown;
   killed?: unknown;
@@ -71,7 +71,7 @@ interface ExecFailure {
   stderr?: unknown;
 }
 
-/** 失败归类：解释器缺失/超时/取消是环境故障；其余带退出码交调用方。 */
+/** Classify missing interpreters, timeouts and cancellation as infrastructure failures. */
 export function kernelFailure(sub: string, error: unknown): KernelExecError {
   const cause = error instanceof Object ? error as ExecFailure : {};
   if (cause.code === "ENOENT")
@@ -93,7 +93,7 @@ async function readJson(path: string): Promise<Record<string, unknown> | undefin
   }
 }
 
-/** 解析入口进程 stdout 的单 JSON（取最后一个非空行，容忍 CANN 噪声输出）。 */
+/** Parse JSON from the final nonempty stdout line, tolerating preceding CANN output. */
 export function parseAtomPayload(sub: string, stdout: string): Record<string, unknown> {
   const lines = stdout.trim().split("\n").filter((line) => line.trim() !== "");
   const last = lines[lines.length - 1] ?? "";
@@ -105,7 +105,7 @@ export function parseAtomPayload(sub: string, stdout: string): Record<string, un
   }
 }
 
-/** 单入口执行：成功返回 payload；业务失败（exit 非 0 但产物已落盘）也返回 payload。 */
+/** Return worker payloads, including recorded evaluation failures with nonzero exit codes. */
 async function runEntry(sub: string, entry: string, argv: readonly string[], out: string,
   options: KernelExecOptions = {}): Promise<Record<string, unknown>> {
   const atomDir = resolveAtomDir(sub, options);
@@ -130,7 +130,7 @@ async function runEntry(sub: string, entry: string, argv: readonly string[], out
     const cause = error instanceof Object ? error as ExecFailure : {};
     if (cause.killed === true || (error instanceof Error && error.name === "AbortError"))
       throw kernelFailure(sub, error);
-    // 业务失败退出时 --out 产物已落盘（error 字段在）；读取兜底。
+    // Evaluation failures may already have written --out with an error field; read that payload.
     payload = await readJson(out);
     if (payload === undefined) throw kernelFailure(sub, error);
   }
@@ -141,7 +141,7 @@ const str = (value: unknown): string => (typeof value === "string" ? value : "")
 const num = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
-// ---------------- 三个测量原子（两个 python + 一个 TS 编排） ----------------
+// ---------------- Three measurement operations: two Python workers and one TS orchestrator ----------------
 
 export interface KernelBenchArgs { problem: string; kernel: string; out: string }
 
@@ -150,7 +150,7 @@ export interface KernelBenchResult extends Record<string, unknown> {
   time_ms: number | null; error: string;
 }
 
-/** 纯计时原子（--triton-only 口径；不带精度——精度由 precision 原子承担）。 */
+/** Benchmark Triton kernels only; the precision worker owns correctness checks. */
 export async function kernelBench(args: KernelBenchArgs, options: KernelExecOptions = {}): Promise<KernelBenchResult> {
   const payload = await runEntry("bench", "timing.py",
     ["--problem", args.problem, "--kernel", args.kernel, "--out", args.out],
@@ -164,7 +164,7 @@ export interface KernelPrecisionResult extends Record<string, unknown> {
   tolerance: Record<string, unknown>;
 }
 
-/** 精度门原子：多 seed 双跑 + kernel 官方容差（对照 problem.Model 参照）。 */
+/** Run twice per seed against problem.Model with the kernel correctness tolerances. */
 export async function kernelPrecision(args: KernelBenchArgs & { seeds?: number[] },
   options: KernelExecOptions = {}): Promise<KernelPrecisionResult> {
   const seeds = args.seeds ?? [0, 1];

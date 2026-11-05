@@ -1,4 +1,4 @@
-"""评测固定 kernel；从 stdin 读取请求，向 stdout 与指定文件写入有限 JSON 结果。"""
+"""Evaluate a fixed kernel from stdin and write finite JSON results to stdout and the requested file."""
 
 from __future__ import annotations
 
@@ -17,17 +17,17 @@ from types import ModuleType
 
 
 class CandidateError(Exception):
-    """候选加载或执行失败，与参考和环境故障区分。"""
+    """Candidate loading or execution failure, distinct from reference and environment failures."""
 
 
 def npu_device_id() -> int:
-    """目标 NPU 逻辑卡号：KERNEL_NPU_DEVICE 显式指定，缺省 0。"""
+    """Logical NPU index selected by KERNEL_NPU_DEVICE, defaulting to 0."""
     raw = os.environ.get("KERNEL_NPU_DEVICE", "")
     return int(raw) if raw.isdigit() else 0
 
 
 def load_module(path, name):
-    """按固定文件加载模块，避免复用上一个任务的同名模块。"""
+    """Load a module from its file without reusing a previous task module with the same name."""
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Cannot load module: {path}")
@@ -38,14 +38,14 @@ def load_module(path, name):
 
 
 def verify_hashes(hashes):
-    """防止来源锁定与环境复制之间的文件变化被静默接受。"""
+    """Reject file changes between source locking and environment copying."""
     for path, expected in hashes.items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"Locked source changed: {path}")
 
 
 def load_task_module(path, root, name):
-    """保留任务包层次及同目录导入，避免重命名入口破坏已声明的依赖。"""
+    """Preserve task package structure and sibling imports without renaming declared dependencies."""
     path, root = Path(path).resolve(), Path(root).resolve()
     relative = path.relative_to(root)
     namespace = "_kernel_task"
@@ -53,7 +53,7 @@ def load_task_module(path, root, name):
         package = ModuleType(namespace)
         package.__path__ = [str(root)]
         sys.modules[namespace] = package
-    # 同目录辅助文件和以清单根目录为起点的包均可被找到。
+    # Resolve both sibling helpers and packages rooted at the manifest directory.
     sys.path.insert(0, str(root))
     sys.path.insert(0, str(path.parent))
     parent = ".".join([namespace, *relative.parts[:-1]])
@@ -62,7 +62,7 @@ def load_task_module(path, root, name):
 
 
 def select_outputs(value, indices):
-    """仅按任务明确声明的索引排除元数据，默认保留完整输出。"""
+    """Exclude metadata only at explicitly declared task indices; otherwise preserve the full output."""
     if indices is None:
         return value
     if not isinstance(value, (list, tuple)):
@@ -71,7 +71,7 @@ def select_outputs(value, indices):
 
 
 def clone_tree(value, torch):
-    """保留输入 stride，避免非连续输入在复制时变成另一道题。"""
+    """Preserve input strides so cloning noncontiguous inputs does not change the task."""
     if isinstance(value, torch.Tensor):
         return torch.empty_strided(value.shape, value.stride(), device=value.device, dtype=value.dtype).copy_(value)
     if isinstance(value, tuple):
@@ -86,7 +86,7 @@ def clone_tree(value, torch):
 
 
 def compare_tree(expected, actual, torch, rtol, atol):
-    """比较全部输出和结构；浮点非有限值不参与通过判定。"""
+    """Compare all outputs and their structure; reject nonfinite floating-point values."""
     if isinstance(expected, torch.Tensor):
         if not isinstance(actual, torch.Tensor):
             raise AssertionError("Expected tensor output")
@@ -114,7 +114,7 @@ def compare_tree(expected, actual, torch, rtol, atol):
 
 
 def validate_reference(value, torch):
-    """参考输出必须先有效，避免将参考 NaN/Inf 归咎于候选。"""
+    """Validate reference outputs first so reference NaN/Inf values are not blamed on the candidate."""
     if isinstance(value, torch.Tensor):
         if not bool(torch.isfinite(value).all()):
             raise ValueError("Non-finite reference tensor output")
@@ -130,7 +130,7 @@ def validate_reference(value, torch):
 
 
 def candidate_call(function, inputs):
-    """将候选运行异常转换为明确的有效失败。"""
+    """Convert candidate execution exceptions into explicit evaluation failures."""
     try:
         return function(*inputs)
     except Exception as exc:
@@ -138,14 +138,14 @@ def candidate_call(function, inputs):
 
 
 def positive_measurement(value):
-    """禁止 profiler 缺数据时的 inf/NaN 伪装成测量值。"""
+    """Reject inf/NaN timing values produced by missing profiler data."""
     if not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
         raise RuntimeError("Profiler did not produce a finite positive duration")
     return float(value)
 
 
 def evaluate(request, profile_root=Path(".")):
-    """返回正确性和相同范围的设备耗时；整个过程不访问模型服务。"""
+    """Return correctness and device timings with matching scopes, without calling a model service."""
     if "contract" in request:
         strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
         return strict.evaluate(request, profile_root, globals())
@@ -155,7 +155,7 @@ def evaluate(request, profile_root=Path(".")):
 
     if not torch.npu.is_available():
         raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
-    # 可见设备集合由外部环境绑定；--device / KERNEL_NPU_DEVICE 在其中选目标逻辑卡。
+    # The environment binds visible devices; --device / KERNEL_NPU_DEVICE selects a logical device within that set.
     device = npu_device_id()
     torch.npu.set_device(device)
     locked_timer = Path("runtime/timing.py")
@@ -188,7 +188,7 @@ def evaluate(request, profile_root=Path(".")):
             torch.npu.synchronize()
             validate_reference(expected, torch)
             compare_tree(inputs, ref_inputs, torch, 0, 0)
-            # 同一进程重复执行，覆盖 autotune 首次成功、后续输出未写满的问题。
+            # Repeat in the same process to catch autotune succeeding once but leaving later outputs incomplete.
             for _ in range(2):
                 trial = clone_tree(inputs, torch)
                 actual = candidate_call(candidate, trial)
@@ -215,16 +215,16 @@ def evaluate(request, profile_root=Path(".")):
         ))
         result = {"status": "passed", "error": "", "referenceMs": reference_ms,
                   "candidateMs": candidate_ms, "speedup": positive_measurement(reference_ms / candidate_ms)}
-        # 详细指标采集由 TS 编排承担（adapters/kernel/profile.ts / `evaluator kernel profile`）；
-        # 验收链未接线，profiling.enabled 仅作为 requested 标记，由 TS 侧
-        # kernelVerdict 产出明确的 failed 兜底记录，不再引用不存在的 runtime/profiling.py。
+        # TypeScript owns detailed profiling (adapters/kernel/profile.ts / evaluator kernel profile).
+        # This acceptance path records profiling.enabled only as requested; the TypeScript
+        # kernelVerdict supplies an explicit failed fallback rather than invoking a missing profiling worker.
         verify_hashes(request["hashes"])
         return result
 
 
 @contextlib.contextmanager
 def native_output(log):
-    """同时接住 CANN/C++ 写入文件描述符的日志，避免污染 JSON。"""
+    """Capture CANN/C++ writes to file descriptors as well, keeping logs out of the JSON channel."""
     sys.stdout.flush()
     sys.stderr.flush()
     saved = [os.dup(1), os.dup(2)]
@@ -241,20 +241,20 @@ def native_output(log):
 
 
 
-# ---------------- precision 原子入口（CLI：precision --problem --kernel --out） ----------------
-# kernel 官方容差（rsi/validator.py 同一套：ATOL 固定，rtol 按 dtype 分档）。
+# ---------------- Precision worker entry point: precision --problem --kernel --out ----------------
+# Kernel tolerances match rsi/validator.py: fixed ATOL and dtype-specific rtol.
 ATOL = 1e-5
 RTOL_BY_DTYPE = {"torch.float32": 1.3e-6, "torch.float16": 1e-3, "torch.bfloat16": 1.6e-2}
 RTOL_DEFAULT = 1.3e-6
 
 
 def _rtol_for(dtype, override):
-    """kernel 官方 rtol 分档（rsi/validator.py 同表）；CLI 显式覆盖优先。"""
+    """Kernel rtol values match rsi/validator.py; explicit CLI overrides take precedence."""
     return override if override is not None else RTOL_BY_DTYPE.get(str(dtype), RTOL_DEFAULT)
 
 
 def _dtype_of(value):
-    """取比对参照的 dtype 键（tensor 用自身；容器取首 tensor；其余走 default）。"""
+    """Use a tensor dtype, the first tensor dtype in a container, or the default tolerance key."""
     import torch
 
     if torch.is_tensor(value):
@@ -267,7 +267,7 @@ def _dtype_of(value):
 
 
 def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
-    """精度门原子：多 seed 双跑数值比对 + 输入篡改检测（kernel verify 语义）。"""
+    """Check two runs per seed against the reference and detect input mutation."""
     import random
 
     import torch
@@ -303,7 +303,7 @@ def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
                 compare_tree(inputs, ref_inputs, torch, 0, 0)
                 rtol_used = _rtol_for(_dtype_of(expected), rtol)
                 payload["tolerance"]["rtol"] = rtol_used
-                # kernel worker 口径：同 seed 双跑，覆盖 autotune 首次写满、后续残缺的假阳性。
+                # Repeat each seed to catch autotune filling outputs once but leaving subsequent runs incomplete.
                 for _ in range(2):
                     trial = clone_tree(inputs, torch)
                     actual = candidate(*trial)
@@ -318,7 +318,7 @@ def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
         payload["passed"] = True
     except CandidateError as exc:
         payload["error"] = str(exc)[:4000]
-    except Exception as exc:  # noqa: BLE001 - 业务失败留证据不退非零
+    except Exception as exc:  # noqa: BLE001 - record evaluation failure evidence without a nonzero exit
         payload["error"] = f"{type(exc).__name__}: {exc}"[:4000]
     return payload
 
@@ -331,7 +331,7 @@ def _emit(out_path, payload):
 
 
 def main():
-    """双模式：`precision ...` 走精度原子；缺省走协议 stdin 验收（evaluate）。"""
+    """Run the precision worker for precision arguments, otherwise evaluate the protocol request from stdin."""
     if len(sys.argv) > 1 and sys.argv[1] == "precision":
         parser = argparse.ArgumentParser(prog="precision", add_help=False)
         parser.add_argument("--problem", required=True)
@@ -344,7 +344,7 @@ def main():
         try:
             payload = run_precision_atom(atom_args.problem, atom_args.kernel,
                                          atom_args.seeds, atom_args.rtol, atom_args.atol)
-        except Exception as exc:  # noqa: BLE001 - 环境故障退 2（TS 侧按 infra 处理）
+        except Exception as exc:  # noqa: BLE001 - environment failures exit 2 for TypeScript infrastructure handling
             traceback.print_exc()
             payload = {"problem": atom_args.problem, "kernel": atom_args.kernel,
                        "passed": False, "error": f"{type(exc).__name__}: {exc}"[:4000]}
@@ -365,7 +365,7 @@ def main():
         strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
         result["assessment"] = strict.new_assessment(request)
         request["_assessment"] = result["assessment"]
-    # 外部 profiler 的 print 写入诊断日志，不与结果通道混合。
+    # Route external profiler output to diagnostics rather than the result channel.
     with output.with_suffix(".log").open("w") as log, native_output(log):
         try:
             result.update(evaluate(request, output.parent))

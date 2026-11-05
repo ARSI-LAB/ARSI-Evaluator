@@ -1,22 +1,22 @@
 /**
- * NPU roofline 分析（msprof_pipe_utilization 版）—— kernel 原版
- * msprof_roofline.py 的 TS 逐语义移植。纯计算、零 NPU：输入是 profile 原子
- * 已解析的指标表 `{block_id: {指标: 值}}`，输出瓶颈分类与管道利用率。
+ * NPU roofline analysis using msprof pipeline utilization, ported from msprof_roofline.py.
+ * This computation requires no NPU: it consumes the parsed profiling metrics table
+ * {block_id: {metric: value}} and returns bottleneck classifications and pipeline utilization.
  *
- * 移植要点（与 python 版逐条对齐）：
- * - 管道顺序 scalar→vec→mte2→mte3 固定，平局时取先者（max 语义一致）；
- * - underutilized 优先：最高利用率 < underutilizedThreshold 直接判 "no"；
- * - tiling 判据：最大块 aiv_vec_time > 1.3 × 最小块（负载不均衡）；
- * - at_roofline 恒为 false：管道利用率百分比与绝对 SOL 不可比，宁缺毋假
- *   （python 版同款告警语义）。
+ * Semantics preserved from the Python implementation:
+ * - Break utilization ties in scalar, vec, mte2, mte3 order, matching max semantics.
+ * - Classify as "no" when maximum utilization is below underutilizedThreshold.
+ * - Detect tiling imbalance when maximum aiv_vec_time exceeds 1.3 times the minimum.
+ * - Keep at_roofline false: pipeline utilization percentages cannot be compared with absolute SOL.
+ *   Preserve the Python warning semantics rather than infer an unsupported stopping condition.
  */
 
 export interface RooflineConfig {
-  /** 判定为管道 bound 的利用率下限（0-1）。 */
+  /** Minimum utilization (0-1) for a pipeline-bound classification. */
   boundThresholdPct: number;
-  /** 低于此最高利用率判 underutilized（优先于 bound 判定）。 */
+  /** Classify as underutilized below this maximum utilization, before testing pipeline bounds. */
   underutilizedThresholdPct: number;
-  /** at_roofline 效率阈值（NPU 上暂不可判，保留字段）。 */
+  /** Reserved roofline efficiency threshold; current NPU metrics cannot establish at_roofline. */
   thresholdPct: number;
 }
 
@@ -26,7 +26,7 @@ export const DEFAULT_ROOFLINE_CONFIG: RooflineConfig = {
   thresholdPct: 0.8,
 };
 
-/** msprof 指标键（须与 msprof-csv.ts 的 MSPROF_METRIC_COLUMNS 一致）。 */
+/** msprof metric keys must match MSPROF_METRIC_COLUMNS in msprof-csv.ts. */
 const AIV_RATIO_KEYS: readonly (readonly [pipe: string, key: string])[] = [
   ['scalar', 'aiv_scalar_ratio'],
   ['vec', 'aiv_vec_ratio'],
@@ -60,7 +60,7 @@ const ratioOf = (row: Record<string, unknown>, key: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-/** 管道利用率 → 瓶颈分类；平局取 scalar→vec→mte2→mte3 的先者。 */
+/** Classify utilization; break ties in scalar, vec, mte2, mte3 order. */
 function classifyBottleneck(ratios: Map<string, number>, config: RooflineConfig): string {
   let maxPipe = '';
   let maxValue = -Infinity;
@@ -89,7 +89,7 @@ export function analyzeRoofline(
     };
   }
 
-  // 最大/最小 aiv_vec_time 块；最大块驱动全部下游指标提取。
+  // Select maximum/minimum aiv_vec_time blocks; use the maximum block for downstream metrics.
   let maxBlock = blocks[0]!;
   let minBlock = blocks[0]!;
   for (const entry of blocks) {
@@ -100,7 +100,7 @@ export function analyzeRoofline(
   const minTime = vecTimeOf(minBlock[1]);
   const analysisRow = maxBlock[1];
 
-  // tiling bound：最大块 vec_time 超 30% 于最小块（负载不均衡）。
+  // Tiling imbalance: maximum vec_time exceeds the minimum by more than 30%.
   const isTilingBound = maxTime > minTime * 1.3;
   const selectedMetrics: Record<string, Record<string, unknown>> = { [maxBlock[0]]: maxBlock[1] };
   if (isTilingBound) {
@@ -110,7 +110,7 @@ export function analyzeRoofline(
     );
   }
 
-  // AIV 管道利用率（取最大 vec_time 行）；缺键保留不可用并告警。
+  // Read AIV utilization from the maximum vec_time row; retain unavailable values and warn on missing keys.
   const ratios = new Map<string, number>();
   const missing: string[] = [];
   for (const [pipe, key] of AIV_RATIO_KEYS) {
@@ -136,7 +136,7 @@ export function analyzeRoofline(
     mte2_rate: ratios.get('mte2') ?? null,
     mte3_rate: ratios.get('mte3') ?? null,
     efficiency_rate: efficiency,
-    // 管道利用率 % 与绝对 SOL 不可比：恒 false，不产伪判停依据。
+    // Utilization percentages cannot establish absolute SOL; keep false to avoid unsupported stopping decisions.
     at_roofline: false,
     bottleneck: isTilingBound ? 'tiling' : classifyBottleneck(ratios, config),
     warnings,

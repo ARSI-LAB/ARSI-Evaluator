@@ -1,6 +1,6 @@
 # Data Downloads and Image Build FAQ
 
-> English | [中文](./downloads.zh-CN.md)
+> English | [Simplified Chinese](./downloads.zh-CN.md)
 
 [FAQ index](README.md) · [User documentation](../README.md)
 

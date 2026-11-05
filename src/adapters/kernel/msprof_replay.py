@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""msprof 采集目标：加载候选算子并重放（唯一被 msprof 进程 attach 的 py）。
+"""Load and replay the candidate operator under msprof.
 
-采集编排、CSV 解析、缓存与物理量分析全部在 Evaluator TS 层
-（src/plugins/benchmarks/protocols/kernel/）；本文件只负责
-「把算子跑起来」这一必须持有 torch/triton 运行时的事。
+The Evaluator TypeScript layer owns capture orchestration, CSV parsing, caching
+and hardware analysis (src/plugins/benchmarks/protocols/kernel/). This worker
+only executes the operator, which requires the torch/triton runtime.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from strict import observe_environment
 
 
 def replay(request):
-    """在指定逻辑 NPU 重放候选（KERNEL_NPU_DEVICE 选卡，缺省 0）；不推断 dtype、不额外拼接模型参数。"""
+    """Replay on the logical NPU selected by KERNEL_NPU_DEVICE (default 0); preserve dtypes and model arguments."""
     seeds = request["seeds"]
     if not isinstance(seeds, list) or len(seeds) != 1 or isinstance(seeds[0], bool) or not isinstance(seeds[0], int) or not 0 <= seeds[0] <= 0xffffffff:
         raise ValueError("Diagnostic replay requires one unsigned 32-bit seed")
@@ -61,8 +61,8 @@ def replay(request):
     try:
         candidate = load_task_module(request["candidate"], request["dataRoot"], "kernel").kernel_function
     except ValueError:
-        # 协议锁形态要求候选在 dataRoot 子路径下；原子形态（problem 与 kernel 不同树）
-        # 退回按路径直载，语义不变（同 file location 导入）。
+        # Protocol-locked candidates must be under dataRoot. Standalone workers may use
+        # separate problem and kernel trees, so fall back to importing the candidate by file location.
         candidate = load_module(request["candidate"], "kernel_msprof_kernel").kernel_function
     if not callable(candidate):
         raise TypeError("kernel_function must be callable")
@@ -72,7 +72,7 @@ def replay(request):
         torch.manual_seed(seed)
         torch.npu.manual_seed_all(seed)
         init = problem.get_init_inputs() if hasattr(problem, "get_init_inputs") else []
-        # 构造参考可能消耗 RNG，须与 precision.evaluate 的 get_inputs 前置步骤一致。
+        # Reference construction may consume RNG state; match precision.evaluate before get_inputs.
         reference = problem.Model(*init).to(f"npu:{device}").eval()
         inputs = problem.get_inputs()
         if not isinstance(inputs, (tuple, list)):

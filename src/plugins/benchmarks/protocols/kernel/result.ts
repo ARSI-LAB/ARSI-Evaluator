@@ -30,7 +30,7 @@ function metadataPaths(metadata: Record<string, unknown>): void {
     if (metadata[name] !== undefined) artifactPaths([metadata[name]]);
 }
 
-/** 只校验框架边界；成功、缺失字段和指标值由原 profiler 决定。 */
+/** Validate the framework boundary; the profiler determines status, field availability and metric values. */
 export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue } {
   const p = expectRecord(value, "kernel profiling");
   if (p.schemaVersion !== 1 || (p.status !== "completed" && p.status !== "failed") || typeof p.error !== "string")
@@ -51,7 +51,7 @@ export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue
   return result;
 }
 
-/** 计时只接受完整的有限正数，基础设施错误不会转成候选零分。 */
+/** Accept only complete, finite positive timings; infrastructure errors do not become candidate zero scores. */
 export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false, contract?: KernelContract, seeds: number[] = []): VerifyResult {
   const r = expectRecord(value, "kernel result");
   if (r.schemaVersion !== 1 || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
@@ -74,7 +74,7 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
   if (r.profiling !== undefined) {
     try { details.profiling = parseKernelProfiling(r.profiling); }
     catch {
-      // 不转存未校验对象或异常消息，避免不安全证据路径进入报告。
+      // Do not copy unvalidated objects or exception messages into reports as unsafe evidence paths.
       details.profiling = { schemaVersion: 1, status: "failed", error: "Profiling result could not be adapted",
         kernels: [], metadata: { adapterError: true }, artifacts: [] };
     }

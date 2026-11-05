@@ -51,7 +51,7 @@ export class NpuKernelBackend implements KernelBackend {
     return value;
   }
 
-  /** profiling.enabled 时接线 TS 编排（kernelProfile）采集详细硬件指标；失败降级为明确 failed 记录，不影响验收计时与评分。 */
+  /** Collect detailed metrics through kernelProfile when enabled; record failures without affecting acceptance timing or scoring. */
   private async collectProfiling(request: Record<string, unknown>, session: EnvironmentSession,
     signal: AbortSignal, value: Record<string, unknown>): Promise<void> {
     const fail = (error: string): void => {
@@ -86,7 +86,7 @@ export class NpuKernelBackend implements KernelBackend {
   }
 }
 
-/** 把 profile 原子产物中的相对路径统一前缀化为 verifier-relative（供报告证据链接可见）。 */
+/** Prefix profiling artifact paths relative to the verifier directory for report evidence links. */
 export function prefixProfilingPaths<T>(raw: T, prefix: string): T {
   const prefixed = (v: unknown): unknown => typeof v === "string" && v !== "" && !v.startsWith("/") ? `${prefix}/${v}` : v;
   const out = structuredClone(raw) as Record<string, unknown>;

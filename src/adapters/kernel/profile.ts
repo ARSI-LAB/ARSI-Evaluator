@@ -37,10 +37,10 @@ async function runProfileProcess(command: CommandSpec, signal: AbortSignal, exec
 }
 
 /**
- * msprof 采集原子编排（原 adapters/kernel/msprof.py + kernel_profiler/ 包的 TS 化）：
- * python 侧只剩 msprof_replay.py 一个「被 msprof attach 跑算子」的执行体；
- * request 组装、缓存、msprof 子进程 spawn/重试、OPPROF CSV 解析、ub_ratio、
- * 核利用率、L2 分析与产物契约全部在本 TS 层。产物 schema 与 py 版一致。
+ * msprof capture orchestration, ported from adapters/kernel/msprof.py and kernel_profiler.
+ * msprof_replay.py is the only Python worker executed under msprof.
+ * This TypeScript layer owns request assembly, caching, msprof process retries, OPPROF CSV parsing,
+ * ub_ratio, core utilization, L2 analysis and artifact contracts, preserving the Python artifact schema.
  */
 
 const UPSTREAM_COMMIT = "f542552167fef844e10b865dc001e5c019f01ea5";
@@ -58,7 +58,7 @@ export interface KernelProfileResult extends Record<string, unknown> {
   roofline: Record<string, unknown> | null; error: string;
 }
 
-/** 采集步骤错误：retryable 决定是否进入下一次 attempt（与原版异常分类一致）。 */
+/** Capture failure whose retryable flag controls whether another attempt is allowed. */
 class ProfileStepError extends Error {
   constructor(message: string, readonly retryable: boolean) {
     super(message);
@@ -68,14 +68,14 @@ class ProfileStepError extends Error {
 const sha256File = (path: string): string =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 
-/** 采集产物结构性缺失 → 重试无意义（与原版 FileNotFoundError 不重试的分类一致）。 */
+/** Structurally missing capture artifacts are not retryable, matching FileNotFoundError handling. */
 const NON_RETRYABLE_PREFIXES = [
   "No hash found", "No PipeUtilization.csv", "No L2Cache.csv",
   "No ResourceConflictRatio.csv", "No trace.json", "msprof binary not found",
   "msprof did not create OPPROF_",
 ];
 
-/** msprof 二进制定位：显式配置必须存在；否则优先本地 CANN 安装，再退 PATH。 */
+/** Locate msprof: require explicit paths to exist, then prefer local CANN installations over PATH. */
 function resolveMsprofBin(explicit?: string): string {
   if (explicit !== undefined && explicit !== "") {
     if (!existsSync(explicit)) throw new ProfileStepError(`msprof binary not found: ${explicit}`, false);
@@ -119,7 +119,7 @@ function validateReplayProtocol(value: unknown, seed: number, warmup: number): R
   return replay;
 }
 
-/** msprof 采集原子：缓存命中直接回放既有指标；未命中 spawn msprof（带 attempt 重试）。 */
+/** Replay cached metrics on a hit; otherwise spawn msprof with bounded capture attempts. */
 export async function kernelProfile(args: KernelProfileArgs, options: KernelExecOptions = {}, execution?: KernelProfileExecution): Promise<KernelProfileResult> {
   options.signal?.throwIfAborted();
   const seed = args.seed ?? 0;
@@ -142,7 +142,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   const requestPath = join(dir, `${stem}.request.json`);
   const rawPath = join(dir, `${stem}.raw.json`);
 
-  // 采集工作区：{stem}_profiling_root/profiling/{artifacts,logs}（原 _collect_main 命名续用）。
+  // Capture workspace: {stem}_profiling_root/profiling/{artifacts,logs}, preserving _collect_main naming.
   let root = join(dir, `${stem}_profiling_root`);
   for (let suffix = 0; existsSync(root);) {
     suffix += 1;
@@ -155,13 +155,13 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   await mkdir(logsDir, { recursive: true });
   const log = (line: string): void => {
     try { void appendFile(join(logsDir, "profiler.log"), `${new Date().toISOString()} INFO ${line}\n`, "utf8"); }
-    catch { /* 日志失败不影响采集 */ }
+    catch { /* Log write failures must not interrupt capture. */ }
   };
 
   const kernelBytes = await readFile(args.kernel);
-  // 候选暂存为 .py 后缀副本（dataRoot 内）：workspace 物化的 content 无后缀，
-  // replay 侧 spec_from_file_location 无法识别；暂存路径同时满足协议锁子路径
-  // 检查。原始路径与 hash 仍进 metadata 供溯源。
+  // Stage the candidate with a .py suffix inside dataRoot: materialized content has no extension,
+  // so spec_from_file_location cannot identify it. The staged path also satisfies the protocol
+  // subtree check; retain the original path and hash in metadata for provenance.
   const stagedKernelPath = resolve(join(artifactsDir, "candidate_staged.py"));
   await writeFile(stagedKernelPath, kernelBytes);
   const request: Record<string, unknown> = {
@@ -193,7 +193,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   const metadata = result.metadata as Record<string, unknown>;
   const started = Date.now();
   try {
-    // 重放请求与原 _prepare_wrapper 同构：绝对路径 + 按绝对路径索引的 hash。
+    // Preserve the _prepare_wrapper request shape: absolute paths and hashes keyed by absolute path.
     const replayRequest = {
       problem: resolve(args.problem), candidate: stagedKernelPath,
       dataRoot: dirname(resolve(args.problem)),
@@ -209,7 +209,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       ...(args.contractSha256 === undefined ? {} : { contractSha256: args.contractSha256 }),
     };
 
-    // 采集缓存按可见卡集合 + 目标卡号区分（不同卡的耗时证据不可互换复用）。
+    // Include visible devices and the target device in cache identity; timing evidence is device-specific.
     const visibleDevices = options.env?.ASCEND_RT_VISIBLE_DEVICES ?? process.env["ASCEND_RT_VISIBLE_DEVICES"];
     const deviceScope = visibleDevices === undefined
       ? (options.device === undefined ? undefined : `device-${options.device}`)
@@ -228,7 +228,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       : await cache.get(kernelBytes, cacheScope, log);
     metadata["cacheHit"] = cached !== null;
     if (cached !== null) {
-      // 命中：把缓存区备份的 profile 目录拷回本仓库产物树，保证 profileDir 相对可迁移。
+      // Restore cached profiles into the artifact tree so profileDir remains relative and portable.
       metrics = cached.metrics as Record<string, Record<string, unknown>>;
       metricsRecords = cached.metricsRecords;
       const replay = validateReplayProtocol(cached.metadata["replay"], seed, warmup);
@@ -245,15 +245,15 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       const msprofBin = resolveMsprofBin(args.msprofBin);
       const outDirName = `msprof_round_${args.round}`;
       const outputDir = join(artifactsDir, outDirName);
-      // replay 子进程结构化结果通道（kernel 协议行退役后的 result.json 契约）：
-      // 采集链路失败时优先透传这里的真实业务错误，避免只剩表层 CSV 缺失提示。
+      // The replay worker writes structured results to result.json instead of protocol stdout.
+      // Prefer its actual evaluation error over downstream CSV-missing symptoms when capture fails.
       const replayResultPath = join(artifactsDir, "replay-result.json");
       const attemptTimeout = attemptTimeoutSeconds * 1000;
       let lastError: Error | null = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         metadata["attempts"] = attempt;
         log(`msprof profiling attempt ${attempt}/${maxAttempts}...`);
-        // triton cache 隔离：每次 attempt 全新缓存目录，杜绝上次编译残留干扰 autotune 判定。
+        // Isolate the Triton cache per attempt to prevent stale compilations from affecting autotune.
         const tritonCacheDir = join(artifactsDir, ".triton_cache", outDirName);
         await rm(tritonCacheDir, { recursive: true, force: true });
         await mkdir(tritonCacheDir, { recursive: true });
@@ -265,7 +265,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
           TRITON_CACHE_DIR: tritonCacheDir,
           ENABLE_PRINT_UB_BITS: "true",
           TRITON_PRINT_AUTOTUNING: "1",
-          // msprof 只透传 PRESERVE_ENV 列出的变量给被采集进程；设备绑定必须显式保留。
+          // msprof forwards only PRESERVE_ENV variables to the worker; explicitly preserve device bindings.
           PRESERVE_ENV: ["PATH", "LD_LIBRARY_PATH", "PYTHONPATH", "TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR",
             "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "ASCEND_VISIBLE_DEVICES", "ASCEND_AICPU_PATH",
             "ASCEND_RT_VISIBLE_DEVICES", "KERNEL_NPU_DEVICE"].join(","),
@@ -308,24 +308,24 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
           if (error instanceof KernelExecError) throw error;
           options.signal?.throwIfAborted();
           const message = error instanceof Error ? error.message : String(error);
-          // replay 子进程若写出了结构化结果且带业务错误，真实原因优先于
-          // msprof 表层提示（CSV 缺失/目录缺失只是下游症状）。
+          // Prefer the structured replay error when available; missing CSV or directories in msprof
+          // output may only be downstream symptoms.
           try {
             const replayResult = JSON.parse(await readFile(replayResultPath, "utf8")) as Record<string, unknown>;
             if (typeof replayResult["error"] === "string" && replayResult["error"] !== "")
               throw new ProfileStepError(`replay kernel failed: ${replayResult["error"]}`, false);
           } catch (readError) {
             if (readError instanceof ProfileStepError) throw readError;
-            // 结果文件不存在/损坏：沿用 msprof 原始错误继续分类
+            // Missing or invalid result file: classify the original msprof error.
           }
           const timedOut = (error as { killed?: boolean }).killed === true;
-          // 与原版异常分类一致：采集产物结构性缺失（目录/CSV/trace/编译元数据）不重试；
-          // 超时、退出码非零、ub_ratio 数值类错误可重试（msprof 偶发抖动）。
+          // Structural omissions (directories, CSV, traces or compilation metadata) are not retryable.
+          // Timeouts, nonzero exit codes and invalid ub_ratio values may be transient msprof failures.
           const retryable = error instanceof ProfileStepError ? error.retryable : timedOut || !NON_RETRYABLE_PREFIXES.some(prefix => message.includes(prefix));
           lastError = error instanceof Error ? error : new Error(message);
           log(`attempt ${attempt} failed: ${message}`);
           if (!retryable || attempt >= maxAttempts) break;
-          await delay(2 ** attempt * 1000, undefined, options.signal === undefined ? {} : { signal: options.signal }); // 指数退避 2/4s
+          await delay(2 ** attempt * 1000, undefined, options.signal === undefined ? {} : { signal: options.signal }); // Exponential backoff: 2s, 4s.
         }
       }
       if (metrics === null)
@@ -345,8 +345,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
         kernel_file: resolve(args.kernel), problem_file: resolve(args.problem),
         round_num: args.round, timestamp, msprof_version: null,
       };
-      // round{N}_msprof_metrics.json 与 metrics-dataframe.csv / original-result.json
-      // 与 py 版产物一一对应，保持归档与对账口径不变。
+      // round{N}_msprof_metrics.json, metrics-dataframe.csv and original-result.json
+      // preserve the Python artifact set for archiving and reconciliation.
       await writeFile(join(logsDir, `round${String(args.round).padStart(3, "0")}_msprof_metrics.json`),
         JSON.stringify({ metrics, metadata: originalMetadata, profile_dir: profileDir }, null, 2), "utf8");
       await writeFile(join(profilingDir, "metrics-dataframe.csv"),
@@ -407,8 +407,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
         await writeFile(join(profDir, "trace_analysis.json"), JSON.stringify(analysis, null, 2), "utf8");
       }
     } catch { /* Trace analysis remains null when it cannot be derived. */ }
-    // roofline 分类并入本原子：唯一输入就是 metrics 表，采集+分析一体出结果；
-    // 分类失败不阻断采集结论，payload 带默认判定（"no"）。
+    // Roofline classification consumes only the metrics table and runs as part of capture.
+    // Classification failure leaves the capture result usable with the default "no" classification.
     const metricsTable = payload["metrics"];
     if (metricsTable !== null && typeof metricsTable === "object" && Object.keys(metricsTable as object).length > 0)
       payload["roofline"] = analyzeRoofline(metricsTable as Record<string, Record<string, unknown>>) as unknown;
@@ -425,7 +425,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     error: String(payload["error"]) };
 }
 
-/** 相对路径化（原 _relative 语义；越界时返回绝对路径，由调用方兜底）。 */
+/** Convert to relative paths; return absolute paths outside the root for the caller to handle. */
 function relativeTo(root: string, path: string): string {
   const normalized = resolve(path).replace(/\\/g, "/");
   const base = resolve(root).replace(/\\/g, "/");
@@ -445,6 +445,6 @@ async function appendFileSafe(path: string, text: string): Promise<void> {
   try {
     await appendFile(path, text, "utf8");
   } catch {
-    // console.log 落盘失败不影响采集。
+    // Failure to persist console.log output must not interrupt capture.
   }
 }

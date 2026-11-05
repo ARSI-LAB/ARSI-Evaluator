@@ -187,7 +187,7 @@ export class KernelBenchmark implements Benchmark {
     if (result.finalText !== request.candidateSha256) throw new Error("Solver submitted a different kernel identity");
     const active = AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutSeconds * 1000)]);
     if (!Array.isArray(files)) throw new Error("Missing verifier files");
-    // local 不支持归档恢复；Solver 结束并进入验证阶段后才注入私有材料。
+    // Local sessions cannot restore archives; inject private materials only after the Solver finishes.
     for (const item of files) {
       const file = expectRecord(item, "verifier file");
       if (typeof file.source !== "string" || typeof file.target !== "string") throw new Error("Invalid verifier file");
