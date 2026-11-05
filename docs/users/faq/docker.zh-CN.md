@@ -93,7 +93,7 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
-续跑同样需要检查和准备环境。已有有效结果会跳过，未完成或无效任务按恢复规则重新执行；配置、来源、代码和插件版本需要匹配，详见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。不使用 `--resume` 的新运行也能复用镜像。
+续跑同样需要检查和准备环境。已有有效结果会跳过，未完成或无效任务按恢复规则重新执行；Evaluator 代码允许更新并重新构建，配置、来源、外部插件及待评测 Bundle、Harness 版本仍需匹配，详见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。不使用 `--resume` 的新运行也能复用镜像。
 
 ## amd64 镜像能在 ARM64 节点运行吗？
 

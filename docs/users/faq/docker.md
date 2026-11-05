@@ -93,7 +93,7 @@ To continue the previous evaluation, use identical configuration with `--resume`
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
-Resume still checks/prepares environments, skips valid results, and reruns unfinished/invalid tasks under matching config/source/code/plugin versions. See [resume](../usage.md#resume-and-rebuild-reports). New runs without resume also reuse images.
+Resume still checks/prepares environments, skips valid results, and reruns unfinished/invalid tasks. Evaluator code may be updated and rebuilt; configuration, sources, external plugins, candidate bundles, and harness versions must still match. See [resume](../usage.md#resume-and-rebuild-reports). New runs without resume also reuse images.
 
 ## Can ARM64 Nodes Run amd64 Images?
 

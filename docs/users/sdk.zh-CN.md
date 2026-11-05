@@ -107,7 +107,7 @@ const result = await evaluator.run({
 const reportPath = await evaluator.report("/path/to/results/saved-run-id");
 ```
 
-续跑使用相同的配置、来源、代码与插件版本；校验失败时拒绝执行，不重写原报告。`report()` 离线重建报告，不调用模型、不需要模型 key；第三方报告插件仍需可用，失败时透传 `rebuildReport()` 的异常。每次 `run()` 返回或抛出前都会释放本次资源，不需要调用 `evaluator.dispose()`。
+续跑使用相同的配置、来源、外部插件与 Solver 身份，允许使用更新并重新构建后的 Evaluator 代码，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)；校验失败时拒绝执行，不重写原报告。`report()` 离线重建报告，不调用模型、不需要模型 key；第三方报告插件仍需可用，失败时透传 `rebuildReport()` 的异常。每次 `run()` 返回或抛出前都会释放本次资源，不需要调用 `evaluator.dispose()`。
 
 进度回调应快速完成；异步消息可由业务方自行入队。同步回调抛错会中止本次运行并释放资源，SDK 抛出 `EvaluatorRunError`，保留已保存的部分结果。
 

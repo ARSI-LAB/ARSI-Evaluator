@@ -55,7 +55,7 @@ Docker prepares the task environment; the agent operates inside the container, a
 
 The example writes to `results/terminalbench-4.0/<RUN_ID>/`. Open `report.md` for scores, duration, and failures; inspect `tasks/` for attempts, trajectories, and verification evidence.
 
-With configuration, code, and plugin versions unchanged, resume unfinished tasks:
+With configuration, sources, external plugins, candidate bundles, and harness versions unchanged, resume unfinished tasks. Evaluator code may be updated and rebuilt first:
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume

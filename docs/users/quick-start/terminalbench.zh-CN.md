@@ -55,7 +55,7 @@ Docker 按题目要求准备环境，Agent 在任务容器中操作，任务内�
 
 示例的输出位于 `results/terminalbench-4.0/<RUN_ID>/`。打开 `report.md` 查看得分、耗时和失败原因，进入 `tasks/` 查看 attempt、轨迹与验证证据。
 
-保持配置、代码和插件版本不变时，可继续未完成任务：
+保持配置、来源、外部插件及待评测 Bundle、Harness 版本不变时，可继续未完成任务；Evaluator 代码允许更新并重新构建：
 
 ```bash
 ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
