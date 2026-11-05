@@ -6,7 +6,7 @@ const definition = (category: ErrorCategory, scope: ErrorScope, action: ErrorAct
 
 /** Framework codes. External SDK and operating-system diagnostics stay in details or causes. */
 export const ERROR_CODES = {
-  NETWORK_FAILURE: definition("network", "request", "finalize", "Network operation failed after its local retry budget. Check connectivity; the task is not automatically rerun."),
+  NETWORK_FAILURE: definition("network", "request", "finalize", "Network operation failed. Confirmed model response truncation may trigger up to two whole-task retries after cleanup; other network failures require explicit recovery."),
   CONFIG_INVALID: definition("configuration", "run", "abort_run", "Check configuration, plugins and runtime dependencies; correct them before restarting."),
   SOURCE_CHANGED: definition("data", "run", "abort_run", "The source, task selection or execution version differs from the original run. Resume with the original configuration or start a new run."),
   DATA_FETCH_FAILED: definition("data", "run", "abort_run", "Check data source connectivity and authentication; restart after the downloader has exhausted its bounded retries."),

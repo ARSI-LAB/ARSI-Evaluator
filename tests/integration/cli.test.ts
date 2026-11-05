@@ -385,7 +385,7 @@ test("CLI prints failed attempt phase and nested cause with credentials redacted
   expect(diagnostic).toContain("NETWORK_FAILURE");
   expect(diagnostic).toContain("[network/request]");
   expect(diagnostic).not.toMatch(/\p{Script=Han}/u);
-  expect(diagnostic).toContain("Network operation failed after its local retry budget");
+  expect(diagnostic).toContain("Network operation failed.");
   expect(diagnostic).toContain("[solve]");
   expect(diagnostic).toContain("task=task");
   expect(diagnostic).toContain("ECONNREFUSED");
@@ -462,16 +462,30 @@ test("CLI Agent deadline exits zero, persists its classification and rebuilds a 
   expect(report).toContain("| 计分题数 | 1 |");
 });
 
-test("standalone CLI reports exhausted network failure without creating another attempt", async () => {
+test("standalone CLI exits zero after automatic task recovery", async () => {
   const { root, file } = await experiment("transient", { run: { } });
   const { io, stderr } = output();
-  expect(await runCli(runArgs(file), io)).toBe(1);
-  expect(stderr.join("\n")).not.toContain("[retry]");
+  expect(await runCli(runArgs(file), io)).toBe(0);
+  expect(stderr.join("\n")).toContain("[retry]");
   const [runId] = await readdir(join(root, "runs"));
   const store = new LocalRunStore();
   try {
     await store.open(join(root, "runs", runId!));
-    expect((await store.listAttempts()).map(attempt => attempt.record?.executionStatus)).toEqual(["failed"]);
+    expect((await store.listAttempts()).map(attempt => attempt.record?.executionStatus)).toEqual(["failed", "completed"]);
+    expect((await store.snapshot()).run.status).toBe("completed");
+  } finally { await store.close(); }
+});
+
+test("standalone CLI exits nonzero after exhausting automatic task recovery", async () => {
+  const { root, file } = await experiment("pass");
+  const { io } = output();
+  (globalThis as Record<string, unknown>).__cliOnSolve = () => { throw new Error("Response payload is not completed"); };
+  expect(await runCli(runArgs(file), io)).toBe(1);
+  const [runId] = await readdir(join(root, "runs"));
+  const store = new LocalRunStore();
+  try {
+    await store.open(join(root, "runs", runId!));
+    expect((await store.listAttempts()).map(attempt => attempt.record?.executionStatus)).toEqual(["failed", "failed", "failed"]);
     expect((await store.snapshot()).run.status).toBe("error");
   } finally { await store.close(); }
 });

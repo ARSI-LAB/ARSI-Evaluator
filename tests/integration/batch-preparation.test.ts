@@ -112,7 +112,7 @@ test("all solve and verify environments become ready before any attempt starts",
   expect(events.indexOf("solve.cleanup")).toBeLessThan(events.indexOf("verify.environment"));
 });
 
-test("network exhaustion does not prepare another round or redo tasks", async () => {
+test("model truncation prepares another round only for the failed task", async () => {
   const { components, config, events } = await fixture();
   components.scheduler = new LocalScheduler(1);
   config.experiment.run.onError = "continue";
@@ -124,11 +124,11 @@ test("network exhaustion does not prepare another round or redo tasks", async ()
       context, "fixture-key");
   };
   const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
-  expect(snapshot.run.status).toBe("error");
-  expect([...calls.entries()]).toEqual([["a", 1], ["b", 1], ["c", 1]]);
-  expect(events.filter(event => event === "materialize")).toHaveLength(6);
-  expect(snapshot.run.preparationRounds).toHaveLength(1);
-  expect(await components.store.listAttempts()).toHaveLength(3);
+  expect(snapshot.run.status).toBe("completed");
+  expect([...calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
+  expect(events.filter(event => event === "materialize")).toHaveLength(8);
+  expect(snapshot.run.preparationRounds).toHaveLength(2);
+  expect(await components.store.listAttempts()).toHaveLength(4);
 });
 
 test.each([undefined, 1, 2])("batch preparation concurrency %s preserves the barrier and plan order", async concurrency => {

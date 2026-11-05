@@ -49,6 +49,8 @@ export function identifyNetworkFailure(values: readonly unknown[], context: {
   if (/SyntaxError|ModuleNotFoundError|undefined reference|fatal error:|make:.*Error|npm (?:ERR!|error) (?:code )?ERESOLVE/iu.test(diagnostic)) return null;
   const evidence = [...codes, ...names, diagnostic,
     ...details.map(value => own(value, "networkEvidence")).filter(value => typeof value === "string")].join("\n");
+  const truncation = stage === "model-api" ? evidence.match(/Response payload is not completed|Not enough data to satisfy (?:transfer|content) length header|incomplete chunked read|peer closed connection without sending complete message|UND_ERR_RES_CONTENT_LENGTH_MISMATCH|(?:model )?stream ended (?:without (?:a )?finish_reason|before (?:the )?(?:completion|terminal|end) event)/iu)?.[0] : undefined;
+  if (truncation) return { networkStage: "model-api", networkReason: "response-truncated", networkEvidence: truncation };
   let reason: string | undefined;
   if (/\b(?:EAI_AGAIN|ENOTFOUND|NameResolutionError)\b|Could not resolve|Temporary failure in name resolution/iu.test(evidence)) reason = "dns";
   else if (/\b(?:ECONNRESET|EPIPE|UND_ERR_SOCKET|UND_ERR_RES_CONTENT_LENGTH_MISMATCH|ServerDisconnectedError|TransferEncodingError)\b|connection reset|socket hang up|Response payload is not completed|unexpected EOF|APIConnectionError/iu.test(evidence)) reason = "connection-interrupted";

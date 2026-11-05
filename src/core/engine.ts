@@ -14,6 +14,7 @@ import { controlTransaction, RetryControl, type RetryAdmission } from "./retry-c
 import { resolveRunStatus } from "./task-result-resolver.js";
 import { TaskQueue } from "./task-queue.js";
 import { isManualRetryEligible } from "./manual-retry.js";
+import { isStreamTaskRetryEligible, MAX_STREAM_TASK_RETRIES } from "./automatic-task-retry.js";
 import { assertResumePluginVersions, planResume } from "./resume.js";
 import { ResumeError } from "./resume-error.js";
 import { enumerateSelectedTasks } from "./task-selection.js";
@@ -275,6 +276,13 @@ async function executeRun({
       runId: manifest.runId, taskId: ref.id, ref, attemptId: randomUUID(), configFingerprint: manifest.configFingerprint,
     }]));
     const retry = new TaskQueue(async () => { await control.current?.stopAccepting(); return true; });
+    const streamFailures = new Map<string, number>();
+    for (const attempt of previousAttempts) {
+      if (attempt.record && isStreamTaskRetryEligible(attempt.record))
+        streamFailures.set(attempt.key.taskId, (streamFailures.get(attempt.key.taskId) ?? 0) + 1);
+    }
+    const canRetryStream = (record: AttemptRecord) => !schedulerSignal.aborted &&
+      (streamFailures.get(record.key.taskId) ?? 0) < MAX_STREAM_TASK_RETRIES && isStreamTaskRetryEligible(record);
     taskQueue = retry;
     const cancelQueue = () => retry.close();
     schedulerSignal.addEventListener("abort", cancelQueue, { once: true });
@@ -297,12 +305,12 @@ async function executeRun({
         includeTaskAnswer: config.experiment.run.includeTaskAnswer === true, sensitiveValues, onProgress: taskProgress,
       });
       // Abort before returning to a scheduler that may immediately refill a slot.
-      if ((!isEvaluationComplete(record) && config.experiment.run.onError !== "continue") || requiresDispatchStop(record) || hasUnconfirmedCleanup(record) ||
+      if ((!isEvaluationComplete(record) && config.experiment.run.onError !== "continue" && !canRetryStream(record)) || requiresDispatchStop(record) || hasUnconfirmedCleanup(record) ||
         record.errors.some(error => error.code === "ENV_PREPARED_IMAGE_LOST"))
         runController.abort(new Error(`Task ${job.taskId} failed; stopping queued dispatch`));
       return record;
     };
-    // Initial readiness and explicitly requested reruns share dispatch slots.
+    // Initial readiness, automatic stream recovery and manual reruns share slots.
     if (readyJobs) retry.setInitialSource(readyJobs);
     else {
       for (const job of dispatchJobs) retry.add(job, retryTaskIds ? current.find(record => record.key.taskId === job.taskId)?.key.attemptId : undefined);
@@ -386,8 +394,14 @@ async function executeRun({
     const scheduled = components.scheduler.executeReady(dynamicJobs, executor, schedulerSignal);
     const records = (async function* () { yield* planningRecords; yield* scheduled; })();
     for await (const record of records) {
-      completedTaskIds.add(record.key.taskId);
       retry.complete(record);
+      const original = originals.get(record.key.taskId);
+      // Enqueue synchronously with complete(), before the queue can close or a
+      // manual retry can reserve the same task. The failed attempt is persisted.
+      const automaticRetry = canRetryStream(record) && original !== undefined &&
+        retry.add({ ...original, attemptId: randomUUID() }, record.key.attemptId);
+      if (automaticRetry) streamFailures.set(record.key.taskId, (streamFailures.get(record.key.taskId) ?? 0) + 1);
+      else completedTaskIds.add(record.key.taskId);
       for (const error of record.errors)
         taskProgress({
           phase: error.phase,
@@ -397,6 +411,11 @@ async function executeRun({
           failure: error,
           message: failureMessage(error),
         });
+      if (automaticRetry) {
+        taskProgress({ phase: "retry", taskId: record.key.taskId, attemptId: record.key.attemptId, warning: true,
+          message: `Model response truncated; restarting the entire task (${streamFailures.get(record.key.taskId)}/${MAX_STREAM_TASK_RETRIES} automatic retries). Previous tools will run again.` });
+        continue;
+      }
       taskProgress({
         phase: "task",
         taskId: record.key.taskId,
