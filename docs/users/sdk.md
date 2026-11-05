@@ -107,7 +107,7 @@ const result = await evaluator.run({
 const reportPath = await evaluator.report("/path/to/results/saved-run-id");
 ```
 
-Resume requires identical configuration, sources, code, and plugin versions. Validation failure refuses execution without rewriting the original report. `report()` rebuilds offline without model calls or keys. Third-party reporting plugins must remain available; failures propagate `rebuildReport()` errors. Each `run()` releases its resources before returning or throwing; no `evaluator.dispose()` is required.
+Resume requires identical configuration, sources, external plugins, and solver identity; updated and rebuilt Evaluator code is allowed. See [resume](usage.md#resume-and-rebuild-reports). Validation failure refuses execution without rewriting the original report. `report()` rebuilds offline without model calls or keys. Third-party reporting plugins must remain available; failures propagate `rebuildReport()` errors. Each `run()` releases its resources before returning or throwing; no `evaluator.dispose()` is required.
 
 Progress callbacks should return quickly; applications may queue asynchronous messages. A synchronous callback exception aborts the run, releases resources, and throws `EvaluatorRunError` while retaining saved partial results.
 

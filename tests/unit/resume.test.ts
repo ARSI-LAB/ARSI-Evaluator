@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { planResume } from "../../src/core/resume.js";
+import { assertResumePluginVersions, planResume } from "../../src/core/resume.js";
+import { assertResumeSolverProvenance, assertSolverProvenance } from "../../src/core/solver-provenance.js";
 import { selectAttemptRecords } from "../../src/core/task-result-resolver.js";
 import { attempt, attemptSummaries, cancelledRun } from "../fixtures/results/interrupted-run/fixture.js";
 
@@ -15,6 +16,30 @@ test.each(["failed", "cancelled"] as const)("retries a terminal %s attempt with 
 test("changed config fails before choosing any tasks", () => {
   expect(() => planResume(cancelledRun, attemptSummaries, "changed")).toThrow(/configuration/i);
 });
+
+test.each([
+  [{ plugin: "1" }, { plugin: "2" }],
+  [{ plugin: "1" }, {}],
+  [{}, { plugin: "1" }],
+  [{ "cordis.patch.yaml": "old" }, { "cordis.patch.yaml": "new" }],
+])("resume still rejects changed external plugins or patch metadata: %j -> %j", (previous, current) => {
+  expect(() => assertResumePluginVersions(previous, current)).toThrow(/plugin versions/i);
+});
+
+test("resume accepts updated runtime assets while worker provenance checks remain exact", () => {
+  const previous = { bundle: "candidate", installation: "old-installation", bridgeDigest: "old-bridge" };
+  const current = { ...previous, installation: "new-installation", bridgeDigest: "new-bridge" };
+  expect(() => assertResumeSolverProvenance(previous, current)).not.toThrow();
+  expect(() => assertSolverProvenance(previous, current)).toThrow(/runtime differs/i);
+});
+
+test.each(["bundle", "artifact", "configuration", "harnessVersion", "cliVersion", "runnerVersion", "pythonRuntime", "pythonVersion", "lexiconRevision", "lexiconDigest"])(
+  "resume still rejects changed solver %s", field => {
+    expect(() => assertResumeSolverProvenance({ [field]: "old" }, { [field]: "new" })).toThrow(/differs/i);
+    expect(() => assertResumeSolverProvenance({ [field]: "old" }, undefined)).toThrow(/differs/i);
+    expect(() => assertResumeSolverProvenance(undefined, { [field]: "new" })).toThrow(/differs/i);
+  },
+);
 test("cancelled history does not duplicate a later verdict", () => {
   const records = selectAttemptRecords(cancelledRun, [attempt("a", "cancelled"), attempt("a", "completed", 2)]);
   expect(records).toHaveLength(1); expect(records[0]!.key.attemptId).toBe("a-2");

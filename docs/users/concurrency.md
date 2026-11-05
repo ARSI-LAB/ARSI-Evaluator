@@ -28,7 +28,7 @@ Effective concurrency is fixed after round allocation: Local takes the smaller o
 
 Both local modes use `run.preparation.concurrency`, defaulting to `scheduler.concurrency`; if execution concurrency is also omitted, both default to 1. Profiles with explicit concurrency (such as AgentX serial preparation) keep their declared values. Ray allocates by node slots; the field caps per-node preparation, otherwise using Scheduler limits/discovered slots. Shared Docker runtime, images, and verifier dependencies count toward their environment budgets. `manifest.json` `preparationRounds` saves policy, optional round cap, per-task/environment base, concurrency, multiplier, effective limit, and timestamps; Ray also saves `nodeConcurrency`. Resume creates a new round and retains history. Duration/report metrics read offline; missing historical environment budgets remain unknown rather than inferred from batch budgets.
 
-Resume requires matching configuration, sources, code, and plugins. Start a new run after changing preparation modes or upgrading runtime packages. Historical results support offline reports.
+Resume requires matching configuration, sources, external plugins, and solver identity; updated and rebuilt Evaluator code is allowed. Start a new run after changing preparation modes. Historical results support offline reports; see [resume](usage.md#resume-and-rebuild-reports).
 
 Network retries occur within requests/downloads/pulls and are bounded. Exhaustion records failure without a new attempt. See [operation retries and manual recovery](network-retry.md) for explicit commands during/after runs.
 

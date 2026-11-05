@@ -104,13 +104,13 @@ Check completion, scores/correctness for both questions, and errors or missing e
 
 ## 6. Resume After Interruption
 
-Keep configuration, code, and plugin versions unchanged and use the same YAML:
+Keep the experiment configuration unchanged and use the same YAML:
 
 ```bash
 ember-evaluator run first-run.yaml --resume
 ```
 
-Use `--resume <RUN_ID>` to select a run explicitly. Resume skips valid saved results and creates new attempts for unfinished or invalid tasks; it does not continue at a conversation turn. Start a new run after changing models, tasks, concurrency, or similar settings. Keep fingerprint and version checks enabled.
+Use `--resume <RUN_ID>` to select a run explicitly. Resume skips valid saved results and creates new attempts for unfinished or invalid tasks; it does not continue at a conversation turn. Evaluator code may be updated and rebuilt before resuming. Start a new run after changing models, tasks, concurrency, or similar settings. Configuration, source, external-plugin, and solver identity checks still apply; see [resume](usage.md#resume-and-rebuild-reports).
 
 ## Next Steps
 

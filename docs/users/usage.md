@@ -166,7 +166,16 @@ ember-evaluator run first-run.yaml --resume <RUN_ID>
 ember-evaluator report results/first-run/<RUN_ID>
 ```
 
-Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Keep sources/config/code/plugins matching. Model/selection/preparation/concurrency changes need new runs.
+Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Evaluator code may be updated and rebuilt before resuming, with no extra flag; unfinished or invalid tasks use the updated code. Sources, experiment configuration, external plugins, candidate bundles, and harness versions must still match. Model/selection/preparation/concurrency changes need new runs.
+
+When running from a source checkout, run `pnpm build` from the repository root after changing Evaluator code, then run the resume command. The CLI uses the build output in `dist/`; without rebuilding, it still runs the old code:
+
+```bash
+pnpm build
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+```
+
+Resume no longer compares historical and current digests for the Evaluator package, builtin runtime, solver installation assets, or AgentX bridge code. The original manifest retains its version and solver provenance records; the scheduler receives the current code/runtime identity for this session. With Ray, the client, coordinator, and execution nodes must still deploy the same current version. Saved-result format validation and execution-mode compatibility checks still apply.
 
 Resume recovers cleanup first, then creates attempts for unfinished/invalid tasks. Valid results, including valid agent-timeout zeros, skip solving. Failed AgentX points rerun wholly rather than continuing requests.
 
@@ -291,7 +300,7 @@ See [plugin loading](../development/plugins.en.md), [benchmark development](../d
 | Long prepare | Identify pulls/builds/runtime installs, disk/network/budgets |
 | Docker unavailable/architecture mismatch | Daemon/platform/emulation |
 | Truncated model output | Actual stop reason; adjust explicit `maxTokens` or server limits |
-| Resume source/version mismatch | Changed config/source/package/plugins; start new run if needed |
+| Resume source/version mismatch | Check configuration/source/external-plugin/solver identity changes; Evaluator code updates alone allow resume |
 | `cleanupStatus: unconfirmed` | Recover resources before global cleanup around other evaluations |
 
 Bash debug: EVALUATOR_DEBUG=1 ember-evaluator run first-run.yaml. PowerShell sets `$env:EVALUATOR_DEBUG="1"` first. Progress/errors use stderr; final paths stdout.

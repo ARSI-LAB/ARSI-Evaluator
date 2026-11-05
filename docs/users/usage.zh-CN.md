@@ -166,7 +166,16 @@ ember-evaluator run first-run.yaml --resume <RUN_ID>
 ember-evaluator report results/first-run/<RUN_ID>
 ```
 
-不填写 ID 时由 Evaluator 查找可续跑的历史运行，明确填写可以避免选错。续跑前保持来源、配置、代码和插件版本一致；修改模型、选题、准备模式或并发后，应开始新 run。
+不填写 ID 时由 Evaluator 查找可续跑的历史运行，明确填写可以避免选错。允许更新 Evaluator 代码并重新构建后续跑，无需增加参数；未完成或无效任务使用更新后的代码执行。来源、实验配置、外部插件、待评测 Bundle 和 Harness 版本仍需匹配；修改模型、选题、准备模式或并发后，应开始新 run。
+
+从源码运行时，修改 Evaluator 代码后，需先在仓库根目录执行 `pnpm build`，再执行续跑命令。CLI 使用 `dist/` 中的构建产物，未重新构建时仍会执行旧代码：
+
+```bash
+pnpm build
+ember-evaluator run first-run.yaml --resume <RUN_ID>
+```
+
+续跑不再比较历史运行与当前 Evaluator 发布包、内置运行时、Solver 安装内容和 AgentX 桥接代码的摘要。原 manifest 中的版本与 Solver 身份记录保留；当前续跑向调度器提供当前代码与运行时的身份。使用 Ray 时，客户端、协调端与执行节点仍需部署相同的当前版本；已有结果的格式校验和执行模式兼容检查仍然有效。
 
 续跑先处理未完成的资源清理，再新建 attempt 执行未完成或无效任务。已有有效结果，包括按规则计为有效零分的 Agent 解题超时，不会再次解题。AgentX 失败的测量点整点重跑，不续接到某条请求。
 
@@ -291,7 +300,7 @@ ember-evaluator run experiment.yaml --patch experiments/plugins/cordis.patch.yam
 | 一直显示 prepare | 查看正在拉镜像、构建还是安装运行时，确认磁盘、网络与准备预算 |
 | Docker 无法连接或架构不符 | Docker daemon、目标平台和已有 QEMU 条件 |
 | 模型输出截断 | 结果中的实际终止原因；显式设置上限时调整 `maxTokens`，未设置时检查服务端限制 |
-| 续跑报来源或版本不同 | 检查是否更改了配置、来源、包或插件；需要时开始新 run |
+| 续跑报来源或版本不同 | 检查配置、来源、外部插件或 Solver 身份变化；仅更新 Evaluator 代码可续跑 |
 | `cleanupStatus: unconfirmed` | 先恢复本次资源，不要在有其他评测运行时做全局 Docker 清理 |
 
 需要更多诊断时，Bash 使用 `EVALUATOR_DEBUG=1 ember-evaluator run first-run.yaml`；PowerShell 先设置 `$env:EVALUATOR_DEBUG="1"`，再执行原命令。进度和错误写入 stderr，最终结果路径写入 stdout。

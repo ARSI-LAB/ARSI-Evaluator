@@ -141,7 +141,7 @@ No round cap applies by default. Explicit `roundTimeoutSeconds` measures wall ti
 
 Timeout saves `ENV_PREPARATION_TIMEOUT` without scores or automatic retries. `onError: continue` permits other tasks; cleanup/storage may still stop work. Base 600/concurrency 32 allows 6000 seconds; base 1800 allows18000. Reduce base or set a round cap to shorten waits.
 
-Old `benchmark.config.environmentBuildTimeoutMultiplier` is removed and cannot compound. Remove it; use `roundTimeoutSeconds` for round caps or `environmentTimeoutSeconds` for base values. Package/profile/configuration identity checks remain. After upgrades, start new runs if identities differ or resume with original versions; do not edit old manifests. Historical batch budgets retain their meaning and are not interpreted as per-environment limits offline.
+Old `benchmark.config.environmentBuildTimeoutMultiplier` is removed and cannot compound. Remove it; use `roundTimeoutSeconds` for round caps or `environmentTimeoutSeconds` for base values. Configuration identity checks after profile expansion remain. After upgrades, start new runs if configurations differ or resume with the original configuration; do not edit old manifests. Evaluator code may be updated and rebuilt before resuming. Historical batch budgets retain their meaning and are not interpreted as per-environment limits offline.
 
 ## Task Offset and Count
 
@@ -207,7 +207,7 @@ ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 
 `inspect` prints JSON containing the effective experiment and network settings, with credential references preserved. It validates configuration without factories, downloads, task enumeration, containers, or model calls. Model settings come from YAML; model override flags are supported only by run.
 
-Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume requires matching package/plugin versions.
+Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume allows updated Evaluator code while configuration, sources, external plugins, and solver identity must still match; see [resume](usage.md#resume-and-rebuild-reports).
 
 ## Ray and Execution Nodes
 

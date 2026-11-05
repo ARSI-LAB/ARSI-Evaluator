@@ -141,7 +141,7 @@ run:
 
 准备超时记为 `ENV_PREPARATION_TIMEOUT`，不产生评分，也不自动重试；`onError: continue` 时允许其他正常任务继续，清理或存储故障仍可能要求停止。基础值 600 秒、有效并发 32 时，单环境最多等待 6000 秒；基础值 1800 秒则为 18000 秒。需要缩短等待时降低基础值，或显式设置整轮上限。
 
-旧 Harbor 字段 `benchmark.config.environmentBuildTimeoutMultiplier` 已删除，不能继续叠乘。旧配置需移除该字段；若需要整轮限制，改为显式 `roundTimeoutSeconds`，若需要调整单环境基础值，使用 `environmentTimeoutSeconds`。新旧执行包、Profile 与配置身份检查仍然生效；升级后无法匹配原 run 时新建 run，或使用原版本完成续跑，不修改旧 manifest。历史整批预算按原含义保留，离线报告不把它当成单环境时限。
+旧 Harbor 字段 `benchmark.config.environmentBuildTimeoutMultiplier` 已删除，不能继续叠乘。旧配置需移除该字段；若需要整轮限制，改为显式 `roundTimeoutSeconds`，若需要调整单环境基础值，使用 `environmentTimeoutSeconds`。Profile 展开后的配置身份检查仍然生效；升级后配置无法匹配原 run 时新建 run，或使用原配置完成续跑，不修改旧 manifest。Evaluator 代码允许更新并重新构建后续跑。历史整批预算按原含义保留，离线报告不把它当成单环境时限。
 
 ## 指定起始题目与题数
 
@@ -207,7 +207,7 @@ ember-evaluator inspect experiment.yaml --patch ./patch.yaml
 
 `inspect` 输出包含实际实验配置与网络设置的 JSON，保留密钥环境变量引用。它校验配置，不启动组件工厂、下载、任务枚举、容器或模型调用。模型设置从 YAML 读取；模型覆盖参数仅由 run 支持。
 
-优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑要求运行包和插件版本与原 run 匹配。
+优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑允许更新 Evaluator 代码，配置、来源、外部插件和 Solver 身份仍需匹配，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## Ray 与执行节点
 
