@@ -75,7 +75,7 @@ const NON_RETRYABLE_PREFIXES = [
   "msprof did not create OPPROF_",
 ];
 
-/** msprof 二进制定位：显式配置必须存在；否则优先本地 CANN 安装，再退 PATH。 */
+/** msprof 二进制定位：显式配置必须存在；否则优先本地设备运行时安装，再退 PATH。 */
 function resolveMsprofBin(explicit?: string): string {
   if (explicit !== undefined && explicit !== "") {
     if (!existsSync(explicit)) throw new ProfileStepError(`msprof binary not found: ${explicit}`, false);

@@ -2,7 +2,7 @@
 
 > [English](./kernel-npu.md) | 中文
 
-`kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI Proposer 生成新候选，再通过完整 SDK 评测冻结产物；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
+`kernel` 在 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI Proposer 生成新候选，再通过完整 SDK 评测冻结产物；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
 
 ## 硬件选择
 
@@ -12,7 +12,7 @@
 
 先按[安装指南](../installation.zh-CN.md)准备 Evaluator 依赖。AgentBundle SDK 由 pnpm 从 GitHub 自动下载并构建，不需要同级源码仓库；即使不使用 AgentBundle Solver，内置插件的静态导入仍需要该依赖。
 
-需要 Linux、可用 NPU、CANN、torch、torch_npu、triton-ascend；详细采集模块还依赖 pandas、NumPy 和 Jinja2。Python 应使用已验证可运行算子的解释器；启动前加载其 CANN 环境。仅支持 `local` 环境与 `local` 调度器，并发固定为 1；确保指定设备没有其他计时任务。验证由本 Benchmark 内置 worker 执行，不能另配 `benchmark.verifier`。local 工作区不隔离恶意 Python 代码，只评测可信代码。
+需要 Linux、可用 NPU、兼容的设备运行时、torch、torch_npu、triton-ascend；详细采集模块还依赖 pandas、NumPy 和 Jinja2。Python 应使用已验证可运行算子的解释器；启动前加载其设备运行时环境。仅支持 `local` 环境与 `local` 调度器，并发固定为 1；确保指定设备没有其他计时任务。验证由本 Benchmark 内置 worker 执行，不能另配 `benchmark.verifier`。local 工作区不隔离恶意 Python 代码，只评测可信代码。
 
 ```bash
 export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
