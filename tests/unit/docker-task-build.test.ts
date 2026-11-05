@@ -455,7 +455,7 @@ test("the internal gateway uses the explicitly supplied Node reference", async (
   vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", "");
   vi.stubEnv("EVALUATOR_TEST_NODE_MIRROR", origin);
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
-  const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", network: new NetworkRuntime(networkDocument({ version: 1, docker: { mirrors: { "docker.io": origin } } }, {})) });
+  const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", network: new NetworkRuntime(networkDocument({ docker: { mirrors: { "docker.io": origin } } }, {})) });
   const { build, ...prebuilt } = spec;
   const result = await environment.materialize({ ...prebuilt, image: "fixture/task", network: "model-api" }, AbortSignal.timeout(10_000));
   expect(result.prepared).toMatchObject({ gatewayDigest: "sha256:" + "a".repeat(64) });
@@ -603,7 +603,7 @@ test("archive selection uses the requested platform and bypasses an existing pin
   const { spec, log } = await fixture("FROM fixture/base\n");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   vi.stubEnv("EVALUATOR_TEST_DAEMON_PLATFORM", "linux/arm64");
-  const network = new NetworkRuntime(networkDocument({ version: 1, docker: { benchmarks: {
+  const network = new NetworkRuntime(networkDocument({ docker: { benchmarks: {
     terminalbench: { method: "archive", provider: "modelscope", baseUrl: "https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0" },
   } } }, {}));
   const fetch = vi.spyOn(network, "fetch").mockResolvedValue(new Response("opaque archive bytes"));

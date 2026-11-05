@@ -1,4 +1,3 @@
-version: 1
 # Opt in to these sources; none are program defaults.
 proxy:
   http: null

@@ -78,7 +78,7 @@ Successful exit means the process completed, not that answers were correct. Insp
 
 ### Why can I not resume after changing configuration?
 
-Resume requires matching sources, selection, model settings, code, and plugin versions to keep experimental conditions consistent. Start a new run after task count, concurrency, preparation, or model changes. Old results still support offline reports. See [resume](../usage.md#resume-and-rebuild-reports).
+Resume requires matching sources, selection, model settings, external plugins, candidate bundles, and harness versions. Evaluator code may be updated and rebuilt before resuming; valid saved results remain, and other tasks use the new code. Start a new run after task count, concurrency, preparation, or model changes. Old results still support offline reports. See [resume](../usage.md#resume-and-rebuild-reports).
 
 ## Debug Logs
 

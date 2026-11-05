@@ -21,25 +21,25 @@ test("default network YAML is created atomically, reused and overridden only by 
     expect(document.settings.sources.huggingface).toBe("https://env.test");
   }
   expect(await readFile(path, "utf8")).not.toContain("secret");
-  const custom = "version: 1\nsources:\n  huggingface: https://custom.test\n";
+  const custom = "sources:\n  huggingface: https://custom.test\n";
   await writeFile(path, custom);
   expect((await loadNetworkConfig(undefined, {})).settings.sources.huggingface).toBe("https://custom.test");
   expect(await readFile(path, "utf8")).toBe(custom);
   const other = join(path, "..", "explicit.yaml");
-  await writeFile(other, "version: 1\nsources:\n  huggingface: https://explicit.test\n");
+  await writeFile(other, "sources:\n  huggingface: https://explicit.test\n");
   expect((await loadNetworkConfig(undefined, { EVALUATOR_NETWORK_CONFIG: other })).settings.sources.huggingface).toBe("https://explicit.test");
   expect((await loadNetworkConfig(path, { EVALUATOR_NETWORK_CONFIG: other })).settings.sources.huggingface).toBe("https://custom.test");
   await expect(loadNetworkConfig(other + ".missing", {})).rejects.toMatchObject({ code: "ENOENT" });
-  await writeFile(path, "version: invalid\n");
-  await expect(loadNetworkConfig(undefined, {})).rejects.toThrow("network.version");
-  expect(await readFile(path, "utf8")).toBe("version: invalid\n");
+  await writeFile(path, "proxy: invalid\n");
+  await expect(loadNetworkConfig(undefined, {})).rejects.toThrow("network.proxy must be an object");
+  expect(await readFile(path, "utf8")).toBe("proxy: invalid\n");
 });
 
 test("environment overrides explicit YAML while unrelated fields and variable references are retained", async () => {
   const directory = await mkdtemp(join(tmpdir(), "network-config-"));
   try {
     const path = join(directory, "network.yaml");
-    await writeFile(path, 'version: 1\nproxy:\n  https: ${NODE_PROXY}\nsources:\n  huggingface: https://hub.test\n');
+    await writeFile(path, 'proxy:\n  https: ${NODE_PROXY}\nsources:\n  huggingface: https://hub.test\n');
     const document = await loadNetworkConfig(path, { NODE_PROXY: "http://proxy.test:8080", HTTP_PROXY: "http://env.test", HF_ENDPOINT: "https://env.test" });
     expect(document.settings.proxy.host).toEqual({ http: "http://env.test", https: "http://proxy.test:8080", noProxy: [] });
     expect(document.settings.sources.huggingface).toBe("https://env.test");
@@ -130,7 +130,7 @@ test("saved environment overrides hide credentials and receiving nodes use their
 });
 
 test("proxy overrides preserve explicit null and have independent noProxy arrays", () => {
-  const settings = parseNetworkSettings({ version: 1, proxy: { http: "http://host.test:1", https: "http://host.test:2", noProxy: ["localhost"],
+  const settings = parseNetworkSettings({ proxy: { http: "http://host.test:1", https: "http://host.test:2", noProxy: ["localhost"],
     overrides: { build: { https: "http://build.test:3" }, runtime: null } } });
   expect(settings.proxy.build).toEqual({ http: "http://host.test:1", https: "http://build.test:3", noProxy: ["localhost"] });
   expect(settings.proxy.runtime).toEqual({ http: null, https: null, noProxy: [] });
@@ -146,32 +146,32 @@ test("registry mirrors preserve image identity and match only the original regis
 });
 
 test("archive requires a download root and rejects the removed catalog format", () => {
-  const document = networkDocument({ version: 1, docker: { pull: { method: "registry-client", backend: "skopeo" },
+  const document = networkDocument({ docker: { pull: { method: "registry-client", backend: "skopeo" },
     benchmarks: { terminalbench: { method: "archive", provider: "modelscope", baseUrl: "https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0/" } } } }, {});
   expect(document.settings.docker.pull).toEqual({ method: "registry-client", backend: "skopeo", skopeoExecutable: "skopeo" });
   expect(document.settings.docker.benchmarks.terminalbench).toEqual({ method: "archive", provider: "modelscope",
     baseUrl: "https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0" });
   for (const config of [{ catalogs: { modelscope: "https://example.test/catalog.json" } }, { baseUrl: "" }, {}])
-    expect(() => parseNetworkSettings({ version: 1, docker: { benchmarks: {
+    expect(() => parseNetworkSettings({ docker: { benchmarks: {
       terminalbench: { method: "archive", provider: "modelscope", ...config },
     } } })).toThrow();
   for (const docker of [{ pull: { method: "archive" } }, { pull: { method: "registry-client", backend: "unknown" } },
     { pull: { method: "docker", backend: "nodejs" } }, { registryMirrors: [] }])
-    expect(() => parseNetworkSettings({ version: 1, docker })).toThrow();
+    expect(() => parseNetworkSettings({ docker })).toThrow();
 });
 
 test("credentials are redacted and Ray expands proxy references on the receiving node", () => {
-  const runtime = new NetworkRuntime(networkDocument({ version: 1, proxy: { https: "${NODE_PROXY}" } }, { NODE_PROXY: "http://user:host-secret@127.0.0.1:1" }));
+  const runtime = new NetworkRuntime(networkDocument({ proxy: { https: "${NODE_PROXY}" } }, { NODE_PROXY: "http://user:host-secret@127.0.0.1:1" }));
   expect(JSON.stringify(redactNetwork(runtime.settings))).not.toContain("host-secret");
   const snapshot = networkSnapshot(runtime, "terminalbench");
   expect(JSON.stringify(snapshot)).not.toContain("host-secret");
   expect(restoreNetworkTemplate(snapshot.template, { NODE_PROXY: "http://node-proxy:2" }).settings.proxy.host.https).toBe("http://node-proxy:2");
-  const literal = new NetworkRuntime(networkDocument({ version: 1, proxy: { https: "http://user:secret@proxy.test:1" } }, {}));
+  const literal = new NetworkRuntime(networkDocument({ proxy: { https: "http://user:secret@proxy.test:1" } }, {}));
   expect(() => networkSnapshot(literal, "terminalbench")).toThrow("node-local");
 });
 
 test("installer environments remove inherited network values and use container config paths", () => {
-  const runtime = new NetworkRuntime(networkDocument({ version: 1 }, {}));
+  const runtime = new NetworkRuntime(networkDocument({}, {}));
   const env = runtime.environment("runtime", { PATH: "/bin", PIP_INDEX_URL: "https://ignored.test", HTTPS_PROXY: "http://ignored.test", UV_PYTHON_INSTALL_MIRROR: "https://ignored.test" }, "container");
   expect(env.PATH).toBe("/bin");
   expect(env.HTTPS_PROXY).toBe("");
@@ -191,8 +191,8 @@ test("concurrent HTTP instances keep endpoints and dispatchers separate, includi
   const origin = `http://127.0.0.1:${address.port}`;
   const global = getGlobalDispatcher();
   vi.stubEnv("HTTP_PROXY", "http://unreachable.invalid:1");
-  const first = new NetworkRuntime(networkDocument({ version: 1, sources: { github: { raw: origin + "/one" } } }, {}));
-  const second = new NetworkRuntime(networkDocument({ version: 1, sources: { github: { raw: origin + "/two" } } }, {}));
+  const first = new NetworkRuntime(networkDocument({ sources: { github: { raw: origin + "/one" } } }, {}));
+  const second = new NetworkRuntime(networkDocument({ sources: { github: { raw: origin + "/two" } } }, {}));
   try {
     const values = await Promise.all([first, second].map(async runtime => (await runtime.fetch(runtime.sourceUrl("https://raw.githubusercontent.com/test"))).text()));
     expect(values).toEqual(["/one/test", "/two/test"]);

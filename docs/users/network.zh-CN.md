@@ -4,7 +4,7 @@
 
 网络文件独立于实验 YAML。文件选择顺序为：CLI 的 `--network`（SDK 的 `networkConfigPath`）→ `EVALUATOR_NETWORK_CONFIG` → 用户目录下的 `~/.ember-evaluator/network.yaml`。Windows 对应 `%USERPROFILE%\.ember-evaluator\network.yaml`。默认文件不存在时自动创建，文件内容使用官方源和直连；已有文件不会被覆盖。
 
-字段优先级为：**已设置且非空的受支持环境变量 → YAML → 程序默认值**，显式指定 `--network` 时也适用。网络文件可以完全留空、只写注释或写 `{}`；没有对应环境变量时才使用默认源和直连。`version: 1` 可省略；填写时必须为 1。YAML 仍支持 `${VARIABLE}` 引用，环境变量覆盖的字段不再展开原来的引用。空字符串环境变量视为未设置，不会清空 YAML。无效的环境变量值直接报错，不回退 YAML。显式指定的文件不存在或格式错误时也直接报错，不回退其他文件。
+字段优先级为：**已设置且非空的受支持环境变量 → YAML → 程序默认值**，显式指定 `--network` 时也适用。网络文件可以完全留空、只写注释或写 `{}`；没有对应环境变量时才使用默认源和直连。网络配置不接受 `version` 字段；已有文件中的该字段需要删除，否则报 `Unknown network field: version`。YAML 仍支持 `${VARIABLE}` 引用，环境变量覆盖的字段不再展开原来的引用。空字符串环境变量视为未设置，不会清空 YAML。无效的环境变量值直接报错，不回退 YAML。显式指定的文件不存在或格式错误时也直接报错，不回退其他文件。
 
 以下命令使用已注册的 `ember-evaluator`，注册步骤见[安装指南](installation.zh-CN.md#安装全局命令)。示例路径相对当前工作目录；使用仓库中的 Playbook 时，请在仓库根目录执行。
 
@@ -80,6 +80,8 @@ ember-evaluator run experiment.yaml --network network.yaml
 
 归档方式下，`environment.platform` 显式选择下载平台，`auto` 使用执行节点原生平台；不采用任务内原 Registry 镜像的平台声明。本机对应 URL 的 Evaluator 镜像标签存在时复用；覆盖远端同名文件后需清理对应镜像缓存，或使用新的版本目录/revision。操作和迁移说明见[任务镜像归档](../development/image-archives.md)。
 
+官方维护的 ModelScope 仓库为 [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)，存放部分 Benchmark 的官方任务镜像归档。可用镜像以仓库目录为准；上传自己的镜像见[单个和批量上传指引](../development/image-archives.md#上传到-modelscope)。
+
 ### 核验 ModelScope 镜像
 
 比较同一平台下的完整镜像 ID：**ID 相同，就是同一个镜像，名称和标签可以不同。**
@@ -99,6 +101,22 @@ docker image inspect --platform linux/amd64 --format '{{.Id}}' '导入后的镜�
 ```
 
 先记下官方 ID，再加载归档，避免同名标签被覆盖。若 ID 不同，检查是否使用了相同版本和平台，或误打包了 Runtime/Agent 镜像；官方 tag 更新也会导致 ID 不同。
+
+## 预热期间的镜像与依赖下载
+
+“Evaluator 主动获取镜像”描述由谁发起操作，不表示一定由 Evaluator 自己下载镜像层。任务环境指定现成镜像时，Evaluator 检查本地镜像，需要下载时调用镜像获取器；任务提供 Dockerfile 时则执行构建，其中的 `FROM` 由 Docker/BuildKit 解析和拉取。`docker.pull.method` 只选择显式镜像获取方式，不接管构建器的 `FROM`。
+
+| 下载步骤 | 镜像源或下载地址 | 连接代理 |
+| --- | --- | --- |
+| 主动获取镜像，`method: docker` | `docker.mirrors` 替换地址后执行 `docker pull` | Docker daemon / Desktop 的代理 |
+| 主动获取镜像，`method: registry-client`、`backend: nodejs` | `docker.mirrors` 替换地址，由 Evaluator 下载并导入 Docker | 网络文件解析后的 host 代理 |
+| Dockerfile 的 `FROM` 或外部 `COPY --from` | Docker daemon/BuildKit 的 registry 配置；不使用 YAML 的 `docker.mirrors` | Docker daemon / Desktop 的代理 |
+| Dockerfile 的 `RUN pip install` 等 | `sources` 中对应的包源或命令的下载地址 | 网络文件解析后的 build 代理 |
+| Harness 运行时安装依赖 | `sources` 中对应的包源或安装器的下载地址 | 网络文件解析后的 runtime 代理 |
+
+例如，SWE-bench 预热可能先构建以 `FROM swebench/...` 开头的任务镜像，再准备 Evaluator 的 Node 运行环境。Node 镜像本地不存在时通过镜像获取器下载，使用默认 `docker.pull` 和 `docker.mirrors`；已有镜像则可复用。任务在 `FROM` 阶段失败时，尚未进入后续运行环境准备，不能据此判断整个预热都不使用 YAML 镜像配置。
+
+YAML 的 `docker.mirrors` 不会写入 daemon 的 `registry-mirrors`，YAML 的代理也不会自动修改已运行的 Docker daemon。两处镜像源即使填同一地址，仍分别控制上述不同步骤。`proxy: null` 或某个代理字段为 `null` 也不会关闭 Docker Desktop 已配置的代理；网络文件的环境变量覆盖规则见上文。
 
 ## Docker 构建与诊断
 

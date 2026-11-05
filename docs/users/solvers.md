@@ -52,9 +52,13 @@ Set all six environment variables as shown in [quick start](quick-start.md#3-set
 
 Add `maxTokens: 8192` to a service to limit replies. Configure model request retries with `services.<name>.retry.maxAttempts`; exhaustion ends the current attempt without restarting the solution.
 
-## SimpleAgent and Pi Bundles
+## SimpleAgent (Based on Pi)
 
-The default needs only `benchmark: gsm8k`. To use your Pi Bundle, apply this fragment while keeping services, environment, and other fields:
+`simpleagent` is Evaluator's built-in solver, using the Pi SDK for the agent loop, model requests and tool calls. Without a bundle, it runs with Evaluator's default instructions and tools. For example, `benchmark: gsm8k` selects default SimpleAgent and requires no Pi Bundle preparation.
+
+### Optional: Load a Pi Bundle
+
+Supply a Pi Bundle to customize instructions, skills, extensions or settings. Apply this fragment while keeping services, environment and other fields:
 
 ```yaml
 benchmark:
@@ -67,6 +71,10 @@ benchmark:
 ```
 
 Point to a prepared Pi Bundle, rather than an arbitrary source directory. `bundle.settings` supplies serializable Pi settings applied to a staged copy, leaving the original bundle intact.
+
+> Note: Extensions in a Pi Bundle load through Pi's officially supported Extensions (plugin) mechanism. The bundle packages those extensions and related resources.
+
+### Tool Command Timeouts
 
 Tool commands have separate timeouts. Increasing the task budget does not make shell commands unlimited. To adjust them:
 
@@ -84,7 +92,7 @@ Provide both fields; the maximum must be at least the default. This fragment ret
 
 ## AgentBundle
 
-Follow [source installation](installation.md#install-from-source) to prepare Evaluator. pnpm installs the AgentBundle SDK automatically, without a sibling source repository. `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**, supplied separately rather than the SDK installation path.
+Follow [source installation](installation.md#install-from-source) to prepare Evaluator. pnpm installs the AgentBundle SDK automatically, without a sibling source repository. `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**, supplied separately rather than the SDK installation path. See the [AgentBundle project](https://github.com/evolving-foundry/agentbundle) for concepts, CLI usage and examples, and its [bundle authoring guide](https://github.com/evolving-foundry/agentbundle/blob/master/docs/bundle-formats.md) for harness-specific layouts, manifests and validation.
 
 ```yaml
 services:
@@ -121,7 +129,13 @@ Some harnesses require preinstalled local runtimes or dependency installation du
 
 Specify existing installations with Solver settings such as `dshhome`, `dshprofile`, `hermeshome`, or `jiuwenswarmhome`. `jiuwenswarmTimeoutSeconds` applies only to that harness. Additional pi settings use `benchmark.solver.config.pi.settings`, unsupported by other harnesses.
 
-Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts Solver `maxTokens`, but setting both is an error. Bundle creation belongs to the relevant AgentBundle project; this repository validates and executes existing bundles.
+Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts Solver `maxTokens`, but setting both is an error. This page covers Evaluator configuration and execution; use the linked AgentBundle documentation for bundle creation, formats and installation.
+
+## Docker Preparation and Networking
+
+The solver selects agent behavior; the task environment selects an existing image or a Dockerfile build. Choosing `simpleagent` or `agentbundle` does not directly select an image download method. `warmup` makes no model calls, but prepares task images, Evaluator's shared Node runtime and installation dependencies required by the selected harness. Available caches are reused.
+
+A single warmup may include both Dockerfile `FROM` pulls and explicit acquisition of existing images such as Node. The former uses Docker daemon/BuildKit networking; the latter uses the network file's `docker.mirrors` and `docker.pull`. Even with `docker.pull.method: docker`, Evaluator rewrites the image reference before asking Docker to download it. See [warmup downloads](network.md#image-and-dependency-downloads-during-warmup) for configuration boundaries across image acquisition, build-time dependency installation and runtime installation.
 
 ## Dify
 

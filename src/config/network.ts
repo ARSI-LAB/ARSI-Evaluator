@@ -69,8 +69,7 @@ function dictionary(value: unknown, label: string): Record<string, unknown> {
 }
 
 export function parseNetworkSettings(value: unknown): NetworkSettings {
-  const raw = record(value, ["version", "proxy", "sources", "docker", "git"], "network");
-  if (raw.version !== undefined && raw.version !== 1) throw new TypeError("network.version must be 1");
+  const raw = record(value, ["proxy", "sources", "docker", "git"], "network");
   const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true);
   const proxyObject = record(raw.proxy === null ? undefined : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
   const overrides = record(proxyObject.overrides, locations, "network.proxy.overrides");
@@ -103,7 +102,7 @@ export function parseNetworkSettings(value: unknown): NetworkSettings {
   if (route === "proxy" && !resolvedProxy.host.https && !resolvedProxy.host.http)
     throw new TypeError("Git SSH proxy requires a host HTTP(S) proxy");
   return {
-    version: 1, proxy: resolvedProxy,
+    proxy: resolvedProxy,
     sources: {
       huggingface: url(sources.huggingface ?? "https://huggingface.co", "network.sources.huggingface", false, true),
       python: { index: url(python.index ?? "https://pypi.org/simple", "network.sources.python.index"),
@@ -150,7 +149,7 @@ function mergeNetworkTemplate(base: JsonValue | undefined, overrides: NetworkTem
 
 /** Override only nonempty variables; retain references for expansion on execution nodes. */
 function applyNetworkEnvironment(template: JsonValue, env: NodeJS.ProcessEnv): JsonValue {
-  const raw = record(template, ["version", "proxy", "sources", "docker", "git"], "network");
+  const raw = record(template, ["proxy", "sources", "docker", "git"], "network");
   const proxy: NetworkTemplateObject = {}, python: NetworkTemplateObject = {}, sources: NetworkTemplateObject = {}, docker: NetworkTemplateObject = {};
   const reference = (names: string[]) => { const key = names.find(name => env[name]); return key ? `\${${key}}` : undefined; };
   const assign = (target: NetworkTemplateObject, key: string, names: string[]) => {
