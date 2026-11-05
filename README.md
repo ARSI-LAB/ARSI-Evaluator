@@ -38,7 +38,7 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 ## ⚙️ Features
 
 - **Multiple evaluation workloads**: GSM8K, MMLU, HumanEval, Terminal-Bench, SWE-bench, WorkBuddy, [OfficeQA Pro V2](docs/users/benchmarks/officeqa-pro-v2.md) (parsed JSON by default, with original PDF support), and custom Harbor tasks. See [supported benchmarks](docs/users/README.md#supported-benchmarks).
-- **Multiple agents and model services**: SimpleAgent and AgentBundle (including the Dify Harness), with optional independent judge models. See [solvers and model services](docs/users/solvers.md).
+- **Multiple agents and model services**: Built-in SimpleAgent and AgentBundle with support for the dsh, dify, pi, deepagents, hermes, and jiuwenswarm harnesses. See [solvers and model services](docs/users/solvers.md).
 - **Local, container, and distributed execution**: Run tasks in local or Docker environments, schedule them locally or through Ray, and control concurrency and environment preparation. See [execution modes](docs/users/usage.md#local-docker-and-ray) and [concurrency](docs/users/concurrency.md).
 - **Network configuration**: Configure proxies, data download URLs, Docker registry mirrors, and package sources. See the [network configuration guide](docs/users/network.md).
 - **Evidence and resume**: Save configuration, source versions, trajectories, verification logs, and artifacts. Resume unfinished tasks after interruption. See [resume and result files](docs/users/usage.md#resume-and-rebuild-reports).
@@ -119,7 +119,7 @@ Local Docker, Ray Client, and Ray Jobs support warmup; Ray prepares images on th
 
 Choose a guide for your task:
 
-- **Configure experiments**: [YAML, profiles, and environment variables](docs/users/config.md); [solvers, AgentBundle, and independent judges](docs/users/solvers.md).
+- **Configure experiments**: [YAML, profiles, and environment variables](docs/users/config.md); [solvers, AgentBundle, and model services](docs/users/solvers.md).
 - **Run workloads**: [Benchmark guides](docs/users/benchmarks/README.md); [experiment configurations](playbook/README.md).
 - **Manage evaluation runs**: [Task selection, resume, and reports](docs/users/usage.md); [image warmup](docs/users/usage.md#warm-images-without-evaluation); [image cleanup](docs/users/usage.md#delete-evaluation-images); [concurrency, preparation pipelines, and timeouts](docs/users/concurrency.md).
 - **Measure service performance**: [AgentX concurrency sweeps, trace replay, and metrics](docs/users/benchmarks/agentx.md).
@@ -146,3 +146,14 @@ Results are recorded for each model and agent harness combination. Empty cells m
 | --- | --- | --- | --- | --- | --- | --- |
 | DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
 | DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |
+
+## 🙏 Acknowledgments
+
+Thanks to the Cordis maintainers and contributors. Ember Evaluator uses Cordis to register plugins and manage component lifecycles. [Cordis project](https://github.com/cordiverse/cordis)
+
+Thanks to the Harbor maintainers and contributors. Ember Evaluator supports Harbor task packages and follows Harbor protocols for task execution and verification. [Harbor project](https://github.com/harbor-framework/harbor)
+
+## 🔗 Related Projects
+
+- [Ember RSI](https://github.com/evolving-foundry/ember-rsi): Tools for iterative optimization through measured experiments.
+- [AgentBundle](https://github.com/evolving-foundry/agentbundle): A unified CLI and SDK for validating, installing, and managing agent bundles across runtimes.

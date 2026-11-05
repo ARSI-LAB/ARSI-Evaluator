@@ -102,6 +102,22 @@ docker image inspect --platform linux/amd64 --format '{{.Id}}' '导入后的镜�
 
 先记下官方 ID，再加载归档，避免同名标签被覆盖。若 ID 不同，检查是否使用了相同版本和平台，或误打包了 Runtime/Agent 镜像；官方 tag 更新也会导致 ID 不同。
 
+## 预热期间的镜像与依赖下载
+
+“Evaluator 主动获取镜像”描述由谁发起操作，不表示一定由 Evaluator 自己下载镜像层。任务环境指定现成镜像时，Evaluator 检查本地镜像，需要下载时调用镜像获取器；任务提供 Dockerfile 时则执行构建，其中的 `FROM` 由 Docker/BuildKit 解析和拉取。`docker.pull.method` 只选择显式镜像获取方式，不接管构建器的 `FROM`。
+
+| 下载步骤 | 镜像源或下载地址 | 连接代理 |
+| --- | --- | --- |
+| 主动获取镜像，`method: docker` | `docker.mirrors` 替换地址后执行 `docker pull` | Docker daemon / Desktop 的代理 |
+| 主动获取镜像，`method: registry-client`、`backend: nodejs` | `docker.mirrors` 替换地址，由 Evaluator 下载并导入 Docker | 网络文件解析后的 host 代理 |
+| Dockerfile 的 `FROM` 或外部 `COPY --from` | Docker daemon/BuildKit 的 registry 配置；不使用 YAML 的 `docker.mirrors` | Docker daemon / Desktop 的代理 |
+| Dockerfile 的 `RUN pip install` 等 | `sources` 中对应的包源或命令的下载地址 | 网络文件解析后的 build 代理 |
+| Harness 运行时安装依赖 | `sources` 中对应的包源或安装器的下载地址 | 网络文件解析后的 runtime 代理 |
+
+例如，SWE-bench 预热可能先构建以 `FROM swebench/...` 开头的任务镜像，再准备 Evaluator 的 Node 运行环境。Node 镜像本地不存在时通过镜像获取器下载，使用默认 `docker.pull` 和 `docker.mirrors`；已有镜像则可复用。任务在 `FROM` 阶段失败时，尚未进入后续运行环境准备，不能据此判断整个预热都不使用 YAML 镜像配置。
+
+YAML 的 `docker.mirrors` 不会写入 daemon 的 `registry-mirrors`，YAML 的代理也不会自动修改已运行的 Docker daemon。两处镜像源即使填同一地址，仍分别控制上述不同步骤。`proxy: null` 或某个代理字段为 `null` 也不会关闭 Docker Desktop 已配置的代理；网络文件的环境变量覆盖规则见上文。
+
 ## Docker 构建与诊断
 
 `FROM` 和外部 `COPY --from` 使用 Docker 自带构建器及 daemon 的网络。临时 registry 映射只控制显式镜像获取。`RUN` 使用应用环境变量覆盖后的代理、包源和临时 Dockerfile 副本，原任务文件保持不变。`docker.buildNetwork` 可选 `default` 或 `host`；这不是任务运行网络权限。

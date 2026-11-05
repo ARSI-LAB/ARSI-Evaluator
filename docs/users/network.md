@@ -102,6 +102,22 @@ docker image inspect --platform linux/amd64 --format '{{.Id}}' 'loaded-image-ref
 
 Note the official ID before loading, since the archive may overwrite the same tag. If IDs differ, check the version and platform, and whether a Runtime/Agent image was archived instead. An updated official tag can also explain a mismatch.
 
+## Image and dependency downloads during warmup
+
+Explicit image acquisition means Evaluator initiates the operation; it does not necessarily download image layers itself. For an existing task image, Evaluator checks local availability and calls its image acquisition helper when a download is needed. For a Dockerfile, it runs a build and Docker/BuildKit resolves and pulls `FROM` images. `docker.pull.method` selects explicit acquisition only; it does not take over builder `FROM` pulls.
+
+| Download step | Image source or download address | Connection proxy |
+| --- | --- | --- |
+| Explicit acquisition, `method: docker` | Rewrite using `docker.mirrors`, then execute `docker pull` | Docker daemon / Desktop proxy |
+| Explicit acquisition, `method: registry-client`, `backend: nodejs` | Rewrite using `docker.mirrors`; Evaluator downloads and imports into Docker | Resolved host proxy from network configuration |
+| Dockerfile `FROM` or external `COPY --from` | Docker daemon/BuildKit registry configuration; YAML `docker.mirrors` does not apply | Docker daemon / Desktop proxy |
+| Dockerfile `RUN pip install` and similar commands | Corresponding `sources` entry or the command's download address | Resolved build proxy from network configuration |
+| Harness runtime dependency installation | Corresponding `sources` entry or the installer's download address | Resolved runtime proxy from network configuration |
+
+For example, SWE-bench warmup may build a task image starting with `FROM swebench/...`, then prepare Evaluator's Node runtime. If the Node image is missing locally, the acquisition helper downloads it using default `docker.pull` and `docker.mirrors`; existing images can be reused. A failure at the task's `FROM` stage precedes runtime preparation and does not establish that YAML mirror settings are unused throughout warmup.
+
+YAML `docker.mirrors` does not update daemon `registry-mirrors`, and YAML proxies do not automatically reconfigure an existing Docker daemon. Even when both mirror settings point to the same host, they control different steps above. Null YAML proxy settings do not disable a Docker Desktop proxy; see the environment override rules above for network-file settings.
+
 ## Builds and verification
 
 FROM and external COPY use Docker's built-in builder and daemon network. Registry mappings affect explicit acquisition only. RUN receives configured sources/proxies through a temporary Dockerfile copy; `docker.buildNetwork` is `default` or `host`, independent of task runtime permissions.
