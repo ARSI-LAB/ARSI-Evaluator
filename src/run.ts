@@ -103,6 +103,10 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
   };
   const file = resolve(options.configPath);
   const patchPath = options.patchPath === undefined ? undefined : resolve(options.patchPath);
+  const pluginSelections = overrides.plugins ?? [];
+  const bundledPlugins = pluginSelections.map(selection => selection.id);
+  const decoratorConfig: Record<string, Record<string, unknown>> = Object.fromEntries(
+    pluginSelections.flatMap(selection => selection.config === undefined ? [] : [[selection.id, selection.config]]));
   const resume = options.resume === undefined || options.resume === false ? undefined : options.resume === true ? null : options.resume;
   let registry: PluginRegistry | undefined = options.execution?.registry;
   let config: LoadedConfig | undefined;
@@ -119,7 +123,7 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
     signal.throwIfAborted();
     progress({ phase: "config", message: `Loading and validating ${file}` });
     registry = options.execution?.registry ?? await openPluginRegistry(patchPath,
-      overrides.tracer === undefined ? {} : { tracer: true });
+      bundledPlugins.length === 0 ? {} : { plugins: bundledPlugins });
     config = options.execution?.config ?? await loadConfig(file, overrides, env, { registry,
       ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(patchPath === undefined ? {} : { patchPath }) });
@@ -160,7 +164,8 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
       }
     } else {
       components = await bootstrap(config, dirname(file), patchPath, options.onWarning, registry, undefined,
-        overrides.tracer === undefined ? {} : { tracer: overrides.tracer });
+        { plugins: bundledPlugins,
+          ...(Object.keys(decoratorConfig).length === 0 ? {} : { decoratorConfig }) });
       if (resume !== undefined) progress({ phase: "resume", message: "Locating previous run" });
       const resumeDirectory = resume === undefined ? undefined : await resolveResumeRun(experiment.output.directory, resume);
       const snapshot = await runEngine({ components, config, signal, onProgress: progress,

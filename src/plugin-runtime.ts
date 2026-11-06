@@ -8,9 +8,6 @@ import { pluginCommands } from "./plugins-commands.js";
 import * as builtins from "./plugins/index.js";
 import { validateProfiles } from "./config/profiles.js";
 
-/** The tracer plugin ships with the runtime; it is loaded directly instead of through a patch. */
-const TRACER_PLUGIN_ID = "tracer-plugin";
-
 async function loadExperimentPlugins(
   ctx: Context,
   patchPath: string | undefined,
@@ -19,19 +16,23 @@ async function loadExperimentPlugins(
   patch: Awaited<ReturnType<typeof loadPluginPatch>>;
   pluginVersions: Record<string, string>;
   reportingProviders: Record<string, string>;
+  bundledPlugins: string[];
 }> {
   const patch = await loadPluginPatch(patchPath);
   const pluginVersions: Record<string, string> = Object.create(null) as Record<string, string>;
   pluginVersions[BUILTIN_RUNTIME_ID] = await loadBuiltinRuntimeDigest();
   pluginVersions[PACKAGE_RUNTIME_ID] = await loadPackageDigest();
   if (patch.patchDigest !== null) pluginVersions[PATCH_METADATA_ID] = patch.patchDigest;
-  if (options.tracer) {
-    const bundled = pluginCommands().find(command => command.id === "tracer" && command.bundled);
+  // Bundled plugins ship with the runtime and are loaded by the ids recorded in the command index.
+  const bundledPlugins: string[] = [];
+  for (const id of options.plugins ?? []) {
+    const bundled = pluginCommands().find(command => command.id === id && command.bundled);
     if (bundled === undefined || bundled.entryFile === null) {
-      throw new Error('the bundled tracer plugin is missing; run "pnpm build" to compile plugins/tracer');
+      throw new Error(`the bundled ${id} plugin is missing; run "pnpm build" to compile plugins/${id}`);
     }
-    pluginVersions[TRACER_PLUGIN_ID] = bundled.version;
-    await ctx.plugin(asCordisPlugin(await import(pathToFileURL(bundled.entryFile).href), TRACER_PLUGIN_ID));
+    pluginVersions[bundled.id] = bundled.version;
+    await ctx.plugin(asCordisPlugin(await import(pathToFileURL(bundled.entryFile).href), bundled.id));
+    bundledPlugins.push(bundled.id);
   }
   const reportingProviders: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const entry of patch.entries) {
@@ -45,7 +46,7 @@ async function loadExperimentPlugins(
         reportingProviders[`${selection.role}:${selection.name}`] = entry.id;
       }
   }
-  return { patch, pluginVersions, reportingProviders };
+  return { patch, pluginVersions, reportingProviders, bundledPlugins };
 }
 
 function asCordisPlugin(value: unknown, id: string): Plugin {
@@ -57,8 +58,8 @@ function asCordisPlugin(value: unknown, id: string): Plugin {
 }
 
 export type PluginRuntimeOptions = {
-  /** Load the bundled external tracer store plugin in addition to the user patch. */
-  tracer?: boolean;
+  /** Bundled plugin ids from the command index; each must declare "bundled": true in its manifest. */
+  plugins?: string[];
 };
 
 export async function openPluginRegistry(patchPath?: string, options: PluginRuntimeOptions = {}) {

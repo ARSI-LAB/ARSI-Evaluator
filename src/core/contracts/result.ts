@@ -163,6 +163,8 @@ export type RunManifest = {
     coordinatorPatchPath?: string;
     entries: { id: string; name: string }[];
     reportingProviders?: Record<string, string>;
+    /** Bundled plugin ids loaded from the command index; replayed when the run is retried. */
+    bundledPlugins?: string[];
   };
   startedAt: string;
   finishedAt: string | null;

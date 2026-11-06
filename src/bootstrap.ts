@@ -58,20 +58,20 @@ async function createBenchmark(
 }
 
 export type BootstrapOptions = {
-  /** Mirrors evidence into the tracer service; the configured store stays authoritative. */
-  tracer?: { url?: string };
+  /** Bundled plugin ids loaded for this run; ids that registered a store-decorator wrap the store. */
+  plugins?: string[];
+  /** Decorator config keyed by plugin id, such as a Collector endpoint. */
+  decoratorConfig?: Record<string, Record<string, unknown>>;
 };
 
 async function decorateStore(
   registry: PluginRegistry,
   inner: RunComponents["store"],
   runtime: PluginFactoryContext,
-  tracer: { url?: string },
+  id: string,
+  config: Record<string, unknown>,
 ): Promise<RunComponents["store"]> {
-  const createDecorator = registry.ctx.evaluator.prepare("store-decorator", {
-    name: "tracer",
-    config: tracer.url === undefined ? {} : { url: tracer.url },
-  });
+  const createDecorator = registry.ctx.evaluator.prepare("store-decorator", { name: id, config });
   return (await createDecorator(runtime))(inner);
 }
 
@@ -88,8 +88,9 @@ export async function bootstrap(
     ...config.experiment.metrics.map(selection => ({ role: "metrics" as const, name: selection.name })),
     { role: "reporter" as const, name: config.experiment.reporter.name },
   ];
-  const registry = sharedRegistry ?? await openPluginRegistry(patchPath);
-  const { ctx, patch, pluginVersions } = registry;
+  const registry = sharedRegistry ?? await openPluginRegistry(patchPath,
+    options.plugins === undefined ? {} : { plugins: options.plugins });
+  const { ctx, patch, pluginVersions, bundledPlugins } = registry;
   const reportingProviders = Object.fromEntries(reportingSelections.flatMap(selection => {
     const key = `${selection.role}:${selection.name}`;
     const provider = registry.reportingProviders[key];
@@ -116,7 +117,11 @@ export async function bootstrap(
     for (const createMetric of createMetrics) metrics.push(await createMetric(reportingRuntime));
     const reporter = await createReporter(reportingRuntime);
     const store = await createStore(runtime);
-    const decorated = options.tracer === undefined ? store : await decorateStore(registry, store, runtime, options.tracer);
+    let decorated = store;
+    for (const id of bundledPlugins) {
+      if (!ctx.evaluator.has("store-decorator", id)) continue;
+      decorated = await decorateStore(registry, decorated, runtime, id, options.decoratorConfig?.[id] ?? {});
+    }
     const scheduler = await createScheduler(runtime);
     let disposed = false;
 
@@ -134,6 +139,7 @@ export async function bootstrap(
         ...(patch.patchPath === null ? {} : { patchPath: patch.patchPath }),
         entries: structuredClone(patch.entries),
         reportingProviders,
+        ...(bundledPlugins.length === 0 ? {} : { bundledPlugins: [...bundledPlugins] }),
       },
       async dispose() {
         if (disposed) return;

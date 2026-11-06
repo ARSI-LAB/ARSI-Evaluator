@@ -4,7 +4,7 @@ import type { Command } from "./cli.js";
 import type { CliOverrides } from "./config/schema.js";
 import { pluginCommands } from "./plugins-commands.js";
 
-interface Options extends Omit<CliOverrides, "tracer"> {
+interface Options extends Omit<CliOverrides, "plugins"> {
   patch?: string; taskIdsFile?: string; resume?: boolean | string; dryRun?: boolean;
   all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
@@ -12,6 +12,9 @@ interface Options extends Omit<CliOverrides, "tracer"> {
   python?: string; seeds?: string; seed?: string; warmup?: string; network?: string;
   tracer?: boolean | string;
 }
+
+/** The only place the host maps a convenience flag to a bundled plugin id. */
+const TRACER_PLUGIN_ID = "tracer";
 
 export class CommandUsageError extends TypeError {
   constructor(message: string, readonly helpText: string) { super(message); }
@@ -44,7 +47,10 @@ export function parseCommand(argv: string[]): Command {
       const value = opts[key];
       if (value !== undefined) overrides[key] = value;
     }
-    if (opts.tracer !== undefined) overrides.tracer = typeof opts.tracer === "string" ? { url: opts.tracer } : {};
+    if (opts.tracer !== undefined) overrides.plugins = [{
+      id: TRACER_PLUGIN_ID,
+      ...(typeof opts.tracer === "string" ? { config: { url: opts.tracer } } : {}),
+    }];
     return { overrides, ...networkOptions(opts), ...(opts.patch === undefined ? {} : { patchPath: resolve(opts.patch) }) };
   };
   for (const name of ["run", "warmup", "doctor", "inspect"] as const) {

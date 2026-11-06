@@ -25,11 +25,6 @@ async function requireCredentialReferences(path: string): Promise<void> {
     throw new Error("Original run used a runtime-only credential without an environment reference");
 }
 
-/** A saved run records whether the tracer plugin participated; mirror again on retry. */
-function savedUsesTracer(manifest: RunManifest): boolean {
-  return Object.hasOwn(manifest.pluginVersions ?? {}, "tracer-plugin");
-}
-
 export async function retryRun(options: { networkConfigPath?: string; run: string; taskIds: string[]; requestId?: string; reason?: string },
   signal: AbortSignal, log: (text: string) => void, onProgress?: ProgressListener): Promise<number> {
   const gateway = await gatewayRun(options.run);
@@ -54,9 +49,10 @@ export async function retryRun(options: { networkConfigPath?: string; run: strin
   const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as RunManifest;
   const configDirectory = manifest.pluginRuntime?.configDirectory ?? dirname(directory);
   const patchPath = manifest.pluginRuntime?.patchPath;
-  const tracer = savedUsesTracer(manifest);
-  // The saved manifest records whether tracer plugins were loaded; validate against the same set.
-  const registry = await openPluginRegistry(patchPath, tracer ? { tracer: true } : {});
+  const bundledPlugins = manifest.pluginRuntime?.bundledPlugins ?? [];
+  // Replay the bundled plugin set recorded by the original run so version checks match.
+  const registry = await openPluginRegistry(patchPath,
+    bundledPlugins.length === 0 ? {} : { plugins: bundledPlugins });
   try {
     // Rebind original service references before admitting work; no model overrides are accepted.
     const config = await loadSavedConfig(join(directory, "config.yaml"), process.env, {
@@ -69,7 +65,7 @@ export async function retryRun(options: { networkConfigPath?: string; run: strin
     log(`Request ${submitted.request.requestId}: ${submitted.request.status}; ${directory}`);
     if (submitted.active || submitted.request.status !== "pending") return 0;
     const components = await bootstrap(config, configDirectory, patchPath, log, registry, undefined,
-      tracer ? { tracer: {} } : {});
+      { plugins: bundledPlugins });
     try {
       // The engine owns the exclusive RunStore lock; a second CLI cannot write results.
       await components.store.open(directory);

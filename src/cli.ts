@@ -373,8 +373,7 @@ async function runCliCommand(
     try {
       const taskIds = await readTaskIds(command.taskIdsFile);
       progress({ phase: "config", message: `Loading and validating ${resolve(command.file)}` });
-      registry = await openPluginRegistry(command.patchPath,
-        command.overrides.tracer === undefined ? {} : { tracer: true });
+      registry = await openPluginRegistry(command.patchPath);
       config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...networkOptions, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
       applyTaskIds(config, taskIds);
       secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
