@@ -4,7 +4,7 @@
 
 Choose the entry matching your issue. Dedicated guides define full configuration, execution policies, and scoring.
 
-[User documentation](../README.md) · [Download FAQ](downloads.md) · [Docker FAQ](docker.md)
+[User documentation](../README.md) · [Download FAQ](downloads.md) · [Docker FAQ](docker.md) · [Network diagnosis](network.md)
 
 ## Installation and Configuration
 
@@ -18,7 +18,7 @@ Evaluator needs the AgentBundle SDK when importing built-in plugins, so pnpm dow
 
 ### Why can execution fail after doctor passes?
 
-`doctor` sends no model requests, but performs temporary downloads and Docker build probes. `not-checked` is not a pass. `run --dry-run` locks sources and enumerates tasks, without proving model/task execution works. Run a small sample; see [quick start](../quick-start.md#4-check-then-run).
+`doctor` checks selected downloads and Docker builds without model requests. `not-checked` means a check is incomplete. After checks pass, warm up and run a small task sample; see the [quick start](../quick-start.md#4-check-then-run).
 
 ## Downloads, Containers, and Resources
 

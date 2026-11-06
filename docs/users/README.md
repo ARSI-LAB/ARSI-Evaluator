@@ -17,6 +17,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Load-test existing model services over SSH | [Standalone AISBench plugin](../../plugins/aisbench/README.md) |
 | Read downloaded dataset files | [Local datasets](local-datasets.md) |
 | Call evaluations from a Node.js project | [Node.js SDK](sdk.md) |
+| Run evaluations with an agent | [Ember Evaluator skill (中文)](../../skills/ember-evaluator/SKILL.md) |
 
 ## Common Operations
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -6,9 +6,10 @@ import { consumeDsh } from "../../src/adapters/harness/dsh/protocol.js";
 import { consumeJiuwenswarm } from "../../src/adapters/harness/jiuwenswarm/protocol.js";
 import type { ProcessHandle } from "../../src/core/contracts/environment.js";
 import { runEngine } from "../../src/core/engine.js";
+import { runTask } from "../../src/core/run-task.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local.js";
 import { safeTaskKey } from "../../src/core/artifacts.js";
-import { harness } from "../fixtures/engine/fakes.js";
+import { harness, source } from "../fixtures/engine/fakes.js";
 import { EvaluatorError } from "../../src/core/errors/evaluator-error.js";
 import { computeSuccessRate } from "../../src/plugins/metrics/success-rate.js";
 import { dshStream, interruptedResponse } from "../fixtures/engine/dsh-stream.js";
@@ -109,15 +110,15 @@ test("cleanup failure after typed truncation remains authoritative and prevents 
   expect(await value.components.store.listAttempts()).toHaveLength(1);
 });
 
-test("exhausted DSH errors end the attempt and honor run.onError=abort", async () => {
+test("DSH truncation creates a fresh attempt before honoring run.onError=abort", async () => {
   const value = await fixture((task, count) => task === "a" && count === 1 ? interruptedResponse + " fixture-key" : undefined);
   const progress: string[] = [];
   const result = await runEngine({ ...value, signal: new AbortController().signal,
     onProgress: event => { if (event.phase === "retry") progress.push(event.message); } });
-  expect(result.run.status).toBe("error");
-  expect([...value.calls.entries()]).toEqual([["a", 1]]);
+  expect(result.run.status).toBe("completed");
+  expect([...value.calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
   const attempts = await value.components.store.listAttempts();
-  expect(attempts).toHaveLength(1);
+  expect(attempts).toHaveLength(4);
   const failed = attempts.find(attempt => attempt.record?.executionStatus === "failed")!;
   expect(failed.record?.errors[0]).toMatchObject({ code: "NETWORK_FAILURE", phase: "solve", details: { originalCode: "SOLVER_RESULT_INCOMPLETE" } });
   const causes = JSON.stringify(failed.record?.errors[0]?.causes);
@@ -126,30 +127,111 @@ test("exhausted DSH errors end the attempt and honor run.onError=abort", async (
   expect(causes).toContain("[redacted]");
   expect(JSON.stringify(attempts)).not.toContain("fixture-key");
   expect(failed.record?.collection.trajectory).toBe("partial");
-  expect(result.records.every(record => record.executionStatus === "failed")).toBe(true);
-  expect(progress).toHaveLength(0);
-  expect(value.events.filter(event => event === "solve.cleanup")).toHaveLength(1);
+  expect(result.records.every(record => record.executionStatus === "completed")).toBe(true);
+  expect(progress).toHaveLength(1);
+  expect(value.events.filter(event => event === "solve.cleanup")).toHaveLength(4);
+  expect(value.events.filter(event => event === "verify")).toHaveLength(3);
 });
 
-test("network and permanent failures do not repeat while continue mode executes other tasks", async () => {
+test("only truncated tasks repeat while continue mode executes other tasks", async () => {
   const value = await fixture((task, count) => task === "a" && count === 1 ? interruptedResponse
     : task === "b" ? "HTTP 400 Bad Request: invalid model parameter" : undefined);
   value.config.experiment.run.onError = "continue";
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
-  expect([...value.calls.entries()]).toEqual([["a", 1], ["b", 1], ["c", 1]]);
-  expect(result.records.map(record => record.executionStatus)).toEqual(["failed", "failed", "completed"]);
+  expect([...value.calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
+  expect(result.records.map(record => record.executionStatus)).toEqual(["completed", "failed", "completed"]);
 });
 
-test("persistent failure produces only one attempt", async () => {
+test("persistent truncation stops after three invalid attempts", async () => {
   const value = await fixture(() => interruptedResponse);
   value.config.experiment.run.taskIds = ["a"];
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
-  expect(value.calls.get("a")).toBe(1);
+  expect(value.calls.get("a")).toBe(3);
   const attempts = await value.components.store.listAttempts();
-  expect(attempts.map(attempt => attempt.ordinal)).toEqual([1]);
-  expect(new Set(attempts.map(attempt => attempt.key.attemptId)).size).toBe(1);
+  expect(attempts.map(attempt => attempt.ordinal)).toEqual([1, 2, 3]);
+  expect(new Set(attempts.map(attempt => attempt.key.attemptId)).size).toBe(3);
+  expect(attempts.every(attempt => attempt.record?.scoreStatus === "invalid" && attempt.record.verdict === null && attempt.record.cleanupStatus === "cleaned")).toBe(true);
+  expect(value.events.filter(event => event === "verify")).toHaveLength(0);
+});
+
+test("Swarm truncation retries the entire task and succeeds on the third attempt", async () => {
+  const value = await jiuwenswarmFixture(count => count < 3 ? "peer closed connection without sending complete message body (incomplete chunked read)" : undefined);
+  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  expect(result.run.status).toBe("completed");
+  expect(value.calls.get("a")).toBe(3);
+  expect((await value.components.store.listAttempts()).map(attempt => attempt.record?.scoreStatus)).toEqual(["invalid", "invalid", "valid"]);
+});
+
+test("coordinator retries persisted scheduler results without relying on its local executor", async () => {
+  const value = await fixture((_task, count) => count === 1 ? interruptedResponse : undefined);
+  value.config.experiment.run.taskIds = ["a"];
+  const scheduler = new LocalScheduler(1);
+  value.components.scheduler = {
+    executionLocation: "remote",
+    executeReady(jobs, _executor, signal) {
+      // Like Ray, execute outside the coordinator's executor and return the
+      // persisted result. This tests admission, not Ray transport or deployment.
+      return scheduler.executeReady(jobs, (job, taskSignal) => runTask(job, value.components, source, taskSignal), signal);
+    },
+  };
+  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  expect(result.run.status).toBe("completed");
+  expect(value.calls.get("a")).toBe(2);
+  expect(await value.components.store.listAttempts()).toHaveLength(2);
+});
+
+test("DeepAgents protocol truncation restarts in fresh workspaces and repeats earlier tools", async () => {
+  const value = await fixture(() => undefined);
+  value.config.experiment.run.taskIds = ["a"];
+  const workspaces: string[] = [];
+  let tools = 0;
+  value.components.solver.solve = async (_input, session, context) => {
+    workspaces.push(session.workdir);
+    const marker = join(session.workdir, "tool-marker");
+    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    await writeFile(marker, String(++tools));
+    return consumeDsh(dshStream(tools < 3 ? "incomplete chunked read" : undefined), context, "fixture-key", undefined, "DEEPAGENTS");
+  };
+  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  expect(result.run.status).toBe("completed");
+  expect(tools).toBe(3);
+  expect(new Set(workspaces).size).toBe(3);
+  expect(value.events.filter(event => event === "solve.cleanup")).toHaveLength(3);
+});
+
+test("cleanup failure prevents whole-task stream recovery", async () => {
+  const value = await fixture(() => interruptedResponse);
+  value.config.experiment.run.taskIds = ["a"];
+  const prepare = value.components.environment.prepare.bind(value.components.environment);
+  value.components.environment.prepare = async (...args) => {
+    const session = await prepare(...args);
+    const dispose = session.dispose.bind(session);
+    session.dispose = async signal => { await dispose(signal); throw new Error("cleanup failed"); };
+    return session;
+  };
+  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  expect(result.run.status).toBe("error");
+  expect(value.calls.get("a")).toBe(1);
+  expect(result.records[0]?.cleanupStatus).toBe("unconfirmed");
+});
+
+test("cancellation stops a queued automatic retry and resume retains the consumed budget", async () => {
+  const value = await fixture(() => interruptedResponse);
+  value.config.experiment.run.taskIds = ["a"];
+  const controller = new AbortController();
+  const first = await runEngine({ ...value, signal: controller.signal, onProgress: event => {
+    if (event.phase === "retry") controller.abort(new Error("user cancelled"));
+  } });
+  expect(first.run.status).toBe("cancelled");
+  expect(value.calls.get("a")).toBe(1);
+  const resumeDirectory = join(value.config.experiment.output.directory, first.run.runId);
+  await value.components.store.close();
+  const resumed = await runEngine({ ...value, resumeDirectory, signal: new AbortController().signal });
+  expect(resumed.run.status).toBe("error");
+  expect(value.calls.get("a")).toBe(3);
+  expect(await value.components.store.listAttempts()).toHaveLength(3);
 });
 
 test("stream idle timeout ends the attempt when the harness exhausts its request retries", async () => {
@@ -160,14 +242,14 @@ test("stream idle timeout ends the attempt when the harness exhausts its request
   expect(value.calls.get("a")).toBe(1);
 });
 
-test("a missing final retains network diagnostics without restarting the harness", async () => {
+test("a missing final with explicit truncation restarts the task", async () => {
   const value = await fixture(() => undefined);
   value.config.experiment.run.taskIds = ["a"];
   let count = 0;
   value.components.solver.solve = (_input, _session, context) =>
     consumeDsh(dshStream(++count === 1 ? interruptedResponse : undefined, count !== 1), context, "fixture-key");
-  expect((await runEngine({ ...value, signal: new AbortController().signal })).run.status).toBe("error");
-  expect(count).toBe(1);
+  expect((await runEngine({ ...value, signal: new AbortController().signal })).run.status).toBe("completed");
+  expect(count).toBe(2);
 });
 
 test("a process CLI Agent deadline finalizes a valid zero and preserves partial artifacts", async () => {

@@ -10,13 +10,13 @@ Run shell commands from the Evaluator root and merge YAML fragments into actual 
 
 Pass a separate network YAML with `--network network.yaml`. `docker.pull.method` selects native Docker or Registry API downloads, `docker.mirrors` rewrites the registry for explicit acquisition, and `docker.benchmarks` can select ModelScope/Hugging Face image archives.
 
-Registry API acquisition supports the built-in Node.js client and user-installed skopeo. Configure proxies under `proxy`, with separate `host`, `daemon`, `build`, and `runtime` overrides. See [network configuration](../network.md) for credentials, node addresses and fixed archive paths.
+Registry API acquisition supports the built-in Node.js client and user-installed skopeo. Configure proxies under `proxy`, with separate `host`, `daemon`, `build`, and `runtime` overrides. See [proxy configuration](../reference/network.md) for credentials and node addresses, and [image downloads](../image-downloads.md) for archive paths.
 
 `FROM` and external `COPY --from` use Docker's built-in builder and the daemon's active network settings. `doctor experiment.yaml` generates application guidance without changing files or restarting Docker. After an administrator applies it, use `doctor experiment.yaml` to check explicit acquisition, `FROM`, and `RUN` independently.
 
 ## Identify and Inspect Task Images
 
-Generated names are `ember-evaluator/<short-task>:<purpose>-<kind>-<hash>.` solve/verify identify phases. Short names use the last task ID segment in valid lowercase; hashes include full IDs to distinguish datasets.
+Local images use `ember-evaluator/<short-task>:<purpose>-<kind>-<hash>`. `solve` and `verify` identify solving and verification; the suffix distinguishes tasks and content. Use the task name or purpose to find images:
 
 For `terminal-bench/atrx-vep-crispr`:
 
@@ -33,7 +33,7 @@ For `terminal-bench/atrx-vep-crispr`:
 | Shared agent installation | `ember-evaluator/shared:solver-install-<hash>` |
 | Internal gateway reference, when needed | `ember-evaluator/shared:gateway-base-<hash>` |
 
-Digest-pinned external task images receive local Evaluator names. After validating digest/platform/ID and saving provenance, the program removes the corresponding official digest and declared tags still pointing to that image, without deleting content/forcing removal. Official task/result sources stay intact. Agent images exist only when installation is needed; not every task has every image. `materialize` without task context uses shared/solve and skips official-reference migration. Mutable tags, generated images, and pinned Node retain existing handling.
+Fixed-digest official task images receive local Evaluator names. Original official tags may be removed, but image content and official sources in results stay unchanged. Agent images are created only when installation is needed, so not every task has every image kind.
 
 Inspect one task, all verification images, or shared images:
 
@@ -43,13 +43,13 @@ docker image ls --filter 'reference=ember-evaluator/*:verify-*'
 docker image ls --filter 'reference=ember-evaluator/shared:*'
 ```
 
-Digest-pinned `base` tags derive from official repository/digest/platform/task/purpose, avoiding random tags on repeats. Mutable tags are pinned per preparation/attempt. Runtime/Agent/Dockerfile tags derive from content/task/purpose for cross-run reuse. Multiple tags may share IMAGE ID without duplicating images; different IDs may share layers. Do not sum image-ls SIZE as disk use; use docker system df.
+Images can be reused for the same task, purpose, and content. Multiple tags can share an IMAGE ID without duplicating the image, and different images can share layers. Use `docker system df` for disk usage rather than summing SIZE from `docker image ls`.
 
-Later runs inspect Evaluator tags using image IDs, RepoDigests, or saved provenance, never names alone. Records live under `EVALUATOR_CACHE_DIR/docker-images/` or application cache docker-images, typically `/toolbox-home/.cache/ember-evaluator/docker-images/` in toolbox. Classic Docker may lose RepoDigests after official references are removed; records validate official digest/platform/ID. Another task can tag verified content without pulling.
+Alongside Docker images, Evaluator stores local records needed for reuse under `EVALUATOR_CACHE_DIR/docker-images/`, or the application cache directory when unset. Toolbox typically uses `/toolbox-home/.cache/ember-evaluator/docker-images/`. Copying images without these records may still require downloading again.
 
-If provenance is lost and local images cannot prove official digests, fetch official content to validate. Replaced tags/platform mismatch fail explicitly. Failed official-reference removal retains generated tags/records and reports failure without forcing removal/claiming completion. Historical Evaluator tags remain; old official references migrate only when processed locally.
+Preparation fails if local image tags were replaced or the platform does not match. Check Docker context, target platform, and cache directory first. To clean up and prepare again, follow [delete evaluation images](../usage.md#delete-evaluation-images), then run `warmup`.
 
-Upgrading from old kind/hash-only names searches new names, so **first preparation may rebuild**, with Docker layers reused where possible. Old images are neither retagged nor deleted automatically; running containers remain unaffected. Saved receipts still validate identities. Renaming alone saves no disk.
+If an upgrade changes image names, first preparation may rebuild, while Docker can still reuse existing layers. Old images and containers using them are not deleted automatically; renaming alone does not free disk space.
 
 ## Will Restarting Redownload or Rebuild Every Image?
 
@@ -57,17 +57,12 @@ Normally no. Completed images/tags on the same daemon are reused when identities
 
 | Kind | Repeat behavior |
 | --- | --- |
-| Official digest-pinned solve/verify/sidecar | Validate stable tags/provenance, recreate missing tags from verified IDs, pull only without valid content, then remove official local references |
-| Mutable task tags/pinned Node | Inspect local references/platform first; pull only if unreadable, downloading missing layers |
-| Task Dockerfiles | Content/args/platform-derived tags reuse existing images |
-| `ember-evaluator/<task>:solve-runtime-`… / `verify-runtime-…` | Reuse tags derived from task/Node IDs, runtime, platform, purpose |
-| `ember-evaluator/shared:solver-install-…` | Reuse installation files/commands/probes/program/recipe/Node/platform identities |
-| `ember-evaluator/<task>:solve-agent-`… | Reuse runtime/shared install/derived build/purpose identities |
-| `ember-evaluator/<task>:solve-base-`… / `verify-base-…` | Digest content reuses stable tags; mutable references may add per-preparation tags |
+| Official task, service, and Node images | Reuse usable local content; download missing images |
+| Task Dockerfile images | Reuse when build files, arguments, and platform are unchanged |
+| Runtime images | Reuse when task/Node images, runtime code, and platform are unchanged |
+| Agent installation and final solve images | Reuse when relevant base images, Agent files, installation commands, and arguments are unchanged |
 
 Runs still check selected environments, so Preparing solve image and runtime environment/Task image ready logs repeat without proving downloads/builds. `source=explicit image reference` means configuration supplied an address, not whether it was cached/pulled. Runtime/Solver work may follow. See [preparation](../concurrency.md).
-
-Shared install images set recursive agent read/execute permissions once and state1777. Final task copies retain permissions and check loading as the task's original user, avoiding per-task recursive chmod. Recipe changes generate new tags requiring first-use builds.
 
 Solve/verify may use different official images and both need runtimes. Seeing solve ready does not prove verification/full-task readiness; later runs may download previously unprepared verify images.
 
@@ -76,7 +71,7 @@ Re-pulls/builds may occur when:
 - Interruption preceded build completion.
 - Images/tags were deleted or Docker context/daemon changed; local/Ray caches are not shared automatically.
 - Task/Node images, platforms, runtime programs, Solver files/dependencies, or build args changed.
-- Backend/API inspection changes altered image identities used in keys.
+- Switching Docker backends makes previous images or build caches unavailable.
 - Naming upgrades/task IDs/purpose changes select different tags.
 
 Docker may still reuse build layers; its cache determines which steps rerun.
@@ -135,7 +130,7 @@ environment:
         - anyio<4.15
 ```
 
-Each task Dockerfile stage receives a constraint file/PIP_CONSTRAINT before pip installs. Only build snapshots change, not datasets; constraints enter cache digests. Images retain files/variables for later pip installs.
+These constraints apply to pip installation during task image builds and remain active in the resulting containers. Changing constraints rebuilds the relevant images without modifying original dataset files.
 
 Only package/version comparisons are accepted, excluding URLs/options/extras/markers/multiline. `*` supplies defaults for unspecified main images; task lists override, empty disables. Sidecars exclude constraints. Omission preserves behavior; prebuilt images do not reinstall. Apply only confirmed incompatibilities, since some tasks need new pytest.
 

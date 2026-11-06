@@ -49,15 +49,31 @@ Ember Evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 
 ## 📦 安装部署
 
+### Agent Instruction
+
+将下面这段指令复制给你的编程 Agent。
+
+```text
+请从 https://github.com/evolving-foundry/ember-evaluator 安装 Ember Evaluator CLI 和配套的 ember-evaluator skill。
+按照 README 的 Manual Installation 步骤安装 CLI，并在目标项目中为当前 Agent 安装 skill。
+运行 ember-evaluator --help，并确认当前 Agent 能发现和读取该 skill。验证安装后结束任务。
+```
+
+### Manual Installation
+
+#### 1. 安装 CLI
+
 环境要求：
 
 1. **Node.js** >= 24.22.1（24.x）。
 2. **pnpm** >= 11 < 13。没有 pnpm 时，先执行 `npm install --global pnpm`。
-3. **Git**，用于拉取 AgentBundle 依赖。
+3. **Git**，并具有私有 AgentBundle 仓库的读取权限。
 
-在 Evaluator 仓库根目录执行：
+克隆仓库并从仓库根目录构建和安装。
 
 ```bash
+git clone https://github.com/evolving-foundry/ember-evaluator.git
+cd ember-evaluator
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add -g .
@@ -65,6 +81,14 @@ ember-evaluator --help
 ```
 
 看到帮助信息即安装成功。详细步骤见[安装指南](docs/users/installation.zh-CN.md)，Linux 服务器也可使用[管理容器](docs/users/deployment/container-toolbox.zh-CN.md)。
+
+#### 2. 安装 skill
+
+在要使用 skill 的项目目录中执行以下命令，并选择对应的编程 Agent。
+
+```bash
+npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
+```
 
 ## 🚀 快速入门
 
@@ -115,6 +139,15 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 >
 > 由 Ember Evaluator 官方维护，存放部分 Benchmark 的官方任务镜像归档。可用任务和平台以仓库目录为准。
 
+在仓库根目录使用现成的网络配置；实验 YAML 选择题库、模型和题目，`--network` 后的 YAML 指定镜像下载来源：
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+```
+
+先按 [Terminal-Bench 入门](docs/users/quick-start/terminalbench.zh-CN.md)准备 Docker、模型和选题。示例默认全量选题，仅能下载仓库中已发布的任务和平台；其他下载仍使用默认配置。如何选择镜像源、组合配置和设置默认文件，见 [--network 使用步骤](docs/users/network.zh-CN.md#1-先选一份网络配置)。
+
 ## 📖 使用指南
 
 按操作目标阅读对应文档：
@@ -140,12 +173,18 @@ ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml
 
 ## 📊 评测结果
 
-以下成绩按模型与 Agent Harness 组合记录，空白单元格表示暂未发布成绩；比较时需同时核对文档输入、题目范围和评分条件。
+`tbd` 表示尚未评测。比较成绩时，请同时核对文档输入、题目范围和评分条件。
 
-| 模型＋Agent Harness | GSM8K | MMLU | WorkBuddy | Terminal-Bench 4.0 | SWE-bench Verified | OfficeQA Pro V2 |
-| --- | --- | --- | --- | --- | --- | --- |
-| DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
-| DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |
+**模型** · DeepSeek V4.1 Flash 1017
+
+| Benchmark | Agent Harness | 结果 |
+| --- | --- | --- |
+| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
+| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
+| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
+| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
+| SWE-bench Verified | SimpleAgent | `tbd` |
+| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
 
 ## 🙏 致谢
 

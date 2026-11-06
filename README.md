@@ -49,15 +49,31 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 
 ## 📦 Installation and Deployment
 
+### Agent Instruction
+
+Copy this instruction into your coding agent.
+
+```text
+Install the Ember Evaluator CLI and its ember-evaluator skill from https://github.com/evolving-foundry/ember-evaluator.
+Follow the Manual Installation steps in the README to install both. Install the skill for this agent in the target project.
+Run ember-evaluator --help and confirm that this agent can discover and read the skill. Stop after verifying installation.
+```
+
+### Manual Installation
+
+#### 1. Install the CLI
+
 Requirements:
 
 1. **Node.js** >= 24.22.1 (24.x).
 2. **pnpm** >= 11 < 13. If missing, run `npm install --global pnpm` first.
-3. **Git**, required to fetch the AgentBundle dependency.
+3. **Git** and read access to the private AgentBundle repository.
 
-Run from the Evaluator repository root:
+Clone the repository, then build and install from its root.
 
 ```bash
+git clone https://github.com/evolving-foundry/ember-evaluator.git
+cd ember-evaluator
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add -g .
@@ -65,6 +81,14 @@ ember-evaluator --help
 ```
 
 The help output confirms installation. See the [installation guide](docs/users/installation.md) for details, or use the [management container](docs/users/deployment/container-toolbox.md) on Linux servers.
+
+#### 2. Install the skill
+
+Run this from the project where you want to use the skill, then select your coding agent.
+
+```bash
+npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
+```
 
 ## 🚀 Quick Start
 
@@ -115,6 +139,15 @@ Local Docker, Ray Client, and Ray Jobs support warmup; Ray prepares images on th
 >
 > Maintained by the Ember Evaluator team, this repository hosts official task image archives for selected benchmarks. Check its file tree for available tasks and platforms.
 
+Use the bundled network file from the repository root. The experiment YAML selects the benchmark, model, and tasks; the YAML after `--network` selects image download sources:
+
+```bash
+ember-evaluator warmup playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+ember-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --network playbook/network/archives.yaml
+```
+
+Prepare Docker, model settings, and task selection using the [Terminal-Bench quick start](docs/users/quick-start/terminalbench.md). The example selects all tasks; only published tasks and platforms are available, and other downloads retain their defaults. See [how to use --network](docs/users/network.md#1-choose-a-network-file) to select mirrors, combine settings, or set a default file.
+
 ## 📖 Guides
 
 Choose a guide for your task:
@@ -140,12 +173,18 @@ Benchmarks fall into three categories by evaluation purpose:
 
 ## 📊 Evaluation Results
 
-Results are recorded for each model and agent harness combination. Empty cells mean no results have been published. Compare document inputs, task ranges, and scoring conditions along with the scores.
+`tbd` indicates a pending evaluation. Compare document inputs, task ranges, and scoring conditions along with the scores.
 
-| Model + Agent Harness | GSM8K | MMLU | WorkBuddy | Terminal-Bench 4.0 | SWE-bench Verified | OfficeQA Pro V2 |
-| --- | --- | --- | --- | --- | --- | --- |
-| DeepSeek V4.1 Flash 1017＋SimpleAgent | 92.34%（1218/1319） |  | 0.8502(Office)，0.9009(Code)，0.7957(Web) |  |  | 56.67%（51/90） |
-| DeepSeek V4.1 Flash 1017＋choice-logprobs |  | 88.83%（12,474/14,042） |  |  |  |  |
+**Model** · DeepSeek V4.1 Flash 1017
+
+| Benchmark | Agent Harness | Result |
+| --- | --- | --- |
+| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
+| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
+| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
+| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
+| SWE-bench Verified | SimpleAgent | `tbd` |
+| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
 
 ## 🙏 Acknowledgments
 

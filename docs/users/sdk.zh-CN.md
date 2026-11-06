@@ -90,7 +90,7 @@ const result = await evaluator.run({
 });
 ```
 
-网络 YAML 可写 `proxy: { https: "${DOWNLOAD_PROXY}" }`；空文件表示官方默认源和直连。省略 `networkConfigPath` 时使用用户默认网络文件，首次自动创建。完整字段见[网络配置](network.zh-CN.md)。
+网络 YAML 可写 `proxy: { https: "${DOWNLOAD_PROXY}" }`。省略 `networkConfigPath` 时，先读取 `EVALUATOR_NETWORK_CONFIG`，再使用用户目录中的默认网络文件。空文件使用程序默认值，受支持的环境变量仍可覆盖它们。完整字段见[网络配置字段](reference/network.zh-CN.md)。
 
 本地数据路径写在实验 YAML 中：记录型题库使用 `benchmark.config.localPath`；Harbor 系列使用 `benchmark.config.source: { kind: local, path: ./dataset }`。相对路径按实验 YAML 目录解析，SDK 和 CLI 行为相同；格式和限制见[本地数据集](local-datasets.zh-CN.md)。SDK 不公开 `doctor()` 或 `inspect()` 方法，需要诊断时运行 `ember-evaluator doctor experiment.yaml`。
 
