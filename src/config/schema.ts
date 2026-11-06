@@ -6,6 +6,8 @@ export type CliOverrides = {
   endpoint?: string;
   apiKey?: string;
   apiKeyEnv?: string;
+  /** Enables the external tracer store; the optional URL overrides its default endpoint. */
+  tracer?: { url?: string };
 };
 
 export type ModelConfig = {

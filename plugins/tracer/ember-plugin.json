@@ -1,0 +1,15 @@
+{
+  "id": "tracer",
+  "description": "Trajectory collector: ingest traces, serve the dashboard, and analyze saved runs",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "command": {
+    "name": "tracer",
+    "cli": "./dist/cli.js",
+    "description": "Manage the tracer Collector (serve, stop, status, logs, ...)"
+  },
+  "build": {
+    "tsconfig": "./tsconfig.json",
+    "install": ["dist", "collector/view", "collector/schemas"]
+  }
+}

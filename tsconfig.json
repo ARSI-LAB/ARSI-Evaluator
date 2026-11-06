@@ -16,5 +16,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "plugins/docops/**/*.ts", "tests/**/*.ts", "vitest*.config.ts"]
+  "include": ["src/**/*.ts", "plugins/docops/**/*.ts", "plugins/tracer/**/*.ts", "tests/**/*.ts", "vitest*.config.ts"]
 }
