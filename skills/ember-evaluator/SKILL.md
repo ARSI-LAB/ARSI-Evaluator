@@ -13,7 +13,7 @@ description: Use when an agent needs to configure, inspect, diagnose, warm up, r
 
 ## 新实验
 
-1. **写实验 YAML。** 用 `benchmark list` 和 `benchmark info <name>` 查版本、场景和默认组件。从 [Playbook](../../../playbook/README.md) 选相近示例，或运行 `ember-evaluator init --benchmark <name> --output experiment.yaml`。核对模型、数据来源、样本规模、并发和结果路径。认证使用环境变量引用，输出和共享材料里保留变量名即可。用户只要求生成配置或预检时，到相应步骤交付。
+1. **写实验 YAML。** 用 `benchmark list` 和 `benchmark info <name>` 查版本、场景和默认组件。从 [Playbook](../../playbook/README.md) 选相近示例，或运行 `ember-evaluator init --benchmark <name> --output experiment.yaml`。核对模型、数据来源、样本规模、并发和结果路径。认证使用环境变量引用，输出和共享材料里保留变量名即可。用户只要求生成配置或预检时，到相应步骤交付。
 2. **检查生效配置。** 运行 `ember-evaluator inspect experiment.yaml`，确认展开后的配置与评测目标一致。inspect 不探测下载连通性。使用外部插件或显式网络配置时，为 inspect、doctor、dry-run、warmup 和正式 run 传入同一份 `--patch cordis.patch.yaml`、`--network network.yaml`。
 3. **检测网络和前置条件。** 运行 `ember-evaluator doctor experiment.yaml`。下载慢或不通时，定位端点、操作和实际执行位置，再按网络排障参考调整。配置变更后重跑 inspect 和 doctor。必要前置条件仍失败时，报告具体阻塞。
 4. **确认选题并预热。** 如需核对选题，运行 `ember-evaluator run experiment.yaml --dry-run`，它可能下载数据并列出任务 ID。运行 `ember-evaluator warmup experiment.yaml --progress plain` 准备镜像和运行时，检查预热结果中的 `failures`，确认 `readyTaskIds` 覆盖所选的 `taskIds`。要求两阶段选题严格一致时，为 warmup 和 run 传同一个 `--task-ids-file tasks.json`，其中是形如 `{"taskIds":["实际任务ID"]}` 的对象。该参数覆盖 YAML 选题。
@@ -32,4 +32,4 @@ description: Use when an agent needs to configure, inspect, diagnose, warm up, r
 - **resume** 使用原实验 YAML、匹配的数据来源与插件，并按需传回原 `--patch` 和原选题用的 `--task-ids-file`。需要显式网络配置时传入 `--network network.yaml`。显式指定 Run ID，避免自动匹配选错。模型、选题或并发变更后创建新 run。
 - 恢复前补齐原配置引用的认证变量。用保存的产物确认结果，保留历史 attempt。
 
-详见 [网络补测](../../../docs/users/network-retry.zh-CN.md)和[续跑说明](../../../docs/users/usage.zh-CN.md#续跑与重建报告)。
+详见 [网络补测](../../docs/users/network-retry.zh-CN.md)和[续跑说明](../../docs/users/usage.zh-CN.md#续跑与重建报告)。

@@ -22,4 +22,4 @@
 
 `benchmark list/info`、`init`、`inspect`、`doctor`、`warmup` 和 `run` 支持显式 `--patch`。inspect、doctor、warmup、run 和 retry 支持 `--network`。retry 从保存的 run 恢复插件，传参时省略 `--patch`。report 重建时仍需要能访问 run 记录的外部报告插件。
 
-参阅 [CLI 使用指南](../../../../docs/users/usage.zh-CN.md)。
+参阅 [CLI 使用指南](../../../docs/users/usage.zh-CN.md)。

@@ -90,7 +90,7 @@ Run this from the project where you want to use the skill, then select your codi
 npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
 ```
 
-Add `-g` for a user-wide installation. Reload or restart your agent as needed, then confirm it can discover the [`ember-evaluator` skill](.agents/skills/ember-evaluator/SKILL.md).
+Add `-g` for a user-wide installation. Reload or restart your agent as needed, then confirm it can discover the [`ember-evaluator` skill](skills/ember-evaluator/SKILL.md).
 
 ## 🚀 Quick Start
 

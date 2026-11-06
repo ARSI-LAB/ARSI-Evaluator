@@ -90,7 +90,7 @@ ember-evaluator --help
 npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
 ```
 
-如需用户级安装，添加 `-g`。按需重新加载或重启 Agent，然后确认它能发现 [`ember-evaluator` skill](.agents/skills/ember-evaluator/SKILL.md)。
+如需用户级安装，添加 `-g`。按需重新加载或重启 Agent，然后确认它能发现 [`ember-evaluator` skill](skills/ember-evaluator/SKILL.md)。
 
 ## 🚀 快速入门
 

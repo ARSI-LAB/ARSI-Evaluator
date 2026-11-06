@@ -16,10 +16,10 @@
 
 ## 编写新插件
 
-从[外部插件接入指南的 valid-count 示例](../../../../docs/development/external-plugins.md#2-实现并编译插件)起步，复用其中的 TypeScript 项目配置、完整指标实现和实验 YAML。按组件职责选择 `benchmark`、`verifier`、`environment`、`solver`、`metrics`、`reporter`、`store` 或 `scheduler`。
+从[外部插件接入指南的 valid-count 示例](../../../docs/development/external-plugins.md#2-实现并编译插件)起步，复用其中的 TypeScript 项目配置、完整指标实现和实验 YAML。按组件职责选择 `benchmark`、`verifier`、`environment`、`solver`、`metrics`、`reporter`、`store` 或 `scheduler`。
 
 - 从 `ember-evaluator` 包根导入公共类型。导出 `inject = ["evaluator"]`，在 `apply(ctx)` 中调用 `ctx.evaluator.register(role, name, validate, factory)`。同一 role 下注册名唯一。默认配置用 `registerProfile()`。
 - `validate` 只校验配置。工厂通过 `runtime` 获取路径、模型与认证，资源接入 Cordis 或组件生命周期。求解器使用公开任务，私有验证材料留在验证边界内。
 - 在插件项目构建 JavaScript，按上述步骤加载。用有效配置和错误配置检查校验与加载，再通过小样本运行检查产物。涉及持久化的组件同时检查续跑或离线报告。
 
-Ray 的执行节点需要预装一致的插件，通过节点配置 `pluginPatchPath` 指向本机 patch；Ray Jobs 协调端通过部署变量 `EVALUATOR_PLUGIN_PATCH_PATH` 找到容器内的 patch。详见 [SDK 与 Ray 接入](../../../../docs/development/external-plugins.md#6-sdk-与-ray-接入)。
+Ray 的执行节点需要预装一致的插件，通过节点配置 `pluginPatchPath` 指向本机 patch；Ray Jobs 协调端通过部署变量 `EVALUATOR_PLUGIN_PATCH_PATH` 找到容器内的 patch。详见 [SDK 与 Ray 接入](../../../docs/development/external-plugins.md#6-sdk-与-ray-接入)。
