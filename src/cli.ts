@@ -12,6 +12,7 @@ import { formatError, redactDiagnostic, summarizeDiagnostic } from "./core/diagn
 import type { ProgressEvent } from "./core/progress.js";
 import type { BenchmarkComponents } from "./core/contracts/components.js";
 import { openPluginRegistry, type PluginRegistry } from "./plugin-runtime.js";
+import type { PluginCommand } from "./plugins-commands.js";
 import { enumerateSelectedTasks } from "./core/task-selection.js";
 import { classifyError, normalizeFailure } from "./core/errors/classify.js";
 import type { Phase } from "./core/contracts/result.js";
@@ -41,12 +42,25 @@ export type Command = (
   | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
   | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; seed: number; warmup: number; device: number; python?: string }
+  | { kind: "plugin"; plugin: PluginCommand; argv: string[] }
   | { kind: "kernel-precision"; problem: string; kernel: string; out: string; seeds: number[]; device: number; python?: string }
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
   | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
 ) & { networkConfigPath?: string };
+
+type PluginCliResult = { ok: true; status: number } | { ok: false; error: unknown; usage: boolean };
+type PluginCli = { runPluginCli(argv: string[], io: CliIO, signal: AbortSignal): Promise<PluginCliResult> };
+
+/** Subcommands are owned by the plugin; the host only owns the top-level verb. */
+async function loadPluginCli(plugin: PluginCommand): Promise<PluginCli> {
+  try {
+    return (await import(pathToFileURL(plugin.cliFile).href)) as PluginCli;
+  } catch (error) {
+    throw new Error(`the ${plugin.name} CLI is missing at ${plugin.cliFile}; build it with "pnpm build"`, { cause: error });
+  }
+}
 
 export { parseCommand as parseArgs } from "./cli-commands.js";
 
@@ -139,6 +153,8 @@ async function runCliCommand(
   let networkHintShown = false;
   let debugHintShown = false;
   const writeHint = (message: string) => io.error(`[hint] ${message}`);
+  const warning = (text: string, level: "info" | "warning" = "warning") =>
+    io.error(`[${((performance.now() - started) / 1000).toFixed(1)}s] [${level}] ${text}`);
   const debugHint = () => {
     if (!debug && !debugHintShown) {
       debugHintShown = true;
@@ -209,6 +225,33 @@ async function runCliCommand(
   if (command.kind === "help") {
     io.out(command.text);
     return command.exitCode ?? 0;
+  }
+  if (command.kind === "plugin") {
+    const label = command.plugin.name;
+    // Plugin operations are infrastructure failures, so they must not use the task-oriented error taxonomy
+    const report = (stage: string, error: unknown) => {
+      const text = formatError(error, secrets);
+      io.error(redactDiagnostic(`[${label}] ERROR during ${stage}:\n${text}`, secrets));
+      hint(text);
+    };
+    let result: PluginCliResult;
+    try {
+      const { runPluginCli } = await loadPluginCli(command.plugin);
+      result = await runPluginCli(command.argv, io, signal);
+    } catch (error) {
+      report(`loading the ${label} plugin`, error);
+      return signal.aborted ? 130 : 1;
+    }
+    if (result.ok) return result.status;
+    if (result.usage) {
+      phase = "arguments";
+      detail = `Parsing ${label} arguments`;
+      failure(result.error);
+      io.error(`Use ember-evaluator ${label} <command> --help for usage and parameter details.`);
+      return 2;
+    }
+    report(`running the ${label} plugin`, result.error);
+    return signal.aborted ? 130 : 1;
   }
   if (command.kind === "cleanup-images") {
     try {
@@ -330,7 +373,8 @@ async function runCliCommand(
     try {
       const taskIds = await readTaskIds(command.taskIdsFile);
       progress({ phase: "config", message: `Loading and validating ${resolve(command.file)}` });
-      registry = await openPluginRegistry(command.patchPath);
+      registry = await openPluginRegistry(command.patchPath,
+        command.overrides.tracer === undefined ? {} : { tracer: true });
       config = await loadConfig(resolve(command.file), command.overrides, process.env, { registry, allowMissingAuth: true, ...networkOptions, ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }) });
       applyTaskIds(config, taskIds);
       secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
@@ -383,6 +427,7 @@ async function runCliCommand(
       const result = await executeWarmup({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
         ...(execution ? { execution } : {}),
         ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
+        onWarning: warning,
         onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); } });
       io.out(`Image warmup: ${result.readyTaskIds.length}/${result.taskIds.length} tasks ready; ${result.failures.length} failed`);
       for (const { taskId, failure } of result.failures) {
@@ -404,6 +449,7 @@ async function runCliCommand(
     ...(taskIds === undefined ? {} : { taskIds }),
     ...(execution === undefined ? {} : { execution }),
     onProgress: progress,
+    onWarning: warning,
     onLoaded: config => { secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value)); },
     onDiagnostic: diagnostic => { phase = diagnostic.phase; failure(diagnostic.error); },
     onDeploymentLog: io.out,

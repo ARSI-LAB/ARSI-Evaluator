@@ -103,6 +103,59 @@ Execution components receive the experiment's `npu` or `gpu` selection through `
 
 TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Compile to JavaScript first; CLI does not load `.ts` entries.
 
+## In-Repository Plugins and `ember-plugin.json`
+
+A plugin under `plugins/<id>/` reaches the build artifacts and the CLI only when it ships `plugins/<id>/ember-plugin.json`. `pnpm build` scans `plugins/`, validates each manifest, compiles the plugin with its own tsconfig, copies the declared files into `dist/plugins/<id>/`, and writes `dist/plugins/commands.json`. Directories without a manifest are neither compiled nor copied and never appear in `--help`; they stay source-only.
+
+Example: [`plugins/tracer/ember-plugin.json`](../../plugins/tracer/ember-plugin.json):
+
+```json
+{
+  "id": "tracer",
+  "description": "Trajectory collector: ingest traces, serve the dashboard, and analyze saved runs",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "command": { "name": "tracer", "cli": "./dist/cli.js", "description": "Manage the tracer Collector (serve, stop, status, logs, ...)" },
+  "build": { "tsconfig": "./tsconfig.json", "install": ["dist", "collector/view", "collector/schemas"] }
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | Yes | Must equal the directory name and decides the `dist/plugins/<id>/` location |
+| `description` | No | Plugin summary; used as the command description when `command.description` is absent |
+| `version` | No | Inherits the root `package.json` version when omitted, so it is maintained in one place |
+| `entry` | No | Plugin module entry pointing at compiled JS; recorded in the command index and used by the host to load `bundled` plugins (currently tracer) |
+| `bundled` | No | `true` marks a plugin shipped with the host; the host loader uses it to identify and verify the version |
+| `command.name` | With `command.cli` | CLI subcommand name such as `tracer` |
+| `command.cli` | With `command.name` | Subcommand entry pointing at compiled JS; a name without a CLI fails validation |
+| `command.description` | No | Command description shown by `--help` |
+| `build.tsconfig` | With `build` | The plugin's own tsconfig, usually emitting to `dist` |
+| `build.install` | With `build` | Paths installed into the runtime; `dist` contents are flattened into `dist/plugins/<id>/`, other paths keep their relative position |
+
+Build output:
+
+```text
+dist/plugins/
+├── commands.json          # Command index read by the runtime
+└── tracer/
+    ├── ember-plugin.json  # Copied verbatim for runtime provenance
+    ├── cli.js
+    ├── index.js
+    └── collector/...      # Static assets from build.install
+```
+
+`command.cli` and `entry` are compiled paths relative to the plugin directory (for example `./dist/cli.js`). The index strips the `./` and `dist/` prefixes so they resolve inside `dist/plugins/<id>/`.
+
+Command registration rules:
+
+- The build writes to `commands.json` only plugins declaring both `command.name` and `command.cli`; two plugins claiming the same command fail the build.
+- The runtime reads `dist/plugins/commands.json` first and falls back to scanning `plugins/*/ember-plugin.json` from a source checkout, so a plugin needs its `dist/` built before the CLI can call it.
+- When `argv[0]` matches a plugin command, every remaining argument goes to the plugin CLI unchanged; for example the plugin itself parses `ember-evaluator tracer serve`.
+- Plugin commands match before built-ins during dispatch. Never name a plugin command `run`, `warmup`, `benchmark`, and so on, or it shadows the built-in behavior; `--help` keeps the built-in entry and does not add a duplicate placeholder.
+- Declared plugins appear as placeholder commands in `ember-evaluator --help` under `Commands:` and `Examples:`; directories without a manifest do not appear.
+- A manifest with `entry` but no `command` is still compiled and installed and can be imported by other modules, but gets no CLI entry.
+
 ## Reference External Plugins with `--patch`
 
 Create `cordis.patch.yaml` in a separate directory:

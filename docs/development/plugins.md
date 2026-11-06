@@ -103,6 +103,59 @@ export function apply(ctx) {
 
 使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
 
+## 仓库内插件与 `ember-plugin.json`
+
+`plugins/<id>/` 下的插件要想进入构建产物和 CLI，必须提供 `plugins/<id>/ember-plugin.json`。`pnpm build` 扫描该目录后依次校验清单、按插件自己的 tsconfig 编译、把声明的文件复制到 `dist/plugins/<id>/`，最后生成 `dist/plugins/commands.json`。没有清单的目录不编译、不复制，也不会出现在 `--help` 中，只能在源码中直接 import。
+
+以 [`plugins/tracer/ember-plugin.json`](../../plugins/tracer/ember-plugin.json) 为例：
+
+```json
+{
+  "id": "tracer",
+  "description": "Trajectory collector: ingest traces, serve the dashboard, and analyze saved runs",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "command": { "name": "tracer", "cli": "./dist/cli.js", "description": "Manage the tracer Collector (serve, stop, status, logs, ...)" },
+  "build": { "tsconfig": "./tsconfig.json", "install": ["dist", "collector/view", "collector/schemas"] }
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `id` | 是 | 必须与目录名一致，同时决定 `dist/plugins/<id>/` 的位置 |
+| `description` | 否 | 插件说明；清单缺少 `command.description` 时作为命令说明 |
+| `version` | 否 | 省略时继承根 `package.json` 的版本，避免两处维护 |
+| `entry` | 否 | 插件模块入口，指向编译后的 JS；写入命令索引，宿主用它加载 `bundled` 插件（当前为 tracer） |
+| `bundled` | 否 | `true` 表示随宿主发布的内置插件；宿主加载器据此识别并校验版本 |
+| `command.name` | 与 `command.cli` 成对 | CLI 子命令名，如 `tracer` |
+| `command.cli` | 与 `command.name` 成对 | 子命令入口，指向编译后的 JS；只声明 `name` 会校验失败 |
+| `command.description` | 否 | 出现在 `--help` 中的命令说明 |
+| `build.tsconfig` | 有 `build` 时必填 | 插件自己的 tsconfig，`outDir` 通常为 `dist` |
+| `build.install` | 有 `build` 时必填 | 要放进运行时的路径；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置 |
+
+构建产物：
+
+```text
+dist/plugins/
+├── commands.json          # 命令索引，运行时优先读取
+└── tracer/
+    ├── ember-plugin.json  # 原样复制，便于运行时追溯来源
+    ├── cli.js
+    ├── index.js
+    └── collector/...      # build.install 中的静态资源
+```
+
+清单中的 `command.cli`、`entry` 是相对插件目录的编译产物路径（如 `./dist/cli.js`），写入索引时去掉 `./` 和 `dist/` 前缀，解析到 `dist/plugins/<id>/` 下。
+
+命令注册规则：
+
+- 构建期只把同时声明 `command.name` 和 `command.cli` 的插件写入 `commands.json`；两个插件声明同名命令会直接构建失败。
+- 运行期优先读取 `dist/plugins/commands.json`；从源码树运行时回退扫描 `plugins/*/ember-plugin.json`，因此插件需要先构建出 `dist/` 才能通过 CLI 调用。
+- `argv[0]` 命中插件命令后，后续参数原样交给插件 CLI，例如 `ember-evaluator tracer serve` 由插件自己解析，主程序不再介入。
+- 插件命令在分发阶段先于内置命令匹配。不要把插件命令命名为 `run`、`warmup`、`benchmark` 等内置命令，否则会遮蔽内置行为；同名时 `--help` 只保留内置命令，不重复显示占位项。
+- 已声明的插件会以占位命令出现在 `ember-evaluator --help` 的 `Commands:` 与 `Examples:` 中，未声明的目录不出现。
+- 只声明 `entry`、不声明 `command` 的插件仍会被编译和安装，可被其他模块 import，但没有 CLI 入口。
+
 ## 用 `--patch` 引用外部插件
 
 在独立目录新建 `cordis.patch.yaml`：

@@ -2,13 +2,15 @@ import { Command as Commander, CommanderError, Option } from "commander";
 import { resolve } from "node:path";
 import type { Command } from "./cli.js";
 import type { CliOverrides } from "./config/schema.js";
+import { pluginCommands } from "./plugins-commands.js";
 
-interface Options extends CliOverrides {
+interface Options extends Omit<CliOverrides, "tracer"> {
   patch?: string; taskIdsFile?: string; resume?: boolean | string; dryRun?: boolean;
   all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
   problem?: string; kernel?: string; out?: string; round?: string; device?: string;
   python?: string; seeds?: string; seed?: string; warmup?: string; network?: string;
+  tracer?: boolean | string;
 }
 
 export class CommandUsageError extends TypeError {
@@ -16,12 +18,17 @@ export class CommandUsageError extends TypeError {
 }
 
 export function parseCommand(argv: string[]): Command {
+  const plugins = pluginCommands();
+  // Plugins that declared ember-plugin.json own their subcommands; pass every argument through.
+  const matched = plugins.find(command => command.name === argv[0]);
+  if (matched !== undefined) return { kind: "plugin", plugin: matched, argv: argv.slice(1) };
+  const pluginExamples = plugins.map(command => `  ember-evaluator ${command.name} <command> ...`).join("\n");
   let result: Command | undefined;
   let help = "";
   const program = new Commander("ember-evaluator")
     .description("Run benchmark experiments, inspect configuration, and rebuild saved reports.")
     .exitOverride().configureOutput({ writeOut: text => { help += text; }, writeErr: text => { help += text; } });
-  program.addHelpText("after", "\nExamples:\n  ember-evaluator run experiment.yaml\n  ember-evaluator run --help\n  ember-evaluator report <run-dir>\n\nUse <command> --help for parameter details.");
+  program.addHelpText("after", `\nExamples:\n  ember-evaluator run experiment.yaml\n  ember-evaluator run --help\n  ember-evaluator report <run-dir>\n${pluginExamples ? pluginExamples + "\n" : ""}\nUse <command> --help for parameter details.`);
   const patch = (cmd: Commander) => cmd.option("--patch <path>", "Load an explicit plugin patch; path is relative to the current directory");
   const network = (cmd: Commander) => cmd.option("--network <yaml>", "Use this network YAML for source endpoints, proxies, and download settings");
   const networkOptions = (opts: Options) => opts.network === undefined ? {} : { networkConfigPath: resolve(opts.network) };
@@ -37,6 +44,7 @@ export function parseCommand(argv: string[]): Command {
       const value = opts[key];
       if (value !== undefined) overrides[key] = value;
     }
+    if (opts.tracer !== undefined) overrides.tracer = typeof opts.tracer === "string" ? { url: opts.tracer } : {};
     return { overrides, ...networkOptions(opts), ...(opts.patch === undefined ? {} : { patchPath: resolve(opts.patch) }) };
   };
   for (const name of ["run", "warmup", "doctor", "inspect"] as const) {
@@ -47,7 +55,8 @@ export function parseCommand(argv: string[]): Command {
       progress(cmd).option("--task-ids-file <json>", "Select tasks from a JSON object containing a taskIds array; overrides sampling");
     }
     if (name === "run") cmd.option("--dry-run", "Resolve the dataset and list selected task IDs without solving tasks")
-      .addOption(new Option("--resume [run-id]", "Resume a saved run; omit the ID to select automatically").conflicts("dryRun"));
+      .addOption(new Option("--resume [run-id]", "Resume a saved run; omit the ID to select automatically").conflicts("dryRun"))
+      .addOption(new Option("--tracer [url]", "Mirror the run into the tracer plugin; the optional URL overrides the Collector endpoint"));
     cmd.addHelpText("after", `\nExample:\n  ember-evaluator ${name} experiment.yaml`);
     cmd.action((file: string, opts: Options) => {
       result = { kind: name === "run" && opts.dryRun ? "dry-run" : name, file, ...common(opts),
@@ -106,6 +115,15 @@ export function parseCommand(argv: string[]): Command {
         : name === "precision" ? { kind: "kernel-precision", ...base, seeds: (opts.seeds ?? "0 1").split(/\s+/).map(Number).filter(seed => Number.isSafeInteger(seed) && seed >= 0) }
         : { kind: "kernel-bench", ...base };
     });
+  }
+  // Plugin commands are dispatched before Commander sees argv; register placeholders so --help lists
+  // the installed plugins without duplicating their subcommands here.
+  const builtinNames = new Set(program.commands.map(command => command.name()));
+  for (const plugin of plugins) {
+    if (builtinNames.has(plugin.name)) continue;
+    program.command(plugin.name)
+      .description(plugin.commandDescription || plugin.description)
+      .addHelpText("after", `\nRun ember-evaluator ${plugin.name} --help for its own commands.`);
   }
   // Preserve rejection of duplicate scalar options, which Commander otherwise overwrites.
   const configure = (cmd: Commander) => {
