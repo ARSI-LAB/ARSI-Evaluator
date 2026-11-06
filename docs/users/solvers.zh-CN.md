@@ -129,6 +129,8 @@ output:
 
 已有安装位置可用 `dshhome`、`dshprofile`、`hermeshome`、`jiuwenswarmhome` 等 Solver 配置指定；`jiuwenswarmTimeoutSeconds` 只针对对应 Harness。pi 的额外设置放在 `benchmark.solver.config.pi.settings`，其他 Harness 不接受这个字段。
 
+Docker 下，DSH 默认使用固定版本 0.2.2-rc.1。如果该版本不满足 Bundle 的 `harness.version`，Solver 从配置的 npm 源选择符合范围的最高版本。范围需要显式包含预发布版才能匹配 RC。Local 环境使用同一范围校验本机已安装的 DSH。
+
 输出上限优先放在 `services.<名称>.maxTokens`。AgentBundle 也接受 Solver 的 `maxTokens`，但两处同时填写会报错，不要重复配置。Evaluator 的配置与执行方式见本页；Bundle 的制作、格式与安装见上述 AgentBundle 项目文档。
 
 ## Docker 环境准备与网络

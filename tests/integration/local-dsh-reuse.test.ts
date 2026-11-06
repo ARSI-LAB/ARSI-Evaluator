@@ -7,11 +7,11 @@ import { LocalEnvironment } from "../../src/plugins/environments/local.js";
 
 // The SDK boundary is controlled; environment, runtime resolution, subprocesses,
 // candidate installation and local runtime invocation are real.
-const fixture = vi.hoisted(() => ({ runner: "" }));
+const fixture = vi.hoisted(() => ({ runner: "", version: "0.1.6-alpha.2" }));
 vi.mock("../../src/adapters/agentbundle/sdk.js", () => ({
   AGENT_BUNDLE_CORE_VERSION: "fixture", agentBundleCoreRoot: "unused",
   assertHarnessVersionCompatible: (actual: string, range: string) => { if (actual !== range) throw Error("SOURCE_CHANGED"); },
-  verifyBundleCandidate: async (root: string) => ({ digest: root, harness: { name: "dsh", versionRange: "0.1.6-alpha.2" } }),
+  verifyBundleCandidate: async (root: string) => ({ digest: root, harness: { name: "dsh", versionRange: fixture.version } }),
 }));
 vi.mock("../../src/adapters/agentbundle/runtime-files.js", () => ({
   agentBundleRuntimeFiles: async () => [{ source: fixture.runner, target: "agentbundle/run.mjs" }],
@@ -64,8 +64,14 @@ test("local DSH is reused with no install commands, preserving shared candidate 
 
 test("Docker keeps its install recipe and ignores host DSH_BIN", async () => {
  const f=await setup(); const bundle=await f.makeBundle("a","a");
+ fixture.version = "0.2.2-rc.1";
  vi.stubEnv("DSH_BIN",join(f.root,"missing.js"));
  const solver=new AgentBundleSolver(bundle,f.model,{value:"",reference:null},undefined,{environmentName:"docker"});
- const recipe=await solver.runtimeInstallation(AbortSignal.timeout(15000));
- expect(recipe.commands.some(command=>command.executable==="npm"&&command.args[0]==="ci")).toBe(true);
+ try {
+  const recipe=await solver.runtimeInstallation(AbortSignal.timeout(15000));
+  expect(recipe.commands.some(command=>command.executable==="npm"&&command.args[0]==="ci")).toBe(true);
+ } finally {
+  fixture.version = "0.1.6-alpha.2";
+  await solver.dispose();
+ }
 });

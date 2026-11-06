@@ -142,7 +142,7 @@ async function executeRegisteredNode(input: unknown, node: NodeConfig, token: st
     const solverProvenance = await resolveSolverProvenance(components.solver, cancellation.signal, [
       ...secrets,
       token,
-    ]);
+    ], remote.solverProvenance);
     assertSolverProvenance(remote.solverProvenance, solverProvenance);
     assertWorkerVersions(
       remote.pluginVersions,

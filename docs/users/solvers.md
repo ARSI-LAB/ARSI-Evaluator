@@ -129,6 +129,8 @@ Some harnesses require preinstalled local runtimes or dependency installation du
 
 Specify existing installations with Solver settings such as `dshhome`, `dshprofile`, `hermeshome`, or `jiuwenswarmhome`. `jiuwenswarmTimeoutSeconds` applies only to that harness. Additional pi settings use `benchmark.solver.config.pi.settings`, unsupported by other harnesses.
 
+For Docker, DSH uses the pinned default (0.2.2-rc.1) when it satisfies the Bundle’s `harness.version`. Otherwise the Solver selects the highest compatible release from the configured npm registry. Use an explicit prerelease comparator to allow a release candidate. Local environments check the installed DSH version against the same range.
+
 Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts Solver `maxTokens`, but setting both is an error. This page covers Evaluator configuration and execution; use the linked AgentBundle documentation for bundle creation, formats and installation.
 
 ## Docker Preparation and Networking

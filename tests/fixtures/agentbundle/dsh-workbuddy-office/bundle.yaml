@@ -3,6 +3,6 @@ schemaVersion: 1
 name: dsh-workbuddy-office
 harness:
   name: dsh
-  version: ">=0.1.6-alpha.2 <0.2"
+  version: "0.2.2-rc.1"
 plugins:
   - path: ./plugins/office-guidance

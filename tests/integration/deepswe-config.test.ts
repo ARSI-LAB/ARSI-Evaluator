@@ -68,7 +68,7 @@ test("the DeepSWE DSH bundle verifies with pinned provenance", async () => {
   const bundle = resolve("tests/fixtures/agentbundle/dsh-deepswe");
   const solver = new AgentBundleSolver(bundle, model, auth, { installation: async () => ({ id: "fixture-dsh", files: [], commands: [], probes: [] }) });
   const provenance = await solver.provenance(AbortSignal.timeout(15_000));
-  expect(provenance).toMatchObject({ harness: "dsh", harnessVersion: "0.1.6-alpha.2" });
+  expect(provenance).toMatchObject({ harness: "dsh", harnessVersion: "0.2.2-rc.1" });
   expect(provenance.bundle).toMatch(/^sha256:[a-f0-9]{64}$/u);
 });
 
