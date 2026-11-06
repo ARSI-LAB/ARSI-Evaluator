@@ -48,7 +48,7 @@ Reference/candidate remain under `data/<manifest-relative-path>`; candidates are
 ```
 
 - `problem.py` supplies Model/get_inputs(), optionally get_init_inputs(). Reference calls `Model(*get_init_inputs())(*get_inputs())`, moved to NPU/eval.
-- Candidates supply kernel_function(*inputs). In-place/stateful semantics are unsupported; parameters/weights/signatures are not guessed.
+- Candidates supply `kernel_function(*inputs)`. A strict task contract permits candidate input mutation with `inputUnmodified: false`; set `output.independent: false` when the output shares input storage. Outputs must still match the reference numerically and satisfy the contracted shape, dtype, device and layout. The task author must provide explicit parameters, weights, state and entry signatures; Evaluator does not infer them.
 - Output equivalence is checked, not Inductor symbol substitution or full-model end-to-end regression.
 - `referenceKind: pytorch` means trusted mathematical PyTorch reference; `original-kernel` establishes `original-kernel` equivalence, not independently proven math correctness. Authors choose according to source.
 - Compare full nested tensor/list/tuple/dict/scalar outputs by default. Explicit `outputIndices` selects top-level list/tuple elements. For (tensor,tiling metadata...), `[0]` excludes non-computational metadata; retain all relevant multi-tensor indices.
@@ -59,6 +59,20 @@ Source locks include SHA-256 for manifests, candidate/reference/dependencies, `p
 ## Strict Task Contracts and Audited Timing
 
 A manifest task may provide `contract` with schemaVersion 1, caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor specifies shape, dtype (`float16`) and contiguous; output also specifies independent. Contracts are optional for existing manifests. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference/infrastructure failures remain invalid evaluations; candidate failures remain candidate failures.
+
+For example, add this `contract` to a task whose actual inputs and output match these shapes:
+
+```json
+{
+  "schemaVersion": 1,
+  "caseId": "operator-example",
+  "inputs": [{ "shape": [2, 4], "dtype": "float16", "contiguous": true }],
+  "output": { "shape": [2, 2, 2], "dtype": "float16", "contiguous": true, "independent": true },
+  "inputUnmodified": true
+}
+```
+
+A strict success requires every check to pass and observed identities for Python, torch, torch_npu, Triton, CANN, driver, device and visible devices. Missing environment identity invalidates measurement. `verdict.details.assessment` retains the checks and effective settings; the benchmark verifies them against the requested seeds, tolerances, warmup and repeat.
 
 Strict timing uses schemaVersion 2 / `profiler-flow/v1` evidence and CPU-to-NPU flow associations to assign device kernels to profiler steps. Raw CSV Step Id values are retained, not rewritten or trusted as the sole association. The audit rejects incomplete/ambiguous evidence and excludes warmup steps. The reported iteration mean covers all device kernels, not host launch time. CSV and trace artifacts accompany timing results. Public SDK exports parse contracts, assessments and timing evidence, and audit each timing sample.
 
@@ -89,7 +103,23 @@ run:
 
 Merge this fragment into an existing experiment including the placeholder service above. `benchmark.config.device` selects one physical card: both visibility variables are set to that card and the worker uses logical device 0. Inherited multi-card visibility does not expand the allocation.
 
-Replay uses the unchanged `problem.get_inputs()` and fixed seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates; unconfirmed cleanup is an infrastructure failure. Per-attempt timeout defaults to 300 seconds and maxAttempts defaults to 2; the run timeout must exceed the benchmark timeout.
+The following fields belong to `benchmark.config.profiling`:
+
+| Field | Default and behavior |
+| --- | --- |
+| `enabled` | `false`; evaluation still runs correctness and standard timing when disabled |
+| `warmup` | `25` replay calls before capture; separate from `benchmark.config.warmup` used for timing |
+| `attemptTimeoutSeconds` | `300` seconds per profiler process |
+| `maxAttempts` | `2`, including the first attempt; structural omissions such as missing required CSVs are not retried |
+| `roundNum` | `1`; labels artifacts and metadata, without repeating capture |
+| `msprofBin` | Optional existing executable path; otherwise try `/usr/local/Ascend/ascend-toolkit/latest/bin/msprof`, then `msprof` on PATH |
+| `cacheEnabled` | `true` for evaluation; independent `operation: profile` requires an explicit `false` |
+| `cacheDir` | Optional cache directory; use an absolute path because this field is not rebased to the experiment YAML |
+| `deviceName` | Accepted for existing configurations; it does not currently supply hardware denominators or enable UB/core-derived metrics |
+
+`benchmark.config.timeoutSeconds` caps the entire verification phase, including correctness, timing and profiling. It defaults to `maxAttempts * attemptTimeoutSeconds + 300` with profiling enabled, otherwise `300`. Set `run.timeoutSeconds` above that cap; the built-in profile's 360-second run default is insufficient when profiling uses its default 900-second verification cap. Allow time for retry backoff and parsing; an outer timeout can interrupt collection before a complete receipt exists.
+
+Replay uses the unchanged `problem.get_inputs()` and the first configured seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates; unconfirmed cleanup is an infrastructure failure.
 
 Two explicit collection protocols are supported:
 
@@ -98,7 +128,24 @@ Two explicit collection protocols are supported:
 
 Missing required evidence produces unavailable diagnostics, distinct from incorrect candidate code. Raw CSV, trace when available, replay metadata and process logs are retained. Source identity, case, seed, warmup, collection and device context identify reusable evidence. Independent profile runs disable disk cache so the caller owns reuse; evaluation-mode caching is optional.
 
-Parsing retains ngo-agent-style block tables and last-row selection. Pipeline ratios, wait ratios, bandwidth and L2 fields retain source units. Missing pipe values remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Diagnostic roofline classifications are hints, not proof of speedup. Nonfinite values are serialized explicitly without substituting zero. Profiler durations do not replace referenceMs/candidateMs.
+`KA_MSPROF_CACHE_DISABLED=1` disables disk caching even with an explicit `cacheDir`. Otherwise, the directory is `cacheDir`, then `KA_MSPROF_CACHE_DIR`, then `~/.kernel_agent/msprof_cache`. A hit requires matching candidate bytes, reference hash, case, seed, warmup, collection and device scope; cached replay metadata is validated and available cached profile evidence is copied into the current attempt. `profiling.metadata.cacheRequested`, `cacheEnabled` and `cacheHit` distinguish requested caching, actual availability and reuse.
+
+Before publishing a completed independent diagnostic, the benchmark checks the effective case/seed/warmup/collection, trace availability, frozen candidate/reference hashes and replay logical device 0. A mismatch fails verification. A failed collection produces `verdict.details.status: unavailable`, `verdict.passed: null` and no candidate score. This differs from an incorrect candidate in a full evaluation.
+
+Parsing retains ngo-agent-style block tables, final-row selection and three-decimal numeric rounding. Empty, nonnumeric and nonfinite CSV cells are omitted from per-block metrics; measured zero is preserved. Missing roofline inputs remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Diagnostic roofline classifications are hints, not proof of speedup. Profiler durations do not replace referenceMs/candidateMs.
+
+| Metric fields | Units and interpretation |
+| --- | --- |
+| `aic_time(us)`, `aiv_time(us)` | Microseconds from the profiling sample |
+| `aic_*_ratio`, `aiv_*_ratio` | Pipeline utilization, wait, conflict or arithmetic ratios according to the named field; not percentages, GB/s or FLOPS |
+| `aic_read_hit_rate(%)` and related L2 hit fields | Percent |
+| `aiv_gm_to_ub_bw(GB/s)`, `aiv_main_mem_read_bw(GB/s)` | Measured GB/s |
+| `GM_to_UB_bw_usage_rate(%)` | Bandwidth utilization in percent |
+| `read_main_memory_datas(KB)`, `write_main_memory_datas(KB)` | Original KB, without conversion to KiB |
+| `aiv_mte2_instructions` | Instruction count |
+| `l2_cache_analysis` | Structured conclusions and supporting evidence |
+
+`Memory.csv` and `ArithmeticUtilization.csv` are optional; their fields may be absent, including for cube-only operators. Required tables and at least one finite core-pipeline ratio in the range 0–1 must be present for fresh capture to succeed. Inspect `profiling.metadata.metricUnits` and `missingMetrics` when present, along with the raw CSVs, before using individual fields.
 
 ## Metrics and Results
 
@@ -124,7 +171,7 @@ Missing NPUs, reference failures, missing/invalid timing, worker protocol errors
 
 `faster` means strictly>1, not statistically significant improvement; repeat near1 differences. Keep drivers/Python versions consistent; source locks do not manage environments.
 
-Attempts save `verifier/kernel-result.json`, kernel-result.log, raw profiling, and candidate archives. For timeout without full results, inspect `errors`; framework stops worker process groups. Saved results rebuild offline.
+Evaluation attempts save `verifier/kernel-result.json`; independent profiling saves the validated diagnostic receipt as `verifier/kernel-profile-result.json`. Profiling saves `verifier/kernel-profile.json`, `kernel-profile.raw.json` and a `kernel-profile_profiling_root/` artifact tree, including replay metadata, raw CSVs, trace when requested, `profiling/original-result.json` and logs. Use the saved `profiling.artifacts` list for verifier-relative paths. For failed capture, inspect `profiling.error`, `profiling/logs/profiler.log` and `profiling/logs/console.log`; a replay error may explain missing downstream CSVs. For timeout without full results, inspect attempt `errors`; the framework stops worker process groups. Saved results rebuild offline.
 
 `report.md` labels new original-kernel results and displays original metrics/L2/status/evidence. Historical LAST/unmarked results retain their definitions. `metrics.json` stores coverage/task summaries without recollection. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json:`
 
@@ -132,17 +179,21 @@ Attempts save `verifier/kernel-result.json`, kernel-result.log, raw profiling, a
 profiling.schemaVersion = 1
 profiling.status / error                    # Collection status and error
 profiling.kernels[].name                    # Kernel identity
-profiling.kernels[].metrics[blockId]         # Original metrics, without additional validity rules
+profiling.kernels[].metrics[blockId]         # Available fields from the selected block
 profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1; historical results have older values or omit this field
-profiling.kernels[].metadata.upstreamCommit # Pinned original implementation commit
-profiling.kernels[].metadata.originalResultJson # Original to_dict() output, relative to verifier/
-profiling.kernels[].metadata.originalMetadata # Original ProfilerMetadata
-profiling.kernels[].metadata.cacheHit       # Original cache hit status
-profiling.metadata.originalReturnedNone    # True when the original function returned None
-profiling.metadata.serializationConversions # If present, records JSON-boundary conversions only
-profiling.metadata                         # Source, invocation settings, and other adapter metadata
+profiling.kernels[].metadata.upstreamCommit # Pinned source implementation commit
+profiling.kernels[].metadata.originalMetadata # Captured paths, round and timestamp
+profiling.metadata.diagnosticProtocol       # Effective case, seed, warmup, collection, scope and selection policy
+profiling.metadata.sources                  # Frozen candidate/reference hashes and optional contract hash
+profiling.metadata.replay                   # Observed replay settings, device and MSTX capture
+profiling.metadata.trace                    # Trace availability and reason
+profiling.metadata.cacheRequested / cacheEnabled / cacheHit # Cache request, availability and reuse
+profiling.metadata.hardwareDerived          # Unavailable hardware-derived fields and reason
+profiling.analysis.trace / roofline         # Each analysis may be null when unavailable
 profiling.artifacts                        # Raw evidence paths relative to verifier/
 ```
+
+Older saved results may contain `originalResultJson`, `originalReturnedNone` or `serializationConversions`; current capture does not require or emit those metadata fields. Locate current `original-result.json` through `profiling.artifacts`. Historical records are read without recollecting or redefining their metrics.
 
 Check executionStatus/scoreStatus/verdict.passed for correctness/timing and `profiling.status` independently for collection. Profile failure does not imply incorrectness. Numeric consumers must verify actual required finite fields, not only exit codes. Uses existing CLI/Node SDK without HTTP services; Python may subprocess the CLI and read JSON. Offline reports call neither models nor NPUs.
 
