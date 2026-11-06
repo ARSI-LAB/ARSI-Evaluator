@@ -33,7 +33,7 @@ describe("AgentBundle SDK runtime files", () => {
         "name: probe-demo",
         "harness:",
         "  name: dsh",
-        '  version: ">=0.1.6-alpha.1 <0.2"',
+        '  version: ">=0.2.2-rc.1 <0.3"',
         "plugins:",
         "  - path: ./plugins/probe",
       ].join("\n") + "\n");
@@ -47,9 +47,9 @@ describe("AgentBundle SDK runtime files", () => {
       await writeFile(join(bundle, "plugins", "probe", "cordis.patch.yml"), "- insert: []\n");
       const verified = await execFileAsync(process.execPath, [
         join(root, "agentbundle", "run.mjs"), "--json", "verify", bundle,
-        "--harness-version", "0.1.6-alpha.2",
+        "--harness-version", "0.2.2-rc.1",
       ]);
-      expect(JSON.parse(verified.stdout)).toMatchObject({ harness: { name: "dsh", actualVersion: "0.1.6-alpha.2" } });
+      expect(JSON.parse(verified.stdout)).toMatchObject({ harness: { name: "dsh", actualVersion: "0.2.2-rc.1" } });
       const solver = new AgentBundleSolver(
         bundle,
         { name: "fixture-model", endpoint: "http://localhost", provider: null, api: "openai-completions" },

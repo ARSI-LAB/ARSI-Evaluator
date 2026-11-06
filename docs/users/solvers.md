@@ -119,15 +119,17 @@ Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and
 | Harness declaration | Behavior |
 | --- | --- |
 | `dsh` | Prepare and run through DSH; see [DSH output](usage.md#dsh-tool-output) |
-| `deepagents` | `deepagents` / LangGraph adapter |
-| `hermes` | Hermes adapter |
-| `jiuwenswarm` | Jiuwenswarm adapter |
-| `pi` | pi with release artifact and settings digest validation |
-| `dify` | Install a remote application with the SDK, then execute its Workflow; see below |
+| `deepagents` **Beta** | `deepagents` / LangGraph adapter |
+| `hermes` **Beta** | Hermes adapter |
+| `jiuwenswarm` **Beta** | Jiuwenswarm adapter |
+| `pi` **Beta** | pi with release artifact and settings digest validation |
+| `dify` **Beta** | Install a remote application with the SDK, then execute its Workflow; see below |
 
 Some harnesses require preinstalled local runtimes or dependency installation during Docker preparation. Local directories do not automatically become container/remote paths. Check bundle and harness deployment requirements before choosing a [Playbook](../../playbook/README.md) environment.
 
 Specify existing installations with Solver settings such as `dshhome`, `dshprofile`, `hermeshome`, or `jiuwenswarmhome`. `jiuwenswarmTimeoutSeconds` applies only to that harness. Additional pi settings use `benchmark.solver.config.pi.settings`, unsupported by other harnesses.
+
+For Docker, DSH uses the pinned default (0.2.2-rc.1) when it satisfies the Bundle’s `harness.version`. Otherwise the Solver selects the highest compatible release from the configured npm registry. Use an explicit prerelease comparator to allow a release candidate. Local environments check the installed DSH version against the same range.
 
 Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts Solver `maxTokens`, but setting both is an error. This page covers Evaluator configuration and execution; use the linked AgentBundle documentation for bundle creation, formats and installation.
 

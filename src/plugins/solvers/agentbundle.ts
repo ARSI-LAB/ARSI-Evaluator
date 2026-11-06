@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { sameCandidate } from "../../adapters/agentbundle/preparation-state.js";
 import { preparePi } from "../../adapters/harness/pi/prepare.js";
 import { prepareJiuwenswarm, prepareJiuwenswarmDocker } from "../../adapters/harness/jiuwenswarm/prepare.js";
@@ -117,16 +118,25 @@ export class AgentBundleSolver implements Solver {
     private readonly network?: import("../../core/contracts/network.js").NetworkAccess,
   ) {}
 
-  dispose(): Promise<void> { return disposePiBundleRuntime(this.piRuntime); }
+  async dispose(): Promise<void> {
+    try {
+      await disposePiBundleRuntime(this.piRuntime);
+    } finally {
+      const directory = this.dshRuntime?.directory;
+      if (directory !== undefined) await rm(directory, { recursive: true, force: true });
+    }
+  }
 
-  private async installation(harness: string, signal: AbortSignal): Promise<RuntimeInstallation> {
-    if (this.adapter) return this.adapter.installation(harness, signal);
-    if (harness === "dify") return difyRuntimeInstallation(signal);
-    if (harness === "deepagents") return deepagentsBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
-    if (harness === "jiuwenswarm") return jiuwenswarmBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
-    if (harness === "hermes") return hermesRuntimeInstallation(signal, this.network);
-    if (harness === "pi") return describePiBundleRuntime(this.path, this.piArtifactDigest, this.piConfigurationDigest, this.piRuntime, signal);
-    this.dshRuntime = await describeDshBundleRuntime(this.options.environmentName, signal, this.dshRuntime);
+  private async installation(harness: VerifiedBundle["harness"], signal: AbortSignal, lockedVersion?: string): Promise<RuntimeInstallation> {
+    if (this.adapter) return this.adapter.installation(harness.name, signal);
+    if (harness.name === "dify") return difyRuntimeInstallation(signal);
+    if (harness.name === "deepagents") return deepagentsBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
+    if (harness.name === "jiuwenswarm") return jiuwenswarmBundleRuntimeInstallation(this.path, this.options.environmentName, signal);
+    if (harness.name === "hermes") return hermesRuntimeInstallation(signal, this.network);
+    if (harness.name === "pi") return describePiBundleRuntime(this.path, this.piArtifactDigest, this.piConfigurationDigest, this.piRuntime, signal);
+    this.dshRuntime = await describeDshBundleRuntime(
+      this.options.environmentName, signal, harness.versionRange, this.dshRuntime, this.network, lockedVersion,
+    );
     return this.dshRuntime.installation;
   }
 
@@ -146,7 +156,7 @@ export class AgentBundleSolver implements Solver {
     ];
   }
 
-  async provenance(signal: AbortSignal): Promise<SolverProvenance> {
+  async provenance(signal: AbortSignal, previous?: SolverProvenance): Promise<SolverProvenance> {
     signal.throwIfAborted();
     const identified = await verifyBundleCandidate(this.path);
     const dify = identified.harness.name === "dify";
@@ -164,7 +174,9 @@ export class AgentBundleSolver implements Solver {
     } else if (this.options.pi !== undefined) {
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "agentbundle.pi settings are only accepted for pi bundles");
     }
-    const installation = await this.installation(identified.harness.name, signal);
+    const lockedVersion = previous?.bundle === identified.digest && previous.harness === "dsh"
+      ? previous.harnessVersion : undefined;
+    const installation = await this.installation(identified.harness, signal, lockedVersion);
     const harnessVersion = identified.harness.name === "dsh" && this.dshRuntime
       ? this.dshRuntime.version
       : await resolveHarnessVersion(identified.harness.name, signal);
@@ -218,7 +230,7 @@ export class AgentBundleSolver implements Solver {
     const candidate = this.candidate;
     if (candidate === undefined)
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "agentbundle did not lock a candidate identity");
-    const installation = await this.installation(candidate.harness.name, signal);
+    const installation = await this.installation(candidate.harness, signal);
     if (installation.id !== this.installationIdentity)
       throw new AgentBundleError("SOURCE_CHANGED", "solver runtime assets changed after the run was locked");
     return installation;
