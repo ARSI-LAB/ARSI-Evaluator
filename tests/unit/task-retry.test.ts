@@ -1,12 +1,38 @@
 import { PhaseTimeoutError } from "../../src/core/phase-timeout.js";
 import { expect, test } from "vitest";
 import { isManualRetryEligible } from "../../src/core/manual-retry.js";
+import { isStreamTaskRetryEligible } from "../../src/core/automatic-task-retry.js";
 import { classifyError } from "../../src/core/errors/classify.js";
 import { TaskQueue } from "../../src/core/task-queue.js";
 import { storeRecord } from "../fixtures/results/store-fixture.js";
 const job = { runId: "run-1", taskId: "a", attemptId: "first", ref: { id: "a", recordKey: "a" }, configFingerprint: "config" };
 const failure = (error: unknown, context: Parameters<typeof classifyError>[1] = { phase: "solve" }) => ({
   ...storeRecord(job), executionStatus: "failed" as const, scoreStatus: "invalid" as const, solve: null, verdict: null, errors: [classifyError(error, context)],
+});
+test.each([
+  "INVALID_REQUEST: litellm.MidStreamFallbackError: litellm.APIConnectionError: Response payload is not completed: <TransferEncodingError: 400, message='Not enough data to satisfy transfer length header.'>",
+  "peer closed connection without sending complete message body (incomplete chunked read)",
+  "Model stream ended without a finish_reason (unexpected EOF)",
+  "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+])("automatically retries only explicit model body truncation: %s", message => {
+  const record = failure(new Error("harness failed", { cause: new Error(message) }));
+  expect(record.errors[0]?.details.networkReason).toBe("response-truncated");
+  expect(isStreamTaskRetryEligible(record)).toBe(true);
+});
+test.each(["APIConnectionError", "APITimeoutError", "SSE error: upstream unavailable", "unexpected EOF", "TransferEncodingError: 400",
+  "HTTP 400: Response payload is not completed", "insufficient_quota: Response payload is not completed",
+  "AuthenticationError: Response payload is not completed"])("does not automatically rerun ambiguous or permanent failures: %s", message => {
+  expect(isStreamTaskRetryEligible(failure(new Error(message)))).toBe(false);
+});
+test("automatic retries require solve failure, invalid score and successful cleanup", () => {
+  const error = new Error("Response payload is not completed");
+  const record = failure(error);
+  expect(isStreamTaskRetryEligible(failure(Object.assign(error, { status: 400 })))).toBe(false);
+  for (const phase of ["environment", "verify", "collect"] as const)
+    expect(isStreamTaskRetryEligible(failure(new Error("Response payload is not completed"), { phase }))).toBe(false);
+  expect(isStreamTaskRetryEligible({ ...record, cleanupStatus: "unconfirmed" })).toBe(false);
+  expect(isStreamTaskRetryEligible({ ...record, verdict: { score: 0, passed: false, details: {} }, scoreStatus: "valid" })).toBe(false);
+  expect(isStreamTaskRetryEligible({ ...record, executionStatus: "cancelled" })).toBe(false);
 });
 test.each(["APIConnectionError", "APITimeoutError", "TransferEncodingError: 400", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "ServerDisconnectedError", "socket hang up", "pi-ai stream idle timeout after 300000ms", "HTTP 503", "HTTP 429"])("recognizes explicit failed model transport: %s", message => {
   expect(isManualRetryEligible(failure(new Error(message)))).toBe(true);

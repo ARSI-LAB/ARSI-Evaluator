@@ -475,7 +475,7 @@ test("external cancellation interrupts a pending readiness read and drains prepa
   expect(snapshot.records).toHaveLength(0);
 });
 
-test("network exhaustion does not prepare another pipeline round", async () => {
+test("model truncation replans a pipeline task with a batch preparation barrier", async () => {
   const { components, config } = await fixture();
   const prepareTasks = vi.spyOn(components.scheduler, "prepareTasks");
   config.experiment.run.taskIds = ["a"];
@@ -489,11 +489,11 @@ test("network exhaustion does not prepare another pipeline round", async () => {
   components.solver.solve = async (_input, _session, context) =>
     consumeDsh(dshStream(++calls === 1 ? interruptedResponse : undefined), context, "fixture-key");
   const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
-  expect(snapshot.run.status).toBe("error");
-  expect(prepared).toBe(2);
-  expect(calls).toBe(1);
-  expect(await components.store.listAttempts()).toHaveLength(1);
-  expect(prepareTasks.mock.calls.map(call => call[2].settings?.mode)).toEqual(["pipeline"]);
+  expect(snapshot.run.status).toBe("completed");
+  expect(prepared).toBe(4);
+  expect(calls).toBe(2);
+  expect(await components.store.listAttempts()).toHaveLength(2);
+  expect(prepareTasks.mock.calls.map(call => call[2].settings?.mode)).toEqual(["pipeline", "batch"]);
 }, 15_000);
 
 test("pipeline rejects unsupported distributed scheduling explicitly", async () => {

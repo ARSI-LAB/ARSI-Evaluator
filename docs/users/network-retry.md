@@ -6,7 +6,7 @@
 
 ## Automatic Network Retries
 
-Automatic recovery retries the network operation, not the whole attempt:
+Network operations have their own request-level retries:
 
 | Operation | Retry location |
 | --- | --- |
@@ -17,9 +17,13 @@ Automatic recovery retries the network operation, not the whole attempt:
 | Docker pulls | Bounded retries reuse downloaded content |
 | Artifact transfers | Retry requests under the original upload ID without solving/verifying/collecting again |
 
-Framework network operations default to three attempts including the first. Model request limits use `services.<name>.retry.maxAttempts` or SDK settings. Cancellation or the current phase deadline stops further retries.
+Framework network operations default to three attempts including the first. Model retry support and configuration depend on the Harness; `services.<name>.retry.maxAttempts` only affects adapters that consume it. Cancellation or the current phase deadline stops further request-level retries.
 
-After retries are exhausted, the operation fails without automatically rerunning the whole task. Image builds use `ENV_IMAGE_BUILD_FAILED`; whole `docker build`, installation/compilation scripts, and scoring scripts are not rerun automatically. Third-party plugins and task scripts control their own retries.
+Evaluator also provides whole-task recovery for explicit model response truncation. When a Harness reports a solve failure containing evidence such as `Response payload is not completed`, insufficient transfer length, or `incomplete chunked read`, Evaluator saves the failed attempt, confirms cleanup, and creates a new attempt. Each task permits at most two automatic reruns. Resume counts saved truncation failures toward this budget instead of resetting it. After exhaustion, `run.onError` controls whether other tasks continue; the failed task remains unscored.
+
+Each new attempt starts with a fresh workspace and a full task deadline. Earlier model requests and tools run again, adding time and cost; external tool side effects are not undone. Normal model output remains streamed without buffering the entire SSE response or patching the Harness. This fallback cannot detect truncation that the Harness swallows as success or reports without specific truncation evidence.
+
+A bare `APIConnectionError`, ordinary SSE error, HTTP 400, authentication or quota failure, valid zero, cancellation, or collection/cleanup failure does not trigger this automatic recovery. Model request timeouts are also outside this rule. Image builds use `ENV_IMAGE_BUILD_FAILED` and do not automatically rerun the task. Third-party plugins and task scripts control their own retries.
 
 Remove `run.taskRetry` from old YAML. Configure model request limits as above and recover failed tasks manually with the commands below. See [resume requirements](usage.md#resume-and-rebuild-reports).
 
@@ -44,7 +48,7 @@ Before recovery, restore model and service authentication variables referenced b
 
 ## Manual Recovery and Execution Location
 
-Each manual request adds one attempt per eligible task, without automatically continuing after failure. Resending the same `requestId` does not create duplicates; tasks already preparing or running are not queued again.
+Each manual request adds one attempt per eligible task. If that attempt reports explicit model truncation and the task still has automatic recovery budget, the fallback above also applies. Resending the same `requestId` does not create duplicates; tasks already preparing or running are not queued again.
 
 Recovery is blocked while a task is still running or resource release is unconfirmed, to prevent overlapping execution. Local and Ray support recovery; Ray Jobs still operates through the original gateway and writes new results into the original run.
 

@@ -1,7 +1,7 @@
 import type { AttemptRecord } from "./contracts/result.js";
 import type { TaskJob } from "./contracts/scheduler.js";
 
-/** Dispatch initial jobs and explicitly requested reruns; failures never enqueue work. */
+/** Dispatch initial jobs and reruns admitted by the coordinator. */
 export class TaskQueue implements AsyncIterable<TaskJob> {
   private queue: TaskJob[] = [];
   private active = new Set<string>();
