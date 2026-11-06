@@ -17,6 +17,7 @@
 | 通过 SSH 压测已有模型服务 | [AISBench 独立插件](../../plugins/aisbench/README.md) |
 | 从本地目录或文件读取题库 | [本地数据集](local-datasets.zh-CN.md) |
 | 从 Node.js 业务项目调用评测 | [Node.js SDK](sdk.zh-CN.md) |
+| 使用 Agent 执行评测 | [Ember Evaluator skill](../../skills/ember-evaluator/SKILL.md) |
 
 ## 通用操作
 

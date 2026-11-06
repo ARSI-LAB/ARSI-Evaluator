@@ -49,15 +49,31 @@ Ember Evaluator 用一份 YAML 配置模型、Agent、Benchmark 和执行环境�
 
 ## 📦 安装部署
 
+### Agent Instruction
+
+将下面这段指令复制给你的编程 Agent。
+
+```text
+请从 https://github.com/evolving-foundry/ember-evaluator 安装 Ember Evaluator CLI 和配套的 ember-evaluator skill。
+按照 README 的 Manual Installation 步骤安装 CLI，并在目标项目中为当前 Agent 安装 skill。
+运行 ember-evaluator --help，并确认当前 Agent 能发现和读取该 skill。验证安装后结束任务。
+```
+
+### Manual Installation
+
+#### 1. 安装 CLI
+
 环境要求：
 
 1. **Node.js** >= 24.22.1（24.x）。
 2. **pnpm** >= 11 < 13。没有 pnpm 时，先执行 `npm install --global pnpm`。
-3. **Git**，用于拉取 AgentBundle 依赖。
+3. **Git**，并具有私有 AgentBundle 仓库的读取权限。
 
-在 Evaluator 仓库根目录执行：
+克隆仓库并从仓库根目录构建和安装。
 
 ```bash
+git clone https://github.com/evolving-foundry/ember-evaluator.git
+cd ember-evaluator
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add -g .
@@ -65,6 +81,14 @@ ember-evaluator --help
 ```
 
 看到帮助信息即安装成功。详细步骤见[安装指南](docs/users/installation.zh-CN.md)，Linux 服务器也可使用[管理容器](docs/users/deployment/container-toolbox.zh-CN.md)。
+
+#### 2. 安装 skill
+
+在要使用 skill 的项目目录中执行以下命令，并选择对应的编程 Agent。
+
+```bash
+npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
+```
 
 ## 🚀 快速入门
 
