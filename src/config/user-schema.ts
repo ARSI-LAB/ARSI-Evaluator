@@ -77,6 +77,8 @@ export function parseUserConfig(value: unknown): UserConfig {
     const parsed: ServiceInput = { model: expectNonEmptyString(entry.model, `services.${name}.model`), base_url: expectNonEmptyString(entry.base_url, `services.${name}.base_url`) };
     for (const key of ["api_key", "api", "provider"] as const)
       if (entry[key] !== undefined) parsed[key] = expectNonEmptyString(entry[key], `services.${name}.${key}`);
+    if (parsed.api_key !== undefined && !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/u.test(parsed.api_key))
+      throw new TypeError(`services.${name}.api_key must reference an environment variable as \${NAME}`);
     if (entry.maxTokens !== undefined) parsed.maxTokens = expectPositiveInteger(entry.maxTokens, `services.${name}.maxTokens`);
     if (entry.contextWindow !== undefined) parsed.contextWindow = expectPositiveInteger(entry.contextWindow, `services.${name}.contextWindow`);
     if (entry.retry !== undefined) {

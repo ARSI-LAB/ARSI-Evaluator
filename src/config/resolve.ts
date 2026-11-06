@@ -76,8 +76,6 @@ export function applyOverrides(services: Record<string, unknown>, serviceName: s
 
 function servicesInput(services: UserConfig["services"]): Record<string, unknown> {
   return Object.fromEntries(Object.entries(services).map(([name, model]) => {
-    if (model.api_key !== undefined && (typeof model.api_key !== "string" || !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/u.test(model.api_key)))
-      throw new TypeError(`services.${name}.api_key must reference an environment variable as \${NAME}`);
     return [name, { name: expectNonEmptyString(model.model, `services.${name}.model`),
       endpoint: expectNonEmptyString(model.base_url, `services.${name}.base_url`), api: model.api ?? "openai-completions",
       ...(model.api_key === undefined ? {} : { apiKey: model.api_key }),

@@ -23,6 +23,12 @@ async function file(value: unknown): Promise<string> {
 function user(benchmark: unknown, rest = {}) { return parseUserConfig({ services, benchmark, ...rest }); }
 function fingerprint(value: unknown): string { assertJsonValue(value); return fingerprintConfig(value); }
 
+test("service input rejects literal credentials before resolution", () => {
+  expect(() => parseUserConfig({ services: { default: { ...services.default, api_key: "plaintext" } }, benchmark: "gsm8k" }))
+    .toThrow(/services.default.api_key must reference/);
+  expect(parseUserConfig({ services, benchmark: "gsm8k" }).services.default).toEqual(services.default);
+});
+
 test("Terminal-Bench 4 aliases pin all 66 tasks without changing the 2.0 default", () => {
   const short = resolveConfig("experiment.yaml", user({ name: "terminalbench", version: "4.0" }), profiles);
   const full = resolveConfig("experiment.yaml", user({ name: "terminalbench", version: "4.0.0" }), profiles);
