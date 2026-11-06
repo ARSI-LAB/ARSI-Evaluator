@@ -49,15 +49,31 @@ Models and agents solve tasks, benchmarks verify them, and stores save results a
 
 ## 📦 Installation and Deployment
 
+### Agent Instruction
+
+Copy this instruction into your coding agent.
+
+```text
+Install the Ember Evaluator CLI and its ember-evaluator skill from https://github.com/evolving-foundry/ember-evaluator.
+Follow the Manual Installation steps in the README to install both. Install the skill for this agent in the target project.
+Run ember-evaluator --help and confirm that this agent can discover and read the skill. Stop after verifying installation.
+```
+
+### Manual Installation
+
+#### 1. Install the CLI
+
 Requirements:
 
 1. **Node.js** >= 24.22.1 (24.x).
 2. **pnpm** >= 11 < 13. If missing, run `npm install --global pnpm` first.
-3. **Git**, required to fetch the AgentBundle dependency.
+3. **Git** and read access to the private AgentBundle repository.
 
-Run from the Evaluator repository root:
+Clone the repository, then build and install from its root.
 
 ```bash
+git clone https://github.com/evolving-foundry/ember-evaluator.git
+cd ember-evaluator
 pnpm install --frozen-lockfile
 pnpm build
 pnpm add -g .
@@ -65,6 +81,16 @@ ember-evaluator --help
 ```
 
 The help output confirms installation. See the [installation guide](docs/users/installation.md) for details, or use the [management container](docs/users/deployment/container-toolbox.md) on Linux servers.
+
+#### 2. Install the skill
+
+Run this from the project where you want to use the skill, then select your coding agent.
+
+```bash
+npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
+```
+
+Add `-g` for a user-wide installation. Reload or restart your agent as needed, then confirm it can discover the [`ember-evaluator` skill](.agents/skills/ember-evaluator/SKILL.md).
 
 ## 🚀 Quick Start
 

@@ -5,7 +5,7 @@ description: Use when an agent needs to configure, inspect, diagnose, warm up, r
 
 # 使用 Ember Evaluator 完成评测
 
-在 Evaluator 仓库根目录操作。用 `ember-evaluator --help` 和子命令的 `--help` 确认当前版本；从源码运行时，按仓库要求用 `pnpm install --frozen-lockfile` 和 `pnpm build`，然后用 `node dist/cli.js` 替换下文的 `ember-evaluator`。
+在 Evaluator 仓库根目录操作。通过 `npx skills add` 安装到其他项目时，示例和指南仍在 Evaluator checkout 的 `playbook/` 和 `docs/` 下，按链接中的仓库路径查找。用 `ember-evaluator --help` 和子命令的 `--help` 确认当前版本；从源码运行时，按仓库要求用 `pnpm install --frozen-lockfile` 和 `pnpm build`，然后用 `node dist/cli.js` 替换下文的 `ember-evaluator`。
 
 - 查命令和执行副作用时，读 [CLI 速查](references/cli.md)。
 - doctor 报错、下载慢或需要代理时，读 [网络排障](references/network.md)。
