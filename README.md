@@ -90,8 +90,6 @@ Run this from the project where you want to use the skill, then select your codi
 npx skills add evolving-foundry/ember-evaluator --skill ember-evaluator
 ```
 
-Add `-g` for a user-wide installation. Reload or restart your agent as needed, then confirm it can discover the [`ember-evaluator` skill](skills/ember-evaluator/SKILL.md).
-
 ## 🚀 Quick Start
 
 Run two GSM8K math questions locally with SimpleAgent; Docker is not required. Replace the model name, API URL, and key with your own values, then run from the repository root in Bash:
