@@ -1,7 +1,9 @@
+import { parseKernelTimingEvidence } from "./timing.js";
 import { expectNonEmptyString, expectRecord } from "../../../../config/schema.js";
 import { VerificationError } from "../../../../core/errors/verification-error.js";
 import type { JsonValue } from "../../../../core/contracts/task.js";
 import type { VerifyResult } from "../../../../core/contracts/result.js";
+import { parseKernelAssessment, type KernelContract } from "./strict.js";
 import { isAbsolute, posix } from "node:path";
 
 function finiteJson(value: unknown, label: string): JsonValue {
@@ -28,7 +30,7 @@ function metadataPaths(metadata: Record<string, unknown>): void {
     if (metadata[name] !== undefined) artifactPaths([metadata[name]]);
 }
 
-/** 只校验框架边界；成功、缺失字段和指标值由原 profiler 决定。 */
+/** Validate the framework boundary; the profiler determines status, field availability and metric values. */
 export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue } {
   const p = expectRecord(value, "kernel profiling");
   if (p.schemaVersion !== 1 || (p.status !== "completed" && p.status !== "failed") || typeof p.error !== "string")
@@ -49,8 +51,8 @@ export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue
   return result;
 }
 
-/** 计时只接受完整的有限正数，基础设施错误不会转成候选零分。 */
-export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false): VerifyResult {
+/** Accept only complete, finite positive timings; infrastructure errors do not become candidate zero scores. */
+export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false, contract?: KernelContract, seeds: number[] = []): VerifyResult {
   const r = expectRecord(value, "kernel result");
   if (r.schemaVersion !== 1 || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
@@ -58,10 +60,21 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
     referenceMs: null, candidateMs: null, speedup: null,
     ...(profilingRequested ? { profilingRequested: true } : {}) };
+  if (contract !== undefined) {
+    const assessment = parseKernelAssessment(r.assessment, contract, seeds);
+    details.assessment = finiteJson(assessment, "assessment");
+    if (r.status === "passed" && (assessment.errorOwnership !== null || assessment.checks.some(c => c.status !== "passed")))
+      throw new VerificationError("Strict checks did not pass", details);
+    if (r.status === "passed" && Object.values(assessment.environment).some(value => value === null))
+      throw new VerificationError("Strict measurement environment identity unavailable", details);
+    if ((r.status === "incorrect" || r.status === "candidate_error") &&
+      (assessment.errorOwnership !== "candidate" || !assessment.checks.some(c => c.status === "failed")))
+      throw new VerificationError("Candidate failure lacks strict evidence", details);
+  }
   if (r.profiling !== undefined) {
     try { details.profiling = parseKernelProfiling(r.profiling); }
     catch {
-      // 不转存未校验对象或异常消息，避免不安全证据路径进入报告。
+      // Do not copy unvalidated objects or exception messages into reports as unsafe evidence paths.
       details.profiling = { schemaVersion: 1, status: "failed", error: "Profiling result could not be adapted",
         kernels: [], metadata: { adapterError: true }, artifacts: [] };
     }
@@ -81,7 +94,44 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
       throw new VerificationError(`Invalid kernel measurement: ${name}`, details);
     details[name] = measured;
   }
+  if (r.timingEvidence !== undefined) {
+    const timing = parseKernelTimingEvidence(r.timingEvidence);
+    if (Math.abs(timing.reference.meanMs - Number(r.referenceMs)) > 1e-12 || Math.abs(timing.candidate.meanMs - Number(r.candidateMs)) > 1e-12)
+      throw new VerificationError("Timing evidence mean mismatch", details);
+    details.timingEvidence = finiteJson(timing, "timing evidence");
+  }
   const reference = details.referenceMs as number, candidate = details.candidateMs as number, speedup = details.speedup as number;
   if (Math.abs(reference / candidate - speedup) > 1e-8 * Math.max(1, speedup)) throw new Error("Inconsistent kernel speedup");
   return { passed: true, score: 1, details };
+}
+
+/** Validate independent capture receipts at the Benchmark boundary before publishing a diagnostic verdict. */
+export function kernelProfileVerdict(value: unknown, candidateSha256: string, referenceKind: string, expected: {
+  caseId: string; seed: number; warmup: number; collection: "Default" | "PipeTimeline,Default";
+  problemSha256: string; contractSha256?: string;
+}): VerifyResult {
+  const profiling = parseKernelProfiling(expectRecord(value, "kernel result").profiling);
+  const metadata = expectRecord(profiling.metadata, "profile metadata");
+  const protocol = { caseId: expected.caseId, seeds: [expected.seed], warmup: expected.warmup,
+    collection: expected.collection, scope: "original-first-triton-kernel-or-file-stem",
+    capture: "after-warmup-mstx-range", selectionPolicy: "last" };
+  if (profiling.status === "completed") {
+    const actual = expectRecord(metadata.diagnosticProtocol, "diagnosticProtocol");
+    if (Object.entries(protocol).some(([name, value]) => JSON.stringify(actual[name]) !== JSON.stringify(value)) || metadata.collection !== expected.collection)
+      throw new VerificationError("Diagnostic effective protocol mismatch", {});
+    const trace = expectRecord(metadata.trace, "diagnostic trace");
+    if (expected.collection === "Default" ? trace.status !== "unavailable" || trace.reason !== "not-requested-by-default-protocol" : trace.status !== "available")
+      throw new VerificationError("Diagnostic trace availability mismatch", {});
+    const sources = expectRecord(metadata.sources, "diagnostic sources");
+    if (expectRecord(sources.candidate, "candidate source").sha256 !== candidateSha256 ||
+        expectRecord(sources.problem, "problem source").sha256 !== expected.problemSha256)
+      throw new VerificationError("Diagnostic native source mismatch", {});
+    const replay = expectRecord(metadata.replay, "diagnostic replay");
+    if (replay.seed !== expected.seed || replay.warmup !== expected.warmup || replay.logicalDevice !== 0)
+      throw new VerificationError("Diagnostic replay protocol mismatch", {});
+  }
+  return { passed: null, details: { protocol: "kernel-profile/v1", operation: "profile", candidateSha256, referenceKind,
+    status: profiling.status === "completed" ? "completed" : "unavailable", cleanup: "confirmed",
+    diagnosticProtocol: protocol, profiling,
+    ...(expected.contractSha256 === undefined ? {} : { contractSha256: expected.contractSha256 }) } };
 }

@@ -40,7 +40,7 @@ export type Command = (
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
-  | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; device: number; python?: string }
+  | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; seed: number; warmup: number; device: number; python?: string }
   | { kind: "kernel-precision"; problem: string; kernel: string; out: string; seeds: number[]; device: number; python?: string }
   | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
@@ -286,8 +286,8 @@ async function runCliCommand(
       io.out(JSON.stringify(payload, null, 2));
       return 0;
     } catch (error) {
-      // 业务错误（verify not passed / measure wrote nothing 等）按 kernel 契约退 1；
-      // 执行环境故障（解释器缺失、超时、取消、无 JSON）走统一诊断路径退 2/130。
+      // Evaluation failures such as failed verification or missing measurements exit 1 under the kernel contract.
+      // Infrastructure failures use the shared diagnostic path and exit 2, or 130 on cancellation.
       if (error instanceof KernelExecError && !error.infra) {
         io.error(error.message);
         return 1;

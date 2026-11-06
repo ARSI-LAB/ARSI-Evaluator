@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """
-NPU kernel 级基准测试模块
+NPU kernel benchmarking.
 
-NPU: 使用torch_npu.profiler采集kernel_details.csv，读取Duration(us)
+Use torch_npu.profiler to capture kernel_details.csv and read Duration(us).
 
-这是最精确的设备侧计时方式，不包含CPU launch时延。
+Measure device execution time without CPU launch latency.
 """
 
 import builtins
@@ -53,24 +53,24 @@ def device_synchronize():
     torch.npu.synchronize()
 
 
-# ============ NPU Profiler计时 ============
+# ============ NPU profiler timing ============
 def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                        triton_only=False):
+                        triton_only=False, audit=None):
     """
-    NPU: 使用torch_npu.profiler采集kernel_details.csv
-    返回: 平均kernel执行时间(ms)
+    Capture kernel_details.csv with torch_npu.profiler.
+    Return the mean kernel execution time in milliseconds.
 
-    triton_only=True: 只统计 Triton kernel 耗时，排除 aclnn 框架算子。
-        用于编排器的基准和晋升判断。
-    triton_only=False: 统计 wrapper 内所有算子总耗时。
-        用于 eager/inductor 基准的日志展示。
+    triton_only=True: include only Triton kernels, excluding aclnn framework operators.
+            Use this scope for orchestrator baseline and promotion decisions.
+    triton_only=False: sum all operators inside the wrapper.
+            Use this scope for eager/inductor baseline logging.
     """
     # warmup
     for _ in range(warmup):
         fn()
     device_synchronize()
 
-    # profiler配置
+    # Profiler configuration.
     experimental_config = torch_npu.profiler._ExperimentalConfig(
         aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
         profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
@@ -89,8 +89,15 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     print(f"[bench_kernel] NPU Profiler: {prof_dir_rel}")
 
     total = warmup + active
+    options = {}
+    activities = [torch_npu.profiler.ProfilerActivity.NPU]
+    if audit is not None:
+        # Capture every step, then explicitly exclude our warmup steps during reduction.
+        options['schedule'] = torch_npu.profiler.schedule(wait=0, warmup=0, active=total, repeat=1)
+        # CPU records provide ProfilerStep ranges; only device kernel durations enter the mean.
+        activities.append(torch_npu.profiler.ProfilerActivity.CPU)
     with torch_npu.profiler.profile(
-            activities=[torch_npu.profiler.ProfilerActivity.NPU],
+            activities=activities,
             on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(dir_name=prof_dir_rel),
             record_shapes=False,
             profile_memory=False,
@@ -98,18 +105,25 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
             with_flops=False,
             with_modules=False,
             experimental_config=experimental_config,
+        **options,
     ) as prof:
         for _ in builtins.range(total):
             fn()
             device_synchronize()
+            if audit is not None:
+                prof.step()
 
-    # 从kernel_details.csv采集结果
-    if triton_only:
+    # Strict callers require explicit flow association; no equal-row-count fallback.
+    if audit is not None:
+        from timing_evidence import collect_flow_timing
+        audit.update(collect_flow_timing(prof_dir, warmup, active))
+        time_cost_ms = audit['meanMs']
+    elif triton_only:
         time_cost_ms = _collect_npu_prof_triton_only(prof_dir, warmup, active)
     else:
         time_cost_ms = _collect_npu_prof_result(prof_dir, warmup, active)
 
-    # 清理
+    # Remove temporary profiler artifacts unless retention was requested.
     if not keep_res and os.path.exists(prof_dir):
         shutil.rmtree(prof_dir, ignore_errors=True)
 
@@ -117,7 +131,7 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
 
 
 def _collect_npu_prof_result(base_dir, num_warmup, num_active):
-    """汇总每轮全部设备算子耗时，保留真实归约；缺失或损坏的记录不生成分数。"""
+    """Sum all device operators per iteration, including reductions; reject missing or corrupt records."""
     import csv
     import math
 
@@ -139,7 +153,7 @@ def _collect_npu_prof_result(base_dir, num_warmup, num_active):
                 return float("inf")
             for row in rows:
                 duration = float(row["Duration(us)"])
-                # 全部设备算子计时不按 Type 排除归约；非有限值也不能被求和静默忽略。
+                # Include reductions in all-device timing; nonfinite durations must not be silently ignored.
                 if not math.isfinite(duration) or duration < 0:
                     return float("inf")
                 durations.append(duration)
@@ -150,7 +164,7 @@ def _collect_npu_prof_result(base_dir, num_warmup, num_active):
     if not durations or len(durations) % total_iters != 0:
         return float("inf")
 
-    # 固定输入的同一图每轮具有相同记录数，跳过采集范围内的预热迭代。
+    # Fixed-input graph iterations have equal record counts; skip captured warmup iterations.
     rows_per_iter = len(durations) // total_iters
     active_durations = durations[num_warmup * rows_per_iter:]
     avg_us = math.fsum(active_durations) / num_active
@@ -158,12 +172,12 @@ def _collect_npu_prof_result(base_dir, num_warmup, num_active):
 
 
 def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
-    """从kernel_details.csv只采集 Triton kernel 的 Duration(us)，返回ms
+    """Read Triton kernel Duration(us) values from kernel_details.csv and return milliseconds.
 
-    过滤掉 aclnn 前缀的框架算子（MatMulV3, Transpose, BatchMatMulV3 等），
-    只保留 Triton 编译生成的 kernel（Name 不以 'aclnn' 开头）的耗时。
+    Exclude aclnn framework operators such as MatMulV3, Transpose and BatchMatMulV3.
+    Retain timings for Triton-generated kernels whose names do not start with aclnn.
 
-    这是编排器用于基准和晋升判断的唯一计时口径。
+    This is the timing scope used for orchestrator baseline and promotion decisions.
     """
     import pandas as pd
 
@@ -179,19 +193,19 @@ def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
 
     df = pd.read_csv(kernel_details_file)
 
-    # 过滤ReduceSum(L2 cache clearing)
+    # Exclude ReduceSum used for L2 cache clearing.
     if "Type" in df.columns:
         df = df[~df["Type"].str.contains(r"^ReduceSum$", case=False, na=False)]
 
-    # 只保留 Triton kernel：Name 不以 'aclnn' 开头
+    # Keep Triton kernels whose names do not start with aclnn.
     if "Name" in df.columns:
         df = df[~df["Name"].str.startswith("aclnn", na=False)]
 
     total_iters = num_warmup + num_active
     if total_iters <= 0 or len(df) % total_iters != 0:
         print(
-            f"[bench_kernel] WARNING: kernel_details 行数({len(df)}) "
-            f"不是 model 推理次数({total_iters})的整数倍，无法按迭代切分"
+            f"[bench_kernel] WARNING: kernel_details row count ({len(df)}) "
+            f"is not a multiple of the model iteration count ({total_iters}); cannot split rows by iteration"
         )
         return float("inf")
 
@@ -208,28 +222,28 @@ def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
 
 
 def bench_kernel(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                 triton_only=False):
+                 triton_only=False, audit=None):
     """NPU profiler duration in ms; triton_only excludes framework kernels."""
     if not torch.npu.is_available():
         raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
     torch.npu.set_device(_logical_npu_device_id())
     return _bench_npu_profiler(fn, warmup=warmup, active=active,
                                prof_dir=prof_dir, keep_res=keep_res,
-                               triton_only=triton_only)
+                               triton_only=triton_only, audit=audit)
 
 
 def bench_kernel_ms(fn, **kwargs):
-    """返回ms, 与time_with_triton_do_bench保持一致: 返回list[float](单元素均值列表)"""
+    """Return the shared benchmark result in milliseconds."""
     return bench_kernel(fn, **kwargs)
 
 
 def bench_kernel_us(fn, **kwargs):
-    """返回微秒(us)"""
+    """Return the benchmark result in microseconds."""
     return bench_kernel(fn, **kwargs) * 1000
 
 
-# ---------------- bench 原子入口（CLI：timing --problem --kernel --out） ----------------
-# 纯计时，不做精度比对（kernel benchmark_kernel 口径：warmup+active 设备侧计时）。
+# ---------------- Benchmark worker entry point: timing --problem --kernel --out ----------------
+# Measure warmup and active device executions; the precision worker owns correctness checks.
 def _bench_atom_main():
     import argparse
 
@@ -271,7 +285,7 @@ def _bench_atom_main():
             payload["time_ms"] = float(ms)
     except CandidateError as exc:
         payload["error"] = str(exc)[:4000]
-    except Exception as exc:  # noqa: BLE001 - 业务失败留证据不退非零
+    except Exception as exc:  # noqa: BLE001 - record evaluation failure evidence without a nonzero exit
         traceback.print_exc()
         payload["error"] = f"{type(exc).__name__}: {exc}"[:4000]
     out_path.parent.mkdir(parents=True, exist_ok=True)

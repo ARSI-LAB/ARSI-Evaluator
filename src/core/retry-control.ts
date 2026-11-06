@@ -36,9 +36,9 @@ async function fileRetry<T>(operation: () => Promise<T>): Promise<T> {
     }
   }
 }
-export async function registerRunLocation(runId: string, directory: string): Promise<void> {
-  await mkdir(indexRoot(), { recursive: true });
-  await atomic(join(indexRoot(), `${safeId(runId)}.json`), { runId, directory: resolve(directory) });
+export async function registerRunLocation(runId: string, directory: string, indexDirectory = indexRoot()): Promise<void> {
+  await mkdir(indexDirectory, { recursive: true });
+  await atomic(join(indexDirectory, `${safeId(runId)}.json`), { runId, directory: resolve(directory) });
 }
 export async function locateRun(value: string): Promise<string> {
   if (value.includes("/") || value.includes("\\")) return resolve(value);

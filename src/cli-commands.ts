@@ -8,7 +8,7 @@ interface Options extends CliOverrides {
   all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
   problem?: string; kernel?: string; out?: string; round?: string; device?: string;
-  python?: string; seeds?: string; network?: string;
+  python?: string; seeds?: string; seed?: string; warmup?: string; network?: string;
 }
 
 export class CommandUsageError extends TypeError {
@@ -94,13 +94,15 @@ export function parseCommand(argv: string[]): Command {
       .requiredOption("--problem <path>", "Problem definition path")
       .requiredOption("--kernel <path>", "Kernel implementation path")
       .requiredOption("--out <json>", "Destination JSON result file")
-      .option("--device <n>", "GPU device index", "0")
+      .option("--device <n>", "NPU device index", "0")
       .option("--python <executable>", "Python interpreter used by the kernel executor");
-    if (name === "profile") cmd.option("--round <n>", "Profiling round index", "0");
+    if (name === "profile") cmd.option("--round <n>", "Profiling round index", "0")
+      .option("--seed <n>", "Replay input seed", "0")
+      .option("--warmup <n>", "Warmup calls before capture", "25");
     if (name === "precision") cmd.option("--seeds <list>", 'Space-separated random seeds; quote the list, e.g. --seeds "0 1"', "0 1");
     cmd.action((opts: Options) => {
       const base = { problem: resolve(String(opts.problem)), kernel: resolve(String(opts.kernel)), out: resolve(String(opts.out)), device: integer(opts.device, 0, "--device"), ...(opts.python === undefined ? {} : { python: opts.python }) };
-      result = name === "profile" ? { kind: "kernel-profile", ...base, round: integer(opts.round, 0, "--round") }
+      result = name === "profile" ? { kind: "kernel-profile", ...base, round: integer(opts.round, 0, "--round"), seed: integer(opts.seed, 0, "--seed"), warmup: integer(opts.warmup, 25, "--warmup") }
         : name === "precision" ? { kind: "kernel-precision", ...base, seeds: (opts.seeds ?? "0 1").split(/\s+/).map(Number).filter(seed => Number.isSafeInteger(seed) && seed >= 0) }
         : { kind: "kernel-bench", ...base };
     });

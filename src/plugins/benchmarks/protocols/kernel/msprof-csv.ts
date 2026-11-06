@@ -2,37 +2,37 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * msprof OPPROF_* 产物解析（kernel 原版 msprof_op_profiler.parse_msprof_dir /
- * metrics_to_prompt 的 TS 语义移植）。纯文本处理，零 NPU、零 pandas。
+ * Parse msprof OPPROF_* artifacts, preserving the semantics of
+ * msprof_op_profiler.parse_msprof_dir and metrics_to_prompt without NPU or pandas dependencies.
  */
 
-/** 保留进指标表的算子级指标列（列名跟随 msprof op 输出）。分四组：
- * 管道忙不忙 / 谁在等谁 / 搬了多少·打满没有 / 算力用足没有。
- * 有意不加：Task Duration(us)（与权威耗时口径不同）；Block Dim（不指导改什么）；
- * MemoryUB.csv 的 UB 带宽（与 ub_ratio 重复）。 */
+/** Operator metric columns retained from msprof output, grouped by pipeline utilization,
+ * resource waits, memory traffic and bandwidth, and arithmetic utilization.
+ * Exclude Task Duration(us), which differs from the authoritative timing scope, and Block Dim.
+ * Exclude MemoryUB.csv bandwidth because it duplicates ub_ratio. */
 export const MSPROF_METRIC_COLUMNS: readonly string[] = [
   "block_id",
-  // PipeUtilization.csv —— 四根管道的利用率（忙不忙）
+  // PipeUtilization.csv: pipeline utilization.
   "aic_time(us)", "aic_cube_ratio", "aic_scalar_ratio", "aic_mte1_ratio", "aic_mte2_ratio", "aic_mte3_ratio",
   "aiv_time(us)", "aiv_vec_ratio", "aiv_scalar_ratio", "aiv_mte2_ratio", "aiv_mte3_ratio",
   "aic_read_hit_rate(%)", "aic_write_hit_rate(%)", "aiv_read_hit_rate(%)", "aiv_write_hit_rate(%)",
   "core_utilization",
-  // ResourceConflictRatio.csv —— 访存冲突 + 管道等待（谁在等谁：等待高 = 该管道是瓶颈源头）
+  // ResourceConflictRatio.csv: memory conflicts and pipeline waits that indicate bottlenecks.
   "aiv_vec_stu_cflt_ratio", "aiv_vec_ldu_cflt_ratio", "aiv_vec_sfu_cflt_ratio",
   "aiv_vec_wait_ratio", "aiv_mte2_wait_ratio", "aiv_mte3_wait_ratio",
-  // Memory.csv —— 实际带宽与数据量（搬了多少、有没有把带宽打满）
+  // Memory.csv: measured bandwidth and transfer volume.
   "aiv_gm_to_ub_bw(GB/s)", "aiv_main_mem_read_bw(GB/s)",
-  // 写侧带宽不加：写流量是输出、优化不掉，且能由 write_main_memory_datas / kernel 耗时推出
+  // Omit write bandwidth: output traffic is fixed and bandwidth follows from write volume and kernel time.
   "GM_to_UB_bw_usage_rate(%)", "read_main_memory_datas(KB)", "write_main_memory_datas(KB)",
   "aiv_mte2_instructions",
-  // ArithmeticUtilization.csv —— 向量/特殊函数单元利用率（算力用足没有）
+  // ArithmeticUtilization.csv: vector and special-function unit utilization.
   "aiv_vec_vf_ratio", "aiv_vec_sfu_ratio",
 ];
 
-/** 行 = block_id 到指标值的映射（空单元格 → null，数值 → number，其余 → string）。 */
+/** A row keyed by block_id with numeric, string or missing metric values. */
 export type MetricRow = { block_id: string } & Record<string, unknown>;
 
-/** 极简 CSV 解析（msprof 产物无引号内逗号；容忍 \r\n 与尾空行）。 */
+/** Parse unquoted msprof CSV fields, tolerating CRLF and trailing empty lines. */
 export function parseCsv(text: string): { header: string[]; rows: string[][] } {
   const lines = text.replace(/\r\n?/g, "\n").split("\n").filter((line) => line.trim() !== "");
   if (lines.length === 0) return { header: [], rows: [] };
@@ -40,7 +40,7 @@ export function parseCsv(text: string): { header: string[]; rows: string[][] } {
   return { header: split(lines[0]!), rows: lines.slice(1).map(split) };
 }
 
-/** 读取一张 msprof CSV 为记录数组；文件不存在返回 null（调用方区分必须/可选表）。 */
+/** Read an msprof table or return null; callers decide which tables are required. */
 async function readTable(profDir: string, name: string): Promise<Record<string, unknown>[] | null> {
   let text: string;
   try {
@@ -52,19 +52,19 @@ async function readTable(profDir: string, name: string): Promise<Record<string, 
   return rows.map(cells => Object.fromEntries(header.map((key, i) => [key, cells[i] ?? ""])));
 }
 
-/** 单元格定型：空 → null；可解析数值 → number；其余 → string。 */
+/** Convert finite numeric cells to numbers and empty/nonnumeric strings to null; archive raw CSV separately. */
 function coerce(raw: unknown): unknown {
   if (raw === undefined || raw === null || raw === "") return null;
   if (typeof raw === "string") {
     const trimmed = raw.trim();
     if (trimmed === "") return null;
     if (Number.isFinite(Number(trimmed)) && trimmed !== "") return Number(trimmed);
-    return raw;
+    return null;
   }
   return raw;
 }
 
-/** 同名伴生列以 pipe 侧为准；sub_block_id 是权威行标识，永不被伴生表覆盖。 */
+/** Preserve pipe-table values for duplicate columns; never overwrite block or sub-block identities. */
 function mergeInto(base: Record<string, unknown>, extra: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(extra)) {
     if (key === "block_id" || key === "sub_block_id") continue;
@@ -73,10 +73,10 @@ function mergeInto(base: Record<string, unknown>, extra: Record<string, unknown>
 }
 
 /**
- * 解析 OPPROF_* 目录为指标行（parse_msprof_dir 语义）：
- * PipeUtilization/L2Cache/ResourceConflictRatio 三表必须存在（缺失即采集不完整，
- * 与原版同样抛错）；Memory/ArithmeticUtilization 可选（cube-only 算子缺 aiv 数据正常）。
- * 多行时按 LAST 策略只留最后一行（与原版 _apply_selection_policy 一致）。
+ * Parse an OPPROF_* directory into metric rows using parse_msprof_dir semantics.
+ * Require PipeUtilization, L2Cache and ResourceConflictRatio; missing tables mean incomplete capture.
+ * Memory and ArithmeticUtilization are optional because cube-only operators may have no AIV data.
+ * Keep only the final row under the original LAST selection policy.
  */
 export async function parseMsprofMetricsTable(profDir: string): Promise<MetricRow[]> {
   const pipe = await readTable(profDir, "PipeUtilization.csv");
@@ -86,7 +86,7 @@ export async function parseMsprofMetricsTable(profDir: string): Promise<MetricRo
   const conflict = await readTable(profDir, "ResourceConflictRatio.csv");
   if (conflict === null) throw new Error(`No ResourceConflictRatio.csv found under ${profDir}`);
 
-  // outer merge on block_id：pipe 行为基，伴生表按 block_id 补列（含 pipe 没有的行）。
+  // Outer-join companion tables by block_id, preserving pipe rows and adding companion-only rows.
   const byBlock = new Map<string, Record<string, unknown>>();
   for (const row of pipe) {
     const key = String(row["block_id"]);
@@ -111,16 +111,16 @@ export async function parseMsprofMetricsTable(profDir: string): Promise<MetricRo
   }
 
   let rows = [...byBlock.values()] as MetricRow[];
-  // 只留白名单列；整列全空说明该表对这类算子不适用（例如 vector 算子无 cube 数据），丢弃。
+  // Keep allowlisted columns; drop entirely empty columns that do not apply to this operator type.
   const kept = MSPROF_METRIC_COLUMNS.filter(name => name === "block_id" ||
     rows.some(row => row[name] !== undefined && row[name] !== null));
-  rows = rows.map(row => Object.fromEntries(kept.map(name => [name, row[name] ?? null]))) as MetricRow[];
-  // LAST 策略：多行留最后一行。
+  rows = rows.map(row => Object.fromEntries(kept.map(name => [name, name === "block_id" ? String(row[name]) : row[name] ?? null]))) as MetricRow[];
+  // LAST selection policy: retain the final row.
   return rows.length <= 1 ? rows : [rows[rows.length - 1]!];
 }
 
-/** 指标行 → block_id 键控表（metrics_to_prompt 语义：key 列 pop 出去不进值对象；
- * 数值保留 3 位小数，行内个别 null 保留——那是「这个 block 没有这项」）。 */
+/** Key metrics by block_id, omitting the identity from each value object.
+ * Round numbers to three decimal places; omit null metrics that are unavailable for the block. */
 export function rowsToMetrics(rows: MetricRow[]): Record<string, Record<string, unknown>> {
   const data: Record<string, Record<string, unknown>> = {};
   for (const row of rows) {
@@ -132,7 +132,7 @@ export function rowsToMetrics(rows: MetricRow[]): Record<string, Record<string, 
   return data;
 }
 
-/** 指标表回写 CSV（原版 metrics_df.to_csv 的等价产物，供归档对账）。 */
+/** Serialize metrics to CSV for archiving and reconciliation, matching metrics_df.to_csv. */
 export function metricsToCsv(rows: MetricRow[]): string {
   const header = rows.length === 0 ? [] : Object.keys(rows[0]!);
   const escape = (value: unknown): string => {

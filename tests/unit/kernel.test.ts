@@ -80,14 +80,14 @@ test("kernelVerdict accepts consistent passed timing and rejects mismatches", ()
   const details = verdict.details as Record<string, unknown>;
   expect(details.protocol).toBe("kernel-v1");
   expect(details.speedup).toBe(2);
-  // 加速比与耗时不一致必须拒绝
+  // Reject speedup values that do not match the measured timings.
   expect(() => kernelVerdict({ ...payload, speedup: 3 }, sha, "pytorch")).toThrow(/Inconsistent/);
-  // 非法测量（0/负数/非有限）必须拒绝
+  // Reject zero, negative and nonfinite measurements.
   expect(() => kernelVerdict({ ...payload, candidateMs: 0 }, sha, "pytorch")).toThrow(/Invalid kernel measurement/);
 });
 
 test("kernelVerdict rejects failed results carrying scores and maps infra errors", () => {
-  // failed 结果携带计时分数必须拒绝（不静默归零）；缺字段视为携带（undefined !== null）
+  // Reject timing scores on failed results, including omitted fields (undefined !== null).
   const base = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "incorrect", error: "mismatch",
     referenceMs: null, candidateMs: null, speedup: null };
@@ -96,7 +96,7 @@ test("kernelVerdict rejects failed results carrying scores and maps infra errors
   const failed = kernelVerdict(base, sha, "pytorch");
   expect(failed).toMatchObject({ passed: false, score: 0 });
   expect(() => kernelVerdict({ ...base, status: "infrastructure_error" }, sha, "pytorch")).toThrow(/infrastructure/);
-  // 候选 sha 不匹配直接拒绝
+  // Reject candidate SHA mismatches.
   expect(() => kernelVerdict({ ...base, status: "passed", referenceMs: 0.1, candidateMs: 0.05, speedup: 2 }, "b".repeat(64), "pytorch")).toThrow(/identity/);
 });
 
@@ -116,14 +116,14 @@ test("roofline picks the busiest pipe with underutilized priority", () => {
   expect(result.bottleneck).toBe("vec");
   expect(result.vec_rate).toBeCloseTo(0.9);
   expect(result.at_roofline).toBe(false);
-  // 最高利用率低于 underutilized 阈值时优先判 underutilized（bottleneck 记 "no"）
+  // Prefer underutilized ("no") when maximum utilization is below its threshold.
   const low = analyzeRoofline({ block0: { ...row, aiv_vec_ratio: 0.5 } });
   expect(low.bottleneck).toBe("no");
   expect(low.vec_rate).toBeCloseTo(0.5);
-  // 双门判定：先过 underutilized(0.8) 门才按 bound(0.4) 归类具体管道
+  // Apply the underutilized (0.8) gate before classifying pipeline bounds (0.4).
   const mid = analyzeRoofline({ block0: { ...row, aiv_vec_ratio: 0.9, aiv_scalar_ratio: 0.85 } });
   expect(mid.bottleneck).toBe("vec");
-  // 空表告警不抛
+  // Warn on empty tables without throwing.
   expect(analyzeRoofline({}).warnings).toContain("Empty msprof_metrics");
 });
 
@@ -139,14 +139,14 @@ test("renderKernelTables renders rows and hides metrics summary", () => {
       referenceMs: 0.1, candidateMs: 0.05, speedup: 2, profilingRequested: false, profiling: null,
       evidencePath: "tasks/t1/attempts/a1" }] };
   const text = renderKernelTables(metric, "http://e/").join("\n");
-  expect(text).toContain("## 算子正确性与性能");
+  expect(text).toContain("## \u7b97\u5b50\u6b63\u786e\u6027\u4e0e\u6027\u80fd");
   expect(text).toContain("| t1 | true / true | pytorch | 0.1 | 0.05 | 2 |");
   expect(text).toContain("result.json");
 });
 
 test("analyzeTraceEvents ports the original trace analyzer semantics", () => {
-  // 两个核：core4 跨度更长被选中；MTE2 总时长最长 → memory_bound_candidate；
-  // MTE2 与 VECTOR 零 overlap；double buffer 无跨轮 overlap → ineffective。
+  // Select core4, which has the longer span; the longest MTE2 duration indicates memory_bound_candidate.
+  // MTE2 and VECTOR do not overlap; double buffering has no cross-iteration overlap and is ineffective.
   const ev = (pid: string, tid: string, ts: number, dur: number) => ({ pid, tid, ts, dur });
   const events = [
     ev("core3", "MTE2", 0, 10), ev("core3", "VECTOR", 0, 8),
@@ -167,7 +167,7 @@ test("analyzeTraceEvents ports the original trace analyzer semantics", () => {
   expect(r.optimization_feedback).toEqual([
     "optimize data movement and improve data reuse", "check or enable Double Buffer"]);
   expect(r.bubble.mte2).toEqual({ count: 1, total_us: 10, max_us: 10 });
-  // 非法输入：空/非数组/无核事件都返回 null
+  // Return null for empty, non-array or kernel-free event inputs.
   expect(analyzeTraceEvents([])).toBeNull();
   expect(analyzeTraceEvents(undefined)).toBeNull();
   expect(analyzeTraceEvents([{ pid: "c", ts: 1, dur: 2 }])).toBeNull();
@@ -183,4 +183,14 @@ test("kernel atom --device parses card id and rejects invalid values", async () 
     "--out", "o.json", "--device", "-1"])).toThrow(/non-negative/);
   expect(() => parseArgs(["kernel", "bench", "--problem", "p.py", "--kernel", "k.py",
     "--out", "o.json", "--device", "x"])).toThrow(/non-negative/);
+});
+
+
+test("profile CLI forwards replay seed and warmup through the current command parser", async () => {
+  const { parseArgs } = await import("../../src/cli.js");
+  const base = ["kernel", "profile", "--problem", "p.py", "--kernel", "k.py", "--out", "o.json"];
+  expect(parseArgs(base)).toMatchObject({ kind: "kernel-profile", seed: 0, warmup: 25 });
+  expect(parseArgs([...base, "--seed", "42", "--warmup", "7"]))
+    .toMatchObject({ kind: "kernel-profile", seed: 42, warmup: 7 });
+  expect(() => parseArgs([...base, "--seed", "-1"])).toThrow(/non-negative/);
 });

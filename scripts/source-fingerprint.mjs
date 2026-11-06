@@ -19,7 +19,11 @@ async function filesAt(path, files) {
   const stat = await lstat(path);
   if (stat.isSymbolicLink()) throw new Error(`Build input is a symlink: ${path}`);
   if (stat.isDirectory()) {
-    for (const name of (await readdir(path)).sort()) await filesAt(join(path, name), files);
+    for (const name of (await readdir(path)).sort()) {
+      // Python imports can create bytecode during tests without changing build inputs.
+      if (name === "__pycache__" || /\.py[co]$/u.test(name)) continue;
+      await filesAt(join(path, name), files);
+    }
   } else if (stat.isFile()) {
     files.push(path);
   } else {

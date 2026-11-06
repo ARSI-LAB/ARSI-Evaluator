@@ -9,11 +9,11 @@ import { DockerRuntime, PINNED_NODE_IMAGE, type DockerCommand } from "../../src/
 afterEach(() => vi.unstubAllEnvs());
 const runtimeWithMirror = (command: DockerCommand, platform: "linux/amd64" | "linux/arm64" = "linux/amd64") => new DockerRuntime(command, PINNED_NODE_IMAGE, platform,
   createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ docker: { mirrors: { "docker.io": origin } } }, {})) }));
-const origin = "https://fixture.mirror.swr.myhuaweicloud.com";
+const origin = "https://fixture.mirror.example.test";
 const mirrored = `${new URL(origin).host}/library/${PINNED_NODE_IMAGE}`;
 const digest = "sha256:" + "a".repeat(64);
 
-test.each(["linux/amd64", "linux/arm64"] as const)("shares a Huawei Node pull and builds with its pinned reference on %s", async platform => {
+test.each(["linux/amd64", "linux/arm64"] as const)("shares a configured Node mirror pull and builds with its pinned reference on %s", async platform => {
   vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", "");
   const calls: string[][] = [];
   let pulled = false;

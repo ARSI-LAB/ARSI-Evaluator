@@ -451,7 +451,7 @@ test("task image mappings never replace the pinned internal model gateway", asyn
 
 test("the internal gateway uses the explicitly supplied Node reference", async () => {
   const { spec, log } = await fixture("FROM fixture/base\n");
-  const origin = "https://fixture.mirror.swr.myhuaweicloud.com";
+  const origin = "https://fixture.mirror.example.test";
   vi.stubEnv("EVALUATOR_NODE_IMAGE_MIRROR", "");
   vi.stubEnv("EVALUATOR_TEST_NODE_MIRROR", origin);
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");

@@ -1,14 +1,16 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute, posix, sep } from "node:path";
 import type { Benchmark } from "../../../../core/contracts/benchmark.js";
 import type { SourceLock, TaskRef, PreparedTask } from "../../../../core/contracts/task.js";
 import type { EnvironmentSession, EnvironmentSpec } from "../../../../core/contracts/environment.js";
-import type { SolveResult } from "../../../../core/contracts/result.js";
+import type { SolveResult, VerifyResult, EvaluationKind } from "../../../../core/contracts/result.js";
 import { expectRecord, expectNonEmptyString, expectPositiveInteger, rejectUnknown, type EffectiveConfig } from "../../../../config/schema.js";
-import { kernelVerdict } from "./result.js";
 import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { assertKernelHardware, createKernelBackend, type KernelBackend } from "../../../../adapters/kernel/backend.js";
+import { VerificationError } from "../../../../core/errors/verification-error.js";
+import { parseKernelContract, kernelContractDigest, parseKernelAssessment } from "./strict.js";
+import { kernelVerdict, kernelProfileVerdict } from "./result.js";
 
 export function relativeFile(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
@@ -19,14 +21,21 @@ export function relativeFile(value: unknown, label: string): string {
 
 export function parseKernelConfig(value: unknown) {
   const c = expectRecord(value, "kernel");
-  rejectUnknown(c, ["manifest", "kernelRoot", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "profiling"], "kernel");
+  rejectUnknown(c, ["operation", "manifest", "kernelRoot", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "profiling"], "kernel");
   const p = expectRecord(c.profiling ?? {}, "profiling");
-  rejectUnknown(p, ["enabled", "attemptTimeoutSeconds", "maxAttempts", "roundNum", "msprofBin", "deviceName", "cacheEnabled", "cacheDir"], "profiling");
+  rejectUnknown(p, ["enabled", "collection", "warmup", "attemptTimeoutSeconds", "maxAttempts", "roundNum", "msprofBin", "deviceName", "cacheEnabled", "cacheDir"], "profiling");
   if (p.enabled !== undefined && typeof p.enabled !== "boolean") throw new TypeError("profiling.enabled must be boolean");
   if (p.cacheEnabled !== undefined && typeof p.cacheEnabled !== "boolean") throw new TypeError("profiling.cacheEnabled must be boolean");
   if (p.roundNum !== undefined && !Number.isSafeInteger(p.roundNum)) throw new TypeError("profiling.roundNum must be an integer");
+  const operation = c.operation ?? "evaluate";
+  if (operation !== "evaluate" && operation !== "profile") throw new TypeError("kernel.operation must be evaluate or profile");
+  const collection = p.collection === undefined ? "PipeTimeline,Default" : p.collection;
+  if (collection !== "Default" && collection !== "PipeTimeline,Default")
+    throw new TypeError("profiling.collection must be Default or PipeTimeline,Default");
   const profiling = {
     enabled: p.enabled === true,
+    collection,
+    warmup: expectPositiveInteger(p.warmup ?? 25, "profiling.warmup"),
     attemptTimeoutSeconds: expectPositiveInteger(p.attemptTimeoutSeconds ?? 300, "profiling.attemptTimeoutSeconds"),
     maxAttempts: expectPositiveInteger(p.maxAttempts ?? 2, "profiling.maxAttempts"),
     roundNum: p.roundNum === undefined ? 1 : p.roundNum as number,
@@ -34,7 +43,7 @@ export function parseKernelConfig(value: unknown) {
     ...(p.msprofBin === undefined ? {} : { msprofBin: expectNonEmptyString(p.msprofBin, "profiling.msprofBin") }),
     ...(p.deviceName === undefined ? {} : { deviceName: expectNonEmptyString(p.deviceName, "profiling.deviceName") }),
     ...(p.cacheDir === undefined ? {} : { cacheDir: expectNonEmptyString(p.cacheDir, "profiling.cacheDir") }),
-  };
+  } as const;
   const timeoutSeconds = expectPositiveInteger(c.timeoutSeconds ??
     (profiling.enabled ? profiling.maxAttempts * profiling.attemptTimeoutSeconds + 300 : 300), "timeoutSeconds");
   const nonnegative = (value: unknown, name: string) => {
@@ -47,7 +56,12 @@ export function parseKernelConfig(value: unknown) {
   if (!Array.isArray(seeds) || !seeds.length || seeds.length > 100 || seeds.some(s => !Number.isSafeInteger(s) || s < 0 || s > 0xffffffff))
     throw new TypeError("seeds must contain 1-100 unsigned 32-bit integers");
   if (new Set(seeds).size !== seeds.length) throw new TypeError("seeds must be unique");
-  return { manifest: expectNonEmptyString(c.manifest, "manifest"), ...(c.kernelRoot === undefined ? {} : { kernelRoot: expectNonEmptyString(c.kernelRoot, "kernelRoot") }),
+  if (operation === "profile") {
+    if (seeds.length !== 1) throw new TypeError("Independent profile requires a single seed");
+    if (!profiling.enabled) throw new TypeError("Independent profile requires profiling.enabled=true");
+    if (profiling.cacheEnabled) throw new TypeError("Independent profile requires cacheEnabled=false; callers own evidence reuse");
+  }
+  return { operation, manifest: expectNonEmptyString(c.manifest, "manifest"), ...(c.kernelRoot === undefined ? {} : { kernelRoot: expectNonEmptyString(c.kernelRoot, "kernelRoot") }),
     python: expectNonEmptyString(c.python ?? "python3", "python"), device, seeds: seeds as number[],
     rtol: nonnegative(c.rtol ?? 0.001, "rtol"), atol: nonnegative(c.atol ?? 0.001, "atol"),
     warmup: expectPositiveInteger(c.warmup ?? 5, "warmup"), repeat: expectPositiveInteger(c.repeat ?? 20, "repeat"),
@@ -62,7 +76,7 @@ export function parseKernelManifest(value: unknown) {
   const ids = new Set<string>();
   return m.tasks.map((value, index) => {
     const t = expectRecord(value, `tasks[${index}]`);
-    rejectUnknown(t, ["id", "problem", "candidate", "files", "referenceKind", "outputIndices"], "kernel task");
+    rejectUnknown(t, ["id", "problem", "candidate", "files", "referenceKind", "outputIndices", "contract"], "kernel task");
     const id = expectNonEmptyString(t.id, "task.id");
     if (ids.has(id)) throw new TypeError(`Duplicate kernel task: ${id}`);
     ids.add(id);
@@ -74,6 +88,7 @@ export function parseKernelManifest(value: unknown) {
       throw new TypeError("outputIndices must be unique nonnegative integers");
     return { id, problem: relativeFile(t.problem, "problem"), candidate: relativeFile(t.candidate, "candidate"),
       files: files.map(f => relativeFile(f, "files")), referenceKind: t.referenceKind,
+      ...(t.contract === undefined ? {} : { contract: parseKernelContract(t.contract) }),
       ...(indices === undefined ? {} : { outputIndices: indices as number[] }) };
   });
 }
@@ -81,11 +96,12 @@ export type KernelTask = ReturnType<typeof parseKernelManifest>[number];
 
 const digest = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 export class KernelBenchmark implements Benchmark {
-  readonly evaluationKind = "quality";
+  readonly evaluationKind: EvaluationKind;
   readonly validateSourceOnCompletedResume = true;
   private readonly backend: KernelBackend;
   constructor(private readonly config: KernelConfig, hardware: HardwareKind = "npu") {
     this.backend = createKernelBackend(hardware, config);
+    this.evaluationKind = config.operation === "profile" ? "performance" : "quality";
   }
 
   validateRun(config: EffectiveConfig): void {
@@ -110,6 +126,7 @@ export class KernelBenchmark implements Benchmark {
     signal.throwIfAborted();
     const manifest = await readFile(this.config.manifest);
     const tasks = parseKernelManifest(JSON.parse(manifest.toString("utf8")));
+    if (this.config.operation === "profile" && tasks.length !== 1) throw new TypeError("Independent profile requires a single task");
     const paths = [...new Set(tasks.flatMap(t => [t.problem, t.candidate, ...t.files]))].sort();
     const files = [{ path: "manifest.json", sha256: digest(manifest), origin: this.config.manifest }];
     for (const path of paths) {
@@ -150,11 +167,12 @@ export class KernelBenchmark implements Benchmark {
       env: this.backend.environment() });
     return {
       input: { id: task.id, prompt: "Submit the frozen kernel artifact for independent evaluation.", payload: { candidateSha256: candidate.sha256 } },
-      verification: { schemaVersion: 1, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
+      verification: { schemaVersion: 1, caseId: task.id, operation: this.config.operation, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
         files: selected.map(f => ({ source: f.origin, target: f.path })),
         problem: `data/${task.problem}`, referenceKind: task.referenceKind, outputIndices: task.outputIndices ?? null,
         seeds: this.config.seeds, rtol: this.config.rtol, atol: this.config.atol, warmup: this.config.warmup, repeat: this.config.repeat,
         profiling: this.config.profiling,
+        ...(task.contract === undefined ? {} : { contract: task.contract, contractSha256: kernelContractDigest(task.contract) }),
         hashes: Object.fromEntries([...selected.map(f => [f.path, f.sha256]), [candidate.path, candidate.sha256]]) },
       solveEnv: env([{ source: candidate.origin, target: candidate.path }]),
       verifyEnv: null, transfer: null, verificationMode: "shared",
@@ -163,19 +181,37 @@ export class KernelBenchmark implements Benchmark {
     };
   }
 
-  async verify(task: PreparedTask, result: SolveResult, session: EnvironmentSession | null, signal: AbortSignal) {
+  async verify(task: PreparedTask, result: SolveResult, session: EnvironmentSession | null, signal: AbortSignal): Promise<VerifyResult> {
     if (!session) throw new Error("Kernel verification requires a private environment session");
     const { files, ...request } = expectRecord(task.verification, "kernel verification descriptor");
     if (result.finalText !== request.candidateSha256) throw new Error("Solver submitted a different kernel identity");
     const active = AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutSeconds * 1000)]);
     if (!Array.isArray(files)) throw new Error("Missing verifier files");
-    // local 不支持归档恢复；Solver 结束并进入验证阶段后才注入私有材料。
+    // Local sessions cannot restore archives; inject private materials only after the Solver finishes.
     for (const item of files) {
       const file = expectRecord(item, "verifier file");
       if (typeof file.source !== "string" || typeof file.target !== "string") throw new Error("Invalid verifier file");
       await session.upload(file.source, file.target, active);
     }
     const value = await this.backend.execute(request, session, active);
-    return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), this.config.profiling.enabled);
+    const record = expectRecord(value, "kernel result");
+    if (this.config.operation === "profile") {
+      const hashes = expectRecord(request.hashes, "kernel source hashes");
+      const verdict = kernelProfileVerdict(value, String(request.candidateSha256), String(request.referenceKind), {
+        caseId: String(request.caseId), seed: this.config.seeds[0]!, warmup: this.config.profiling.warmup ?? 25,
+        collection: this.config.profiling.collection,
+        problemSha256: expectNonEmptyString(hashes[String(request.problem)], "problem source hash"),
+        ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
+      });
+      await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
+      return verdict;
+    }
+    if (request.contract !== undefined) {
+      const assessment = parseKernelAssessment(record.assessment, parseKernelContract(request.contract), this.config.seeds);
+      for (const name of ["rtol", "atol", "warmup", "repeat"] as const)
+        if (assessment.effectiveProtocol[name] !== this.config[name]) throw new VerificationError(`Effective protocol mismatch: ${name}`, {});
+    }
+    return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), this.config.profiling.enabled,
+      request.contract === undefined ? undefined : parseKernelContract(request.contract), this.config.seeds);
   }
 }

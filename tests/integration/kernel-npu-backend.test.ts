@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -17,7 +17,7 @@ test.skipIf(!available)("NPU timing honors the selected device and never probes 
 
 test("NPU backend keeps device environment, packaged files and worker protocol", async () => {
   const backend = new NpuKernelBackend({ python: "fixture-python", device: 3, profiling: { enabled: false, roundNum: 1 } });
-  expect(backend.environment()).toEqual({ ASCEND_RT_VISIBLE_DEVICES: "3", KERNEL_NPU_DEVICE: "3" });
+  expect(backend.environment()).toEqual({ ASCEND_VISIBLE_DEVICES: "3", ASCEND_RT_VISIBLE_DEVICES: "3", KERNEL_NPU_DEVICE: "0" });
   await Promise.all(backend.runtimeFiles().map(file => access(file.origin)));
   const root = await mkdtemp(join(tmpdir(), "kernel-npu-"));
   const response = { status: "incorrect", error: "fixture mismatch" };
@@ -30,10 +30,13 @@ test("NPU backend keeps device environment, packaged files and worker protocol",
     restoreState: async () => {}, dispose: async () => {} };
   const request = { candidateSha256: "a".repeat(64), referenceKind: "pytorch" };
   try {
+    await writeFile(join(root, "kernel-result.json"), JSON.stringify(response));
     expect(await backend.execute(request, session, AbortSignal.timeout(5000))).toEqual(response);
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ executable: "fixture-python",
       args: ["runtime/precision.py", "--output", join(root, "kernel-result.json")], input: Buffer.from(JSON.stringify(request)) }), expect.any(AbortSignal));
     expect(() => createKernelBackend("gpu", { python: "must-not-start", device: 0, profiling: { enabled: false, roundNum: 1 } })).toThrow(/GPU backend is not implemented/);
     expect(start).toHaveBeenCalledTimes(1);
+    await writeFile(join(root, "kernel-result.json"), JSON.stringify({ ...response, error: "different evidence" }));
+    await expect(backend.execute(request, session, AbortSignal.timeout(5000))).rejects.toThrow(/evidence differs/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
