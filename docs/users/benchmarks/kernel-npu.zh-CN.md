@@ -6,7 +6,7 @@
 
 ## 硬件选择
 
-实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU 后端尚未实现”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。现有 `kernel precision/bench/profile` 独立命令仍为 NPU 入口，参数和结果格式不变。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。
+实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU backend is not implemented”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。现有 `kernel precision/bench/profile` 独立命令仍为 NPU 入口，参数和结果格式不变。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。
 
 ## 环境与运行
 
@@ -119,7 +119,7 @@ run:
 
 `benchmark.config.timeoutSeconds` 限制整个验证阶段，包括正确性、计时和 profiling。开启 profiling 时默认 `maxAttempts * attemptTimeoutSeconds + 300`，否则为 `300`。`run.timeoutSeconds` 必须大于此上限；开启 profiling 并使用默认 900 秒验证上限时，内置 Profile 的 360 秒 run 默认值不够。需为重试退避和解析留出时间；外层超时可能在完整回执写出前中断采集。
 
-Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed，预热完成后仅在 MSTX 区间 `rsi_operator_profile` 内调用一次。SDK session 管理 profiler 子进程；取消向上传播，清理无法确认属于基础设施失败。
+Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed，预热完成后仅在 MSTX 区间 `rsi_operator_profile` 内调用一次。SDK session 管理 profiler 子进程；取消信号传播至这些子进程，清理无法确认属于基础设施失败。
 
 支持两个显式采集协议：
 

@@ -119,7 +119,7 @@ The following fields belong to `benchmark.config.profiling`:
 
 `benchmark.config.timeoutSeconds` caps the entire verification phase, including correctness, timing and profiling. It defaults to `maxAttempts * attemptTimeoutSeconds + 300` with profiling enabled, otherwise `300`. Set `run.timeoutSeconds` above that cap; the built-in profile's 360-second run default is insufficient when profiling uses its default 900-second verification cap. Allow time for retry backoff and parsing; an outer timeout can interrupt collection before a complete receipt exists.
 
-Replay uses the unchanged `problem.get_inputs()` and the first configured seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates; unconfirmed cleanup is an infrastructure failure.
+Replay uses the unchanged `problem.get_inputs()` and the first configured seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates to those child processes; unconfirmed cleanup is an infrastructure failure.
 
 Two explicit collection protocols are supported:
 
@@ -173,7 +173,7 @@ Missing NPUs, reference failures, missing/invalid timing, worker protocol errors
 
 Evaluation attempts save `verifier/kernel-result.json`; independent profiling saves the validated diagnostic receipt as `verifier/kernel-profile-result.json`. Profiling saves `verifier/kernel-profile.json`, `kernel-profile.raw.json` and a `kernel-profile_profiling_root/` artifact tree, including replay metadata, raw CSVs, trace when requested, `profiling/original-result.json` and logs. Use the saved `profiling.artifacts` list for verifier-relative paths. For failed capture, inspect `profiling.error`, `profiling/logs/profiler.log` and `profiling/logs/console.log`; a replay error may explain missing downstream CSVs. For timeout without full results, inspect attempt `errors`; the framework stops worker process groups. Saved results rebuild offline.
 
-`report.md` labels new original-kernel results and displays original metrics/L2/status/evidence. Historical LAST/unmarked results retain their definitions. `metrics.json` stores coverage/task summaries without recollection. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json:`
+`report.md` labels new original-kernel results and displays original metrics/L2/status/evidence. Historical LAST/unmarked results retain their definitions. `metrics.json` stores coverage/task summaries without recollection. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
 
 ```text
 profiling.schemaVersion = 1
@@ -226,8 +226,8 @@ Each outputs one JSON object:
 
 | Atom | Output fields |
 | --- | --- |
-| `precision` | `passed`（bool）、`error`、`seeds`、`tolerance` |
-| `bench` | `time_ms`（ms）、`error` |
+| `precision` | `passed` (bool), `error`, `seeds`, `tolerance` |
+| `bench` | `time_ms` (ms), `error` |
 | `profile` | `round`, `measured_by`, `metrics` (block pipelines/L2/bandwidth), `trace_analysis` (longest core/overlap/bubbles/Double Buffer, absent without trace), `roofline` (bottleneck/efficiency_rate/pipelines/warnings), `artifacts`, `error` |
 
 Roofline: maximum pipeline utilization<0.8 yields `no` (underutilization first); otherwise pipelines>=0.4 classify bottlenecks in scalar→vec→mte2→mte3 order.
