@@ -119,11 +119,11 @@ output:
 | Harness 声明 | 对应使用方式 |
 | --- | --- |
 | `dsh` | 按 DSH 协议准备与运行，工具输出格式见[DSH 说明](usage.zh-CN.md#dsh-工具输出) |
-| `deepagents` | 使用 deepagents / LangGraph 适配器 |
-| `hermes` | 使用 Hermes 适配器 |
-| `jiuwenswarm` | 使用 Jiuwenswarm 适配器 |
-| `pi` | 使用 pi，检查发布产物与设置摘要 |
-| `dify` | 通过 SDK 安装远程应用，再运行 Workflow，见下文 |
+| `deepagents` **Beta** | 使用 deepagents / LangGraph 适配器 |
+| `hermes` **Beta** | 使用 Hermes 适配器 |
+| `jiuwenswarm` **Beta** | 使用 Jiuwenswarm 适配器 |
+| `pi` **Beta** | 使用 pi，检查发布产物与设置摘要 |
+| `dify` **Beta** | 通过 SDK 安装远程应用，再运行 Workflow，见下文 |
 
 某些 Harness 需要本机预装运行时，或在 Docker 准备阶段安装依赖；本机目录不会自动变成容器/远端可用路径。先确认 Bundle 和 Harness 的部署条件，再按 [Playbook](../../playbook/README.md) 选对应环境。
 

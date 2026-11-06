@@ -119,11 +119,11 @@ Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and
 | Harness declaration | Behavior |
 | --- | --- |
 | `dsh` | Prepare and run through DSH; see [DSH output](usage.md#dsh-tool-output) |
-| `deepagents` | `deepagents` / LangGraph adapter |
-| `hermes` | Hermes adapter |
-| `jiuwenswarm` | Jiuwenswarm adapter |
-| `pi` | pi with release artifact and settings digest validation |
-| `dify` | Install a remote application with the SDK, then execute its Workflow; see below |
+| `deepagents` **Beta** | `deepagents` / LangGraph adapter |
+| `hermes` **Beta** | Hermes adapter |
+| `jiuwenswarm` **Beta** | Jiuwenswarm adapter |
+| `pi` **Beta** | pi with release artifact and settings digest validation |
+| `dify` **Beta** | Install a remote application with the SDK, then execute its Workflow; see below |
 
 Some harnesses require preinstalled local runtimes or dependency installation during Docker preparation. Local directories do not automatically become container/remote paths. Check bundle and harness deployment requirements before choosing a [Playbook](../../playbook/README.md) environment.
 
