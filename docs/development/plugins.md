@@ -110,7 +110,6 @@ export function apply(ctx) {
 
 ```json
 {
-  "schemaVersion": 1,
   "id": "example",
   "entry": "./dist/index.js",
   "cli": "./dist/cli-register.js",

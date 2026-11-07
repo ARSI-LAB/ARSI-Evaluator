@@ -59,7 +59,7 @@ export async function buildPlugins(root) {
     let manifest;
     try { manifest = JSON.parse(await readFile(join(base, "ember-plugin.json"), "utf8")); }
     catch (error) { if (error.code === "ENOENT") continue; throw error; }
-    if (manifest?.schemaVersion !== 1 || manifest.id !== entry.name || !/^[a-z][a-z0-9-]*$/u.test(manifest.id)) throw new Error(`Invalid plugin manifest: ${entry.name}`);
+    if (manifest?.id !== entry.name || !/^[a-z][a-z0-9-]*$/u.test(manifest.id)) throw new Error(`Invalid plugin manifest: ${entry.name}`);
     if (typeof (manifest.version ?? version) !== "string" || !(manifest.version ?? version).trim()) throw new Error(`Missing plugin version: ${entry.name}`);
     localPath(base, manifest.entry);
     if (manifest.cli !== undefined) localPath(base, manifest.cli);
@@ -105,7 +105,7 @@ export async function buildPlugins(root) {
       ...(flags.length === 0 ? {} : { flags }) });
   }
   await mkdir(join(root, "dist/external-plugins"), { recursive: true });
-  await writeFile(join(root, "dist/external-plugins/index.json"), JSON.stringify({ schemaVersion: 1, plugins }, null, 2) + "\n");
+  await writeFile(join(root, "dist/external-plugins/index.json"), JSON.stringify({ plugins }, null, 2) + "\n");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))

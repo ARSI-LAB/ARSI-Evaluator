@@ -1,5 +1,4 @@
 {
-  "schemaVersion": 1,
   "id": "tracer",
   "entry": "./dist/index.js",
   "cli": "./dist/cli-register.js",

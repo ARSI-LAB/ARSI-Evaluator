@@ -92,7 +92,7 @@ test("build indexes plugins without CLI and preserves installed entry paths outs
   await writeFile(join(root, "package.json"), JSON.stringify({ version: "1.2.3", type: "module" }));
   await writeFile(join(root, "dist/plugins/environments/core.js"), "builtin");
   await writeFile(join(plugin, "entry.js"), "export function apply() {}\n");
-  await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({ schemaVersion: 1, id: "environments", entry: "./entry.js", build: { install: ["entry.js"] } }));
+  await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({ id: "environments", entry: "./entry.js", build: { install: ["entry.js"] } }));
   const builder = pathToFileURL(resolve("scripts/build-plugins.mjs")).href;
   await execute(process.execPath, ["--input-type=module", "-e", `import { buildPlugins } from ${JSON.stringify(builder)}; await buildPlugins(process.argv[1]);`, root]);
   const catalog = readPluginCatalog(root);
@@ -110,7 +110,7 @@ test("a source checkout resolves manifest entries to the files they compile from
   await writeFile(join(plugin, "index.ts"), "export function apply() {}\n");
   await writeFile(join(plugin, "cli-register.ts"), "export {};\n");
   await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({
-    schemaVersion: 1, id: "audit", entry: "./dist/index.js", cli: "./dist/cli-register.js",
+    id: "audit", entry: "./dist/index.js", cli: "./dist/cli-register.js",
   }));
   expect(readPluginCatalog(root)).toEqual([{
     id: "audit", version: "1.0.0", entry: join(plugin, "index.ts"), cli: join(plugin, "cli-register.ts"),
@@ -149,7 +149,7 @@ export function registerCli(cli) {
     cli.addCommand({name: "audit", description: "fixture", async run(argv, io) { io.out(argv.join(" ")); return {ok:true,status:0}; }});
     cli.extendCommand("run", {flags:"--audit [url]",description:"fixture",configure(value, activation) {activation.enable(typeof value === "string" ? {url:value} : {});}});
   }`);
-  await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({ schemaVersion: 1, id: "audit", entry: "index.js", cli: "index.js", build: { install: ["index.js"] } }));
+  await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({ id: "audit", entry: "index.js", cli: "index.js", build: { install: ["index.js"] } }));
   const builder = pathToFileURL(resolve("scripts/build-plugins.mjs")).href;
   await execute(process.execPath, ["--input-type=module", "-e", `import {buildPlugins} from ${JSON.stringify(builder)}; await buildPlugins(process.argv[1]);`, root]);
   await rm(join(root, "plugins"), { recursive: true });
@@ -171,7 +171,7 @@ test("a manifest can declare run flags without shipping CLI code", async () => {
   await writeFile(join(root, "package.json"), JSON.stringify({ version: "1.0.0", type: "module" }));
   await writeFile(join(plugin, "index.js"), "export function apply() {}\n");
   await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({
-    schemaVersion: 1, id: "audit", entry: "index.js",
+    id: "audit", entry: "index.js",
     flags: [{ command: "run", flag: "--audit [url]", description: "fixture", config: "url" }],
     build: { install: ["index.js"] },
   }));

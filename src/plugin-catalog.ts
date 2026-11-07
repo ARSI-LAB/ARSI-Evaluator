@@ -63,7 +63,7 @@ export function readPluginCatalog(root = fileURLToPath(new URL("../", import.met
   let entries: { value: unknown; base: string }[];
   if (existsSync(index)) {
     const body = record(JSON.parse(readFileSync(index, "utf8")));
-    if (body.schemaVersion !== 1 || !Array.isArray(body.plugins)) throw new TypeError("Unsupported plugin index");
+    if (!Array.isArray(body.plugins)) throw new TypeError("Unsupported plugin index");
     entries = body.plugins.map(value => ({ value, base: dirname(index) }));
   } else {
     const directory = resolve(root, "plugins");
@@ -73,7 +73,6 @@ export function readPluginCatalog(root = fileURLToPath(new URL("../", import.met
       const file = resolve(base, "ember-plugin.json");
       if (!existsSync(file)) return [];
       const manifest = record(JSON.parse(readFileSync(file, "utf8")));
-      if (manifest.schemaVersion !== 1) throw new TypeError(`Unsupported plugin manifest: ${entry.name}`);
       if (manifest.id !== entry.name) throw new TypeError(`Plugin id must match directory ${entry.name}`);
       return [{ value: { ...manifest, version: manifest.version ?? version }, base }];
     }) : [];

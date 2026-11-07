@@ -1,5 +1,4 @@
 {
-  "schemaVersion": 1,
   "id": "aisbench",
   "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
   "entry": "./dist/index.js",

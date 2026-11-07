@@ -110,7 +110,6 @@ TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryCon
 
 ```json
 {
-  "schemaVersion": 1,
   "id": "example",
   "entry": "./dist/index.js",
   "cli": "./dist/cli-register.js",
