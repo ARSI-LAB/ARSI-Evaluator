@@ -128,7 +128,7 @@ ID must match the directory name. Version defaults to the host version. entry is
 
 When a plugin only adds options to an existing command, declare `flags` instead of shipping a CLI module: the host registers them from the manifest, `command` currently supports `run`, flags use `--name`, `--name <value>` or `--name [value]`, and `config` names the activation key written when the flag carries a value. `flags` and `cli` may be combined; conflict checks cover both. Use a `cli` module for dedicated subcommands or dynamic logic.
 
-Plugins that need esbuild or other custom output may declare `build.script`, executed with the plugin directory as cwd; `build.tsconfig` and `build.script` may be combined. Plugins loaded only through `--patch` declare `patch`, and the build copies `cordis.patch.yaml` into the installed directory.
+Plugins that need esbuild or other custom output may declare `build.script`, executed with the plugin directory as cwd; the script owns the `dist` output, so a declared `build.tsconfig` does not run `tsc` during the build and root `pnpm typecheck` covers those sources. Plugins loaded only through `--patch` declare `patch`, and the build copies `cordis.patch.yaml` into the installed directory.
 
 The CLI module exports `registerCli(cli: PluginCliRegistrar)`, importing types from `ember-evaluator`:
 

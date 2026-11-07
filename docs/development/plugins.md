@@ -128,7 +128,7 @@ ID 必须与目录名一致。version 默认使用宿主包版本。entry 是 Co
 
 只给已有命令加参数时，可声明 `flags` 而不写 CLI 模块：宿主按清单注册参数，command 目前仅支持 `run`；flag 支持 `--name`、`--name <value>`、`--name [value]`；config 指定写入插件配置的键，声明 config 时 flag 必须能取值。`flags` 与 `cli` 可以同时使用，冲突检查覆盖两者。需要自己的子命令或动态逻辑时，再提供 `cli` 模块。
 
-需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行；`build.tsconfig` 与 `build.script` 可以叠加，先编译再打包。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录。
+需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行，由脚本自行产出 `dist`；此时即使声明 `build.tsconfig` 也不会在构建中执行 `tsc`，插件源码的类型检查由根 `pnpm typecheck` 覆盖。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录。
 
 CLI 模块导出 `registerCli(cli: PluginCliRegistrar)`，公共类型从 `ember-evaluator` 导入：
 

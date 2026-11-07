@@ -169,7 +169,9 @@ ember-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml --tracer
 | `ember-evaluator tracer logs [--log <path>] [--lines <n>] [--follow]` | 输出 `collector.log` 末尾内容，可跟随新增日志 |
 | `ember-evaluator tracer stop [--url <url>] [--db <path>] [--port <n>]` | 按 `tracer.pid` 停止进程（先 SIGTERM，5 秒后升级为 SIGKILL） |
 
-默认值为 `http://127.0.0.1:8787`、`.cache/tracer/trace.db`、`.cache/tracer/spool`、`.cache/tracer/collector.log`，可用 `TRACER_URL`、`TRACER_DB`、`TRACER_SPOOL`、`TRACER_COLLECTOR`、`TRACER_TOKEN` 覆盖。想保留旧数据时，把 `TRACER_DB` 指向原来的 `plugins/tracer/trace.db` 即可。Collector 以子进程启动，环境变量在启动那一刻继承，改动后先 `ember-evaluator tracer stop` 再 `ember-evaluator tracer serve`。
+`--url`、`--db`、`--spool` 对所有子命令通用；`--port` 除 `logs` 外均可用。
+
+默认值为 `http://127.0.0.1:8787`、`.cache/tracer/trace.db`、`.cache/tracer/spool`、`.cache/tracer/collector.log`，可用 `TRACER_URL`、`TRACER_DB`、`TRACER_SPOOL`、`TRACER_LOG`、`TRACER_COLLECTOR`、`TRACER_TOKEN` 覆盖。想保留旧数据时，把 `TRACER_DB` 指向原来的 `plugins/tracer/trace.db` 即可。Collector 以子进程启动，环境变量在启动那一刻继承，改动后先 `ember-evaluator tracer stop` 再 `ember-evaluator tracer serve`。
 
 LLM 分析是可选能力；未配置 provider 时 Collector 只走确定性规则，反馈页的 LLM 区块会标记为未配置。要启用，准备一个 OpenAI 兼容的 `/chat/completions` 服务：
 

@@ -169,7 +169,9 @@ Manage the Collector with four subcommands:
 | `ember-evaluator tracer logs [--log <path>] [--lines <n>] [--follow]` | Print the tail of `collector.log`, optionally following new output |
 | `ember-evaluator tracer stop [--url <url>] [--db <path>] [--port <n>]` | Stop the process recorded in `tracer.pid` (SIGTERM, escalating to SIGKILL after 5 seconds) |
 
-Defaults are `http://127.0.0.1:8787`, `.cache/tracer/trace.db`, `.cache/tracer/spool`, and `.cache/tracer/collector.log`. Override them with `TRACER_URL`, `TRACER_DB`, `TRACER_SPOOL`, `TRACER_COLLECTOR`, or `TRACER_TOKEN`. Set `TRACER_DB` to an older `plugins/tracer/trace.db` to keep existing history. The Collector is a child process and inherits environment variables when it starts; after changing them run `ember-evaluator tracer stop` and then `ember-evaluator tracer serve` again.
+`--url`, `--db`, and `--spool` are accepted by every subcommand; `--port` applies to all but `logs`.
+
+Defaults are `http://127.0.0.1:8787`, `.cache/tracer/trace.db`, `.cache/tracer/spool`, and `.cache/tracer/collector.log`. Override them with `TRACER_URL`, `TRACER_DB`, `TRACER_SPOOL`, `TRACER_LOG`, `TRACER_COLLECTOR`, or `TRACER_TOKEN`. Set `TRACER_DB` to an older `plugins/tracer/trace.db` to keep existing history. The Collector is a child process and inherits environment variables when it starts; after changing them run `ember-evaluator tracer stop` and then `ember-evaluator tracer serve` again.
 
 LLM analysis is optional; without a provider the Collector runs rules-only and the feedback page marks the LLM section as unconfigured. Enable it with an OpenAI-compatible `/chat/completions` service:
 
