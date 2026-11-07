@@ -1,0 +1,12 @@
+{
+  "id": "docops",
+  "description": "Document operations benchmark running inside a Docker environment",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "patch": "cordis.patch.yaml",
+  "build": {
+    "tsconfig": "tsconfig.json",
+    "script": "scripts/build.mjs",
+    "install": ["dist"]
+  }
+}
