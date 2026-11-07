@@ -50,7 +50,7 @@ config 负责配置文件读取和解析，不加载插件模块。[plugin-patch
 
 CLI `run` 和 SDK `Evaluator.run()` 使用 [application/run.ts](../../src/application/run.ts) 的 `executeExperiment`。普通执行路径如下：
 
-1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) 创建 Cordis Context，注册内置组件和显式 patch 插件。
+1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) 创建 Cordis Context，注册内置组件、随包发布的仓库插件和显式 patch 中的插件。
 2. [application/config.ts](../../src/application/config.ts) 将该注册表的 Profile 和校验能力传给 config，读取并校验实验；[plugins/create-components.ts](../../src/application/plugins/create-components.ts) 的 `createRunComponents(registry, config, directory)` 使用同一注册表创建组件。
 3. [run-engine.ts](../../src/application/run-engine.ts) 提供补测控制和运行身份读取，再调用 [core/execution/engine.ts](../../src/core/execution/engine.ts)。
 4. core 处理来源、选题、恢复和准备，通过 Scheduler 调度，[run-task.ts](../../src/core/execution/run-task.ts) 执行 attempt。
@@ -97,7 +97,7 @@ Benchmark 分为 `agent-harness/`、`inference-engine/`、`operator/`，各自�
 
 同一功能可以跨角色目录。例如 AgentX 的输入和证据在 `plugins/benchmarks/inference-engine/agentx/`，负载调用在 `plugins/solvers/agentx-replay.ts`，安装和桥接在 `runtimes/agentx/`，指标与报告分别在 metrics 和 reporters。`evidence/` 直接解析保存的结果，不通过注册入口加载安装器或采样进程；共享版本信息来自无 I/O 的 `runtimes/agentx/versions.ts`。
 
-构建时，[build-plugins.mjs](../../scripts/build-plugins.mjs) 扫描仓库根目录下的 `plugins/*/ember-plugin.json`，按清单构建并把产物和 patch 写到 `dist/plugins/<id>/`。运行时通过显式 patch 加载这些插件。清单用于构建和复制产物，CLI 命令由宿主定义。
+构建时，[build-plugins.mjs](../../scripts/build-plugins.mjs) 扫描仓库根目录下的 `plugins/*/ember-plugin.json`，把构建产物和 patch 写到 `dist/plugins/<id>/`，并生成默认插件列表 `dist/bundled-plugins.patch.yaml`。运行时由注册表加载这份列表。CLI 命令由宿主定义。
 
 ## 构建、发布与维护
 

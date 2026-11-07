@@ -50,7 +50,7 @@ The checker covers static/type imports, re-exports, string-literal dynamic impor
 
 CLI `run` and SDK `Evaluator.run()` use `executeExperiment` in [application/run.ts](../../src/application/run.ts). The ordinary execution path is:
 
-1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) creates a Cordis Context and registers built-in and explicit patch plugins.
+1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) creates a Cordis Context and registers built-in components, bundled repository plugins, and any plugins from an explicit patch.
 2. [application/config.ts](../../src/application/config.ts) supplies that registry's Profiles and validators to config. [plugins/create-components.ts](../../src/application/plugins/create-components.ts) calls `createRunComponents(registry, config, directory)` using the same registry.
 3. [run-engine.ts](../../src/application/run-engine.ts) supplies retry controls and run identity loading, then calls [core/execution/engine.ts](../../src/core/execution/engine.ts).
 4. Core handles sources, selection, recovery, and preparation, schedules through Scheduler, and executes attempts through [run-task.ts](../../src/core/execution/run-task.ts).
@@ -97,7 +97,7 @@ Benchmarks use `agent-harness/`, `inference-engine/`, and `operator/`, each with
 
 A feature can span roles. AgentX input/evidence lives in `plugins/benchmarks/inference-engine/agentx/`, execution calls in `plugins/solvers/agentx-replay.ts`, installation/bridging in `runtimes/agentx/`, and metrics/reporting in their respective roles. `evidence/` parses saved results directly without importing registration entries, installers, or samplers; shared versions come from the I/O-free `runtimes/agentx/versions.ts`.
 
-At build time, [build-plugins.mjs](../../scripts/build-plugins.mjs) scans `plugins/*/ember-plugin.json` at the repository root, builds the declared plugins, and installs their output and patches under `dist/plugins/<id>/`. At runtime, an explicit patch loads these plugins. The manifest controls build output, and the host defines CLI commands.
+At build time, [build-plugins.mjs](../../scripts/build-plugins.mjs) scans `plugins/*/ember-plugin.json` at the repository root, installs the build output and patches under `dist/plugins/<id>/`, and writes the default plugin list to `dist/bundled-plugins.patch.yaml`. The registry loads that list at runtime. The host defines CLI commands.
 
 ## Build, Distribution, and Maintenance
 
