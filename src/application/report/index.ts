@@ -12,7 +12,8 @@ import { expectRecord, parseSelection } from "../../core/validation/input.js";
 import { resolvePlugin } from "../../config/plugin-patch.js";
 import { bundledPluginPatchPath } from "../../infrastructure/provenance/package.js";
 import { apply as registry } from "../plugins/registry.js";
-import * as reporting from "../../plugins/reporting.js";
+import * as metricsPlugin from "../../plugins/metrics/index.js";
+import * as reportersPlugin from "../../plugins/reporters/index.js";
 import { aggregateMetrics } from "../../plugins/metrics/aggregate.js";
 import { LocalRunStore } from "../../plugins/stores/local.js";
 import { taskReportSnapshot } from "./snapshot.js";
@@ -51,7 +52,8 @@ async function loadReporting(manifest: RunManifest, runDir: string) {
   const ctx = new Context();
   try {
     await ctx.plugin(registry);
-    await ctx.plugin(reporting);
+    await ctx.plugin(metricsPlugin);
+    await ctx.plugin(reportersPlugin);
     const directory = resolve(manifest.pluginRuntime?.configDirectory ?? runDir);
     const patchPath = manifest.pluginRuntime?.patchPath ?? join(directory, "cordis.patch.yaml");
     const providers = new Set<string>();
