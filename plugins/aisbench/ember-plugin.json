@@ -1,0 +1,12 @@
+{
+  "id": "aisbench",
+  "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "patch": "cordis.patch.yaml",
+  "build": {
+    "tsconfig": "tsconfig.json",
+    "script": "scripts/build.mjs",
+    "install": ["dist"]
+  }
+}

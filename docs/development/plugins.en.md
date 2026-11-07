@@ -103,6 +103,64 @@ Execution components receive the experiment's `npu` or `gpu` selection through `
 
 TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Compile to JavaScript first; CLI does not load `.ts` entries.
 
+## In-Repository Plugins and `ember-plugin.json`
+
+A plugin under `plugins/<id>/` reaches the build artifacts only when it ships `plugins/<id>/ember-plugin.json`. `pnpm build` scans `plugins/`, validates each manifest, builds it (a `tsc` type check plus an optional plugin-owned bundling script), and copies the declared files into `dist/plugins/<id>/`. Directories without a manifest are neither compiled nor copied; they stay source-only.
+
+Two build modes are available:
+
+- **Type check plus `tsc` emit**: declare only `build.tsconfig`, for plugins that compile straight to ESM.
+- **Custom bundling script**: declare `build.script` and let the plugin produce `dist/` itself, for plugins that need esbuild, resource hashes, or static asset copies (such as aisbench and docops). Both may be combined: `tsc` runs first, then the script.
+
+Plugins loaded only through `--patch` declare `patch`, so the build installs the patch file into `dist/plugins/<id>/`. Example: [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json):
+
+```json
+{
+  "id": "aisbench",
+  "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
+  "entry": "./dist/index.js",
+  "bundled": true,
+  "patch": "cordis.patch.yaml",
+  "build": { "tsconfig": "tsconfig.json", "script": "scripts/build.mjs", "install": ["dist"] }
+}
+```
+
+Load it with:
+
+```bash
+ember-evaluator run experiment.yaml --patch dist/plugins/aisbench/cordis.patch.yaml
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `id` | Yes | Must equal the directory name and decides the `dist/plugins/<id>/` location |
+| `description` | No | Plugin summary |
+| `version` | No | Inherits the root `package.json` version when omitted, so it is maintained in one place |
+| `entry` | No | Plugin module entry pointing at compiled JS; used by `--patch` entries that point at the plugin itself |
+| `bundled` | No | `true` marks a plugin shipped with the host |
+| `patch` | No | Path to the plugin's `cordis.patch.yaml`; copied into `dist/plugins/<id>/` with every `./dist/` prefix rewritten to `./` |
+| `build.tsconfig` | With `build` and without `build.script` | The plugin's own tsconfig, used for a type check (`noEmit`) or to emit into `dist` |
+| `build.script` | With `build` and without `build.tsconfig` | Plugin-owned Node bundling script run with the plugin directory as cwd; produces `dist/` |
+| `build.install` | With `build` | Paths installed into the runtime; `dist` contents are flattened into `dist/plugins/<id>/`, other paths keep their relative position |
+
+Build output:
+
+```text
+dist/plugins/
+├── aisbench/
+│   ├── ember-plugin.json  # Copied verbatim for runtime provenance
+│   ├── cordis.patch.yaml  # Copied from the manifest patch, ./dist/ rewritten to ./
+│   ├── index.js
+│   ├── profiles/...
+│   └── runtime/...
+└── docops/
+    ├── ember-plugin.json
+    ├── cordis.patch.yaml
+    └── index.js
+```
+
+`entry` is a compiled path relative to the plugin directory (for example `./dist/index.js`); the installed copy lives under `dist/plugins/<id>/`.
+
 ## Reference External Plugins with `--patch`
 
 Create `cordis.patch.yaml` in a separate directory:

@@ -10,8 +10,7 @@ const execute = promisify(execFile);
 test("source fingerprint ignores Python bytecode caches but detects source edits", async () => {
   const root = await mkdtemp(join(tmpdir(), "evaluator-fingerprint-"));
   try {
-    await mkdir(join(root, "src"));
-    await mkdir(join(root, "scripts"));
+    for (const directory of ["src", "scripts", "plugins"]) await mkdir(join(root, directory));
     const script = join(root, "scripts/source-fingerprint.mjs");
     await cp(new URL("../../scripts/source-fingerprint.mjs", import.meta.url), script);
     for (const name of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "package-lock.json", "tsconfig.json", "tsconfig.build.json"]) {
@@ -27,6 +26,34 @@ test("source fingerprint ignores Python bytecode caches but detects source edits
     expect(await fingerprint()).toBe(initial);
     await writeFile(join(root, "src/worker.py"), "value = 2\n");
     expect(await fingerprint()).not.toBe(initial);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("source fingerprint tracks plugin sources but ignores generated plugin output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "evaluator-fingerprint-plugins-"));
+  try {
+    for (const directory of ["src", "scripts", "plugins/demo"]) await mkdir(join(root, directory), { recursive: true });
+    const script = join(root, "scripts/source-fingerprint.mjs");
+    await cp(new URL("../../scripts/source-fingerprint.mjs", import.meta.url), script);
+    for (const name of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "package-lock.json", "tsconfig.json", "tsconfig.build.json"]) {
+      await writeFile(join(root, name), "{}\n");
+    }
+    await writeFile(join(root, "plugins/demo/ember-plugin.json"), "{}\n");
+    await writeFile(join(root, "plugins/demo/index.ts"), "export const value = 1;\n");
+    const fingerprint = async (): Promise<string> => (await execute(process.execPath, [script])).stdout;
+    const initial = await fingerprint();
+    await writeFile(join(root, "plugins/demo/index.ts"), "export const value = 2;\n");
+    const edited = await fingerprint();
+    expect(edited).not.toBe(initial);
+    await mkdir(join(root, "plugins/demo/dist"));
+    await writeFile(join(root, "plugins/demo/dist/index.js"), "generated\n");
+    await mkdir(join(root, "plugins/demo/node_modules/dependency"), { recursive: true });
+    await writeFile(join(root, "plugins/demo/node_modules/dependency/index.js"), "dependency\n");
+    await mkdir(join(root, "plugins/demo/__pycache__"));
+    await writeFile(join(root, "plugins/demo/__pycache__/module.pyc"), "bytecode");
+    expect(await fingerprint()).toBe(edited);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
