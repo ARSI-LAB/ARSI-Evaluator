@@ -1,5 +1,5 @@
 import { Context, type Plugin } from "@deepseek-ai/cordis";
-import { loadPluginPatch, PATCH_METADATA_ID, resolvePlugin } from "../../config/plugin-patch.js";
+import { loadPluginPatch, PATCH_METADATA_ID } from "../../config/plugin-patch.js";
 import type { RunPluginEntry } from "../../core/contracts/result.js";
 import { BUILTIN_RUNTIME_ID, PACKAGE_RUNTIME_ID } from "../../core/results/runtime-identity.js";
 import { loadBuiltinRuntimeDigest } from "../../infrastructure/provenance/builtin-runtime.js";
@@ -7,6 +7,7 @@ import { bundledPluginPatchPath, loadPackageDigest } from "../../infrastructure/
 import { apply as registryPlugin } from "./registry.js";
 import * as builtins from "../../plugins/index.js";
 import { validateProfiles } from "../../config/profile-schema.js";
+import { loadPluginModule } from "./load-module.js";
 
 async function loadExperimentPlugins(
   ctx: Context,
@@ -28,7 +29,7 @@ async function loadExperimentPlugins(
   for (const source of [bundled, patch]) {
     if (source.patchPath === null) continue;
     for (const entry of source.entries) {
-      const resolved = await resolvePlugin(entry, source.patchPath);
+      const resolved = await loadPluginModule(entry, source.patchPath);
       const existing = entries.get(entry.id);
       if (existing && existing.bundledVersion !== resolved.version) {
         throw new TypeError(`plugin patch id ${entry.id} conflicts with a bundled plugin`);
@@ -69,11 +70,15 @@ export async function openPluginRegistry(patchPath?: string) {
     const metadata = await loadExperimentPlugins(ctx, patchPath);
     validateProfiles(ctx.evaluator.profiles());
     let disposed = false;
-    return { ctx, ...metadata, async dispose() {
-      if (disposed) return;
-      disposed = true;
-      await ctx.fiber.dispose();
-    } };
+    return {
+      ctx,
+      ...metadata,
+      async dispose() {
+        if (disposed) return;
+        disposed = true;
+        await ctx.fiber.dispose();
+      },
+    };
   } catch (error) {
     await ctx.fiber.dispose();
     throw error;
