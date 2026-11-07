@@ -1,10 +1,11 @@
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type TracerConfig = {
   /** Collector base URL, without a trailing slash. */
   url: string;
-  /** Path to the compiled Collector entrypoint (main.js); relative paths await resolveTracerConfig. */
+  /** Path to the Collector entrypoint (main.js, or main.ts in a source checkout); relative paths await resolveTracerConfig. */
   collector: string;
   /** Persistent SQLite database; relative paths await resolveTracerConfig. */
   db: string;
@@ -18,11 +19,14 @@ export type TracerConfig = {
   timeoutMs: number;
 };
 
-/** Compiled plugin root; the Collector builds next to this module. */
+/** Plugin root: `plugins/tracer/` in a source checkout, the packaged `dist/` directory after a build. */
 const PLUGIN_ROOT = fileURLToPath(new URL(".", import.meta.url));
 /** Repository root, shared by the source and the dist layout. */
 const PACKAGE_ROOT = process.cwd();
-const COLLECTOR_ENTRY = resolve(PLUGIN_ROOT, "collector", "main.js");
+const COLLECTOR_ENTRY = [resolve(PLUGIN_ROOT, "collector", "main.js"), resolve(PLUGIN_ROOT, "collector", "main.ts")]
+  .find(path => existsSync(path)) ?? resolve(PLUGIN_ROOT, "collector", "main.js");
+/** Node loader that lets a TypeScript Collector start without a build. */
+const SOURCE_LOADER = resolve(PLUGIN_ROOT, "..", "..", "scripts", "source-loader.mjs");
 const DATA_ROOT = resolve(PACKAGE_ROOT, ".cache", "tracer");
 const KNOWN_FIELDS = ["url", "collector", "db", "spool", "token", "tokenEnv", "autostart", "timeoutMs"];
 
@@ -93,6 +97,13 @@ export function parseTracerConfig(value: unknown): TracerConfig {
     autostart: record.autostart ?? true,
     timeoutMs,
   };
+}
+
+/** Node arguments that start the Collector, loading TypeScript sources when no build exists. */
+export function collectorCommand(entry: string): string[] {
+  return entry.endsWith(".ts") && existsSync(SOURCE_LOADER)
+    ? ["--experimental-transform-types", "--import", SOURCE_LOADER, entry]
+    : [entry];
 }
 
 /**

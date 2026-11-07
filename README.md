@@ -82,6 +82,12 @@ ember-evaluator --help
 
 The help output confirms installation. See the [installation guide](docs/users/installation.md) for details, or use the [management container](docs/users/deployment/container-toolbox.md) on Linux servers.
 
+To run the CLI against the TypeScript sources instead of a build, use `pnpm dev`. A fresh checkout needs no manual build: the first command that loads the plugin registry packages the Agent runtime once (`tsc` plus `package-runtime`) before starting.
+
+```bash
+pnpm dev run --tracer http://127.0.0.1:8787 playbook/gsm8k/gsm8k-quick-start.yaml
+```
+
 #### 2. Install the skill
 
 Run this from the project where you want to use the skill, then select your coding agent.

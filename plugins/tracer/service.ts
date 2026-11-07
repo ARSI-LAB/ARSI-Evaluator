@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { TracerConfig } from "./config.js";
+import { collectorCommand, type TracerConfig } from "./config.js";
 
 export type TracerHealth = {
   ok?: boolean;
@@ -135,7 +135,7 @@ export class TracerService {
     const url = new URL(this.config.url);
     const port = url.port || (url.protocol === "https:" ? "443" : "80");
     const args = [
-      this.config.collector,
+      ...collectorCommand(this.config.collector),
       "--host", url.hostname,
       "--port", port,
       "--db", this.config.db,

@@ -46,6 +46,18 @@ function localPath(base: string, value: unknown): string {
   return path;
 }
 
+/** Unbuilt source checkouts import the TypeScript file each manifest compiles from. */
+const SOURCE_RUNTIME = import.meta.url.endsWith(".ts");
+
+function executablePath(base: string, value: unknown): string {
+  const declared = localPath(base, value);
+  if (!SOURCE_RUNTIME || existsSync(declared)) return declared;
+  const rel = relative(base, declared);
+  const sourceRel = rel.replace(/^dist[/\\]/u, "").replace(/\.js$/u, ".ts");
+  const source = resolve(base, sourceRel);
+  return sourceRel !== rel && existsSync(source) ? source : declared;
+}
+
 export function readPluginCatalog(root = fileURLToPath(new URL("../", import.meta.url))): InstalledPlugin[] {
   const index = resolve(root, "dist/external-plugins/index.json");
   let entries: { value: unknown; base: string }[];
@@ -73,8 +85,8 @@ export function readPluginCatalog(root = fileURLToPath(new URL("../", import.met
     if (typeof item.version !== "string" || !item.version.trim()) throw new TypeError(`Missing version for plugin ${item.id}`);
     ids.add(item.id);
     const flags = pluginFlags(item.flags);
-    return { id: item.id, version: item.version, entry: localPath(base, item.entry),
-      ...(item.cli === undefined ? {} : { cli: localPath(base, item.cli) }),
+    return { id: item.id, version: item.version, entry: executablePath(base, item.entry),
+      ...(item.cli === undefined ? {} : { cli: executablePath(base, item.cli) }),
       ...(flags.length === 0 ? {} : { flags }) };
   });
 }

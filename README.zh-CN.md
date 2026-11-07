@@ -82,6 +82,12 @@ ember-evaluator --help
 
 看到帮助信息即安装成功。详细步骤见[安装指南](docs/users/installation.zh-CN.md)，Linux 服务器也可使用[管理容器](docs/users/deployment/container-toolbox.zh-CN.md)。
 
+想直接以 TypeScript 源码运行 CLI，可使用 `pnpm dev`。全新源码树无需先手动构建：第一次执行需要加载插件注册表的命令时，会先一次性打包 Agent 运行时（`tsc` 加 `package-runtime`）再启动。
+
+```bash
+pnpm dev run --tracer http://127.0.0.1:8787 playbook/gsm8k/gsm8k-quick-start.yaml
+```
+
 #### 2. 安装 skill
 
 在要使用 skill 的项目目录中执行以下命令，并选择对应的编程 Agent。

@@ -102,6 +102,21 @@ test("build indexes plugins without CLI and preserves installed entry paths outs
   expect(readPluginCatalog(root)).toEqual(catalog);
 });
 
+test("a source checkout resolves manifest entries to the files they compile from", async () => {
+  const root = await temporary();
+  const plugin = join(root, "plugins/audit");
+  await mkdir(plugin, { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ version: "1.0.0", type: "module" }));
+  await writeFile(join(plugin, "index.ts"), "export function apply() {}\n");
+  await writeFile(join(plugin, "cli-register.ts"), "export {};\n");
+  await writeFile(join(plugin, "ember-plugin.json"), JSON.stringify({
+    schemaVersion: 1, id: "audit", entry: "./dist/index.js", cli: "./dist/cli-register.js",
+  }));
+  expect(readPluginCatalog(root)).toEqual([{
+    id: "audit", version: "1.0.0", entry: join(plugin, "index.ts"), cli: join(plugin, "cli-register.ts"),
+  }]);
+});
+
 test("resume rejects changed options and Ray rejects client paths and secrets", () => {
   const saved = [{ id: "audit", config: { url: "https://audit.invalid", tokenEnv: "AUDIT_TOKEN" } }];
   expect(restorePluginActivations(saved, undefined)).toEqual(saved);

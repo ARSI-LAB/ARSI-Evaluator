@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { parseTracerConfig, resolveTracerConfig } from "./config.js";
+import { collectorCommand, parseTracerConfig, resolveTracerConfig } from "./config.js";
 
 export type TracerAction = "serve" | "stop" | "status" | "logs";
 
@@ -196,7 +196,7 @@ function databaseMismatch(health: Health, tracer: ResolvedTracer): string | null
 function collectorArgs(tracer: ResolvedTracer): string[] {
   const url = new URL(tracer.url);
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  return [tracer.collector, "--host", url.hostname, "--port", port, "--db", tracer.db, "--spool", tracer.spool];
+  return [...collectorCommand(tracer.collector), "--host", url.hostname, "--port", port, "--db", tracer.db, "--spool", tracer.spool];
 }
 
 /** Passes the bearer token through the environment so it never shows up in process listings or error text. */
@@ -270,7 +270,7 @@ function alive(pid: number): boolean {
 function runsCollector(pid: number, collector: string): boolean {
   try {
     const args = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
-    return args.some(argument => argument === collector || argument.endsWith("collector/main.js"));
+    return args.some(argument => argument === collector || argument.endsWith("collector/main.js") || argument.endsWith("collector/main.ts"));
   } catch {
     return true;
   }
