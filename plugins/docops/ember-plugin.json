@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 1,
   "id": "docops",
   "description": "Document operations benchmark running inside a Docker environment",
   "entry": "./dist/index.js",
