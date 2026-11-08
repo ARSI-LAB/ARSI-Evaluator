@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse, stringify } from "yaml";
 
-// External plugins declare themselves in plugins/<name>/ember-plugin.json. Only plugins with such a
-// manifest are compiled and installed into dist/plugins; everything else in plugins/ stays source-only
-// and cannot be reached through the packaged runtime.
+// Repository plugins declare themselves in plugins/<name>/ember-plugin.json. The installed
+// modules are collected in one patch for the packaged runtime.
 const root = fileURLToPath(new URL("..", import.meta.url));
 const pluginsDir = join(root, "plugins");
 const distRoot = join(root, "dist");
@@ -68,7 +68,7 @@ async function loadManifests() {
 }
 
 async function buildPlugin({ name, dir, file, manifest }) {
-  if (manifest.build === undefined) return;
+  if (manifest.build === undefined) return [];
   const { tsconfig: tsconfigEntry, script, install } = manifest.build;
   await rm(join(dir, "dist"), { recursive: true, force: true });
   if (tsconfigEntry !== undefined) {
@@ -98,15 +98,35 @@ async function buildPlugin({ name, dir, file, manifest }) {
       await cp(source, join(target, entry), { recursive: true });
     }
   }
+  let operations = [];
   if (manifest.patch !== undefined) {
     const patchFile = join(dir, manifest.patch);
     if (!existsSync(patchFile)) fail(file, `missing patch: ${relative(root, patchFile)}`);
     // The compiled entry lands at the plugin root, so ./dist/ prefixed entries are rewritten there.
-    const patch = (await readFile(patchFile, "utf8")).replace(/^(\s*name:\s*)\.\/dist\//gmu, "$1./");
+    const patch = (await readFile(patchFile, "utf8")).replace(/^(\s*name:\s*["']?)\.\/dist\//gmu, "$1./");
     await writeFile(join(target, "cordis.patch.yaml"), patch);
+    operations = parse(patch, { maxAliasCount: 100 });
+  } else if (manifest.entry !== undefined) {
+    if (!nonEmptyString(manifest.entry)) fail(file, "entry must point at a compiled module");
+    operations = [{ insert: [{ id: name, name: manifest.entry.replace(/^\.\/dist\//u, "./") }] }];
   }
   await cp(file, join(target, "ember-plugin.json"));
+  if (!Array.isArray(operations) || operations.some(operation => !Array.isArray(operation?.insert))) {
+    fail(file, "plugin patch must contain a list of insert operations");
+  }
+  return operations.map(operation => ({
+    ...operation,
+    insert: operation.insert.map(entry => {
+      if (!nonEmptyString(entry?.name)) fail(file, "plugin patch entry must have a module name");
+      const modulePath = resolve(target, entry.name);
+      if (!entry.name.startsWith("./") || !modulePath.startsWith(target + sep) || !existsSync(modulePath)) {
+        fail(file, `plugin entry must point at an installed module: ${entry.name}`);
+      }
+      return { ...entry, name: `./${relative(distRoot, modulePath).split(sep).join("/")}` };
+    }),
+  }));
 }
 
-const manifests = await loadManifests();
-for (const plugin of manifests) await buildPlugin(plugin);
+const operations = [];
+for (const plugin of await loadManifests()) operations.push(...await buildPlugin(plugin));
+await writeFile(join(distRoot, "bundled-plugins.patch.yaml"), stringify(operations));

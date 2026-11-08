@@ -8,6 +8,7 @@ import { loadConfig as readConfig } from "../../src/config/load.js";
 const loadConfig = (path: string, overrides: Parameters<typeof readConfig>[1], env: Parameters<typeof readConfig>[2]) =>
   readConfig(path, overrides, { FIXTURE_KEY: "fixture-secret", ...env }, { validatePlugins: false });
 import { loadPluginPatch, resolvePlugin } from "../../src/config/plugin-patch.js";
+import { openPluginRegistry } from "../../src/plugin-runtime.js";
 import { apply as registryPlugin } from "../../src/core/registry.js";
 import { LocalEnvironment } from "../../src/plugins/environments/local.js";
 import { DockerEnvironment } from "../../src/plugins/environments/docker.js";
@@ -129,6 +130,27 @@ describe("Cordis evaluator registry", () => {
 });
 
 describe("bootstrap", () => {
+  test.each([undefined, fixture("valid", "cordis.patch.yaml")])("registers repository plugins with patch %s", async patchPath => {
+    const registry = await openPluginRegistry(patchPath);
+    try {
+      expect(registry.ctx.evaluator.has("benchmark", "aisbench")).toBe(true);
+      expect(registry.ctx.evaluator.has("benchmark", "docops")).toBe(true);
+      expect(registry.ctx.evaluator.has("metrics", "fixture-metrics")).toBe(patchPath !== undefined);
+    } finally { await registry.dispose(); }
+  });
+
+  test("accepts the old explicit repository patch without registering its plugin twice", async () => {
+    const patchPath = resolve(import.meta.dirname, "../../plugins/aisbench/cordis.patch.yaml");
+    const registry = await openPluginRegistry(patchPath);
+    try {
+      expect(registry.ctx.evaluator.has("benchmark", "docops")).toBe(true);
+      expect(registry.ctx.evaluator.has("benchmark", "aisbench")).toBe(true);
+      expect(registry.pluginVersions["aisbench-plugin"]).toMatch(/^sha256:/u);
+      expect(registry.entries.find(entry => entry.id === "aisbench-plugin")?.bundledVersion)
+        .toBe(registry.pluginVersions["aisbench-plugin"]);
+    } finally { await registry.dispose(); }
+  });
+
   test("returns no entries when no patch file is selected", async () => {
     const loaded = await loadPluginPatch();
     expect(loaded.entries).toEqual([]);

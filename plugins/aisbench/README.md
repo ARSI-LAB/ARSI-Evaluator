@@ -2,22 +2,20 @@
 
 通过 SSH 在远端 Linux 已有 Python 环境中运行 AISBench，获取吞吐、延迟和 Prefix Cache 测量结果。模型服务、AISBench 和 tokenizer 由使用者提前准备；插件不部署模型或安装远端依赖。
 
-本插件通过 Cordis patch 显式加载，只依赖 `ember-evaluator` 包根公开 API。宿主不加载 patch 时不注册 AISBench，也不扫描本目录。
+本插件随 Evaluator 构建和发布，由 CLI 和 SDK 默认注册。插件只依赖 `ember-evaluator` 包根公开 API。
 
 ## 安装和构建
 
-需要 Node.js 24.22.1（24.x）及 pnpm 11.22.0，宿主版本 `0.1.0`。在仓库根目录先安装宿主依赖，再执行：
+需要 Node.js 24.22.1（24.x）及 pnpm 11.22.0，宿主版本 `0.1.0`。在仓库根目录执行：
 
 ```bash
+pnpm install --frozen-lockfile
 pnpm build
-pnpm --dir plugins/aisbench install --frozen-lockfile
-pnpm --dir plugins/aisbench build
-pnpm --dir plugins/aisbench test
 ```
 
-插件有独立的 package、lockfile、workspace、TypeScript 和 Vitest 配置；宿主 build/test 不会自动构建或测试它。`dist/index.js` 是单文件入口，`dist/profiles/` 和 `dist/runtime/` 是随包资源。构建将资源哈希写入入口，加载时检查完整性；修改 Python、上游脚本或 profile 后必须重新 build。不要手工修改 `dist`。
+插件有独立的 package、lockfile、workspace、TypeScript 和 Vitest 配置；根目录构建会自动构建插件。独立插件测试可用 `pnpm --dir plugins/aisbench test`。`dist/index.js` 是单文件入口，`dist/profiles/` 和 `dist/runtime/` 是随包资源。构建将资源哈希写入入口，加载时检查完整性；修改 Python、上游脚本或 profile 后必须重新 build。不要手工修改 `dist`。
 
-使用 `pnpm --dir plugins/aisbench pack --out <plugin.tgz>` 创建本地分发包。消费者同时安装兼容宿主和该 tarball；宿主为 peer dependency，不随插件打包。运行时指定已安装插件内的 `cordis.patch.yaml`，其 `./dist/index.js` 相对 patch 文件解析。
+使用 `pnpm --dir plugins/aisbench pack --out <plugin.tgz>` 创建本地分发包。旧版 Evaluator 可安装兼容的独立插件包，并用 `--patch` 指定其中的 `cordis.patch.yaml`。
 
 ## 准备和执行
 
@@ -30,11 +28,11 @@ pnpm --dir plugins/aisbench test
 以下命令在仓库根目录运行：
 
 ```bash
-ember-evaluator benchmark list --patch plugins/aisbench/cordis.patch.yaml
-ember-evaluator benchmark info aisbench --patch plugins/aisbench/cordis.patch.yaml
-ember-evaluator doctor plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
-ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml --dry-run --patch plugins/aisbench/cordis.patch.yaml
-ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml --patch plugins/aisbench/cordis.patch.yaml
+ember-evaluator benchmark list
+ember-evaluator benchmark info aisbench
+ember-evaluator doctor plugins/aisbench/playbook/01-ssh.yaml
+ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml --dry-run
+ember-evaluator run plugins/aisbench/playbook/01-ssh.yaml
 ```
 
 `doctor` 和 `--dry-run` 需要解析配置中的环境变量，但不连接 SSH、不调用模型；真正运行才检查远端依赖、版本和目录权限。默认组合是 `aisbench` benchmark、`aisbench-ssh` solver、`local` environment/scheduler（并发 1）、`aisbench-performance`/`duration`/`usage` metrics、`aisbench-markdown` reporter。

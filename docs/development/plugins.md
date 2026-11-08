@@ -112,7 +112,7 @@ export function apply(ctx) {
 - **只做类型检查 + `tsc` 输出**：只声明 `build.tsconfig`，适用于代码直接编译为 ESM 的插件。
 - **自定义打包脚本**：声明 `build.script`，由插件自己的脚本产出 `dist/`，适用于需要 esbuild 打包、生成资源哈希或复制静态资源的插件（如 aisbench、docops）。两种方式可以叠加，先执行 `tsc` 校验，再执行脚本。
 
-只通过 `--patch` 加载的插件声明 `patch`，让构建把补丁文件一并安装到 `dist/plugins/<id>/`。以 [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json) 为例：
+构建把仓库插件的可执行入口汇总到 `dist/bundled-plugins.patch.yaml`，CLI、SDK 和 Ray 在初始化注册表时都会加载。插件声明了 `patch` 时，保留其中的模块 ID，并把原 patch 一并安装到 `dist/plugins/<id>/`。只声明 `entry` 时，使用清单的 `id` 注册模块。以 [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json) 为例：
 
 ```json
 {
@@ -125,10 +125,10 @@ export function apply(ctx) {
 }
 ```
 
-加载方式：
+随包插件可直接在实验配置中使用。
 
 ```bash
-ember-evaluator run experiment.yaml --patch dist/plugins/aisbench/cordis.patch.yaml
+ember-evaluator run experiment.yaml
 ```
 
 | 字段 | 必填 | 说明 |
@@ -136,8 +136,8 @@ ember-evaluator run experiment.yaml --patch dist/plugins/aisbench/cordis.patch.y
 | `id` | 是 | 必须与目录名一致，同时决定 `dist/plugins/<id>/` 的位置 |
 | `description` | 否 | 插件说明 |
 | `version` | 否 | 省略时继承根 `package.json` 的版本，避免两处维护 |
-| `entry` | 否 | 插件模块入口，指向编译后的 JS；也用于 `--patch` 中指向自身的入口 |
-| `bundled` | 否 | `true` 表示随宿主发布的内置插件 |
+| `entry` | 否 | 编译后的 JS 入口，未声明 `patch` 时用于默认加载 |
+| `bundled` | 否 | 随包发布的描述字段，默认注册由已安装的入口决定 |
 | `patch` | 否 | 指向插件目录下的 `cordis.patch.yaml`；构建时复制到 `dist/plugins/<id>/`，并把其中 `./dist/` 前缀改写为 `./` |
 | `build.tsconfig` | 有 `build` 且无 `build.script` 时必填 | 插件自己的 tsconfig，用于类型检查（`noEmit`）或输出到 `dist` |
 | `build.script` | 有 `build` 且无 `build.tsconfig` 时必填 | 插件自带的 Node 打包脚本，以插件目录为工作目录执行，负责产出 `dist/` |
@@ -194,7 +194,7 @@ metrics:                       # 显式列表会替换默认指标，需保留�
     # config: {}               # 组件参数写在这里；本示例插件不接受非空参数
 ```
 
-运行时显式指定 patch；省略 `--patch` 时只加载内置组件：
+`--patch` 在默认组件之外追加插件。相同 ID 和入口摘要只注册一次，相同 ID 的不同模块会报错。
 
 ```bash
 ember-evaluator run experiments/gsm8k.yaml --patch <path>/plugins/cordis.patch.yaml
