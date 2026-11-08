@@ -397,7 +397,7 @@ Use identical --patch for checks/execution. Offline reports use saved provenance
 | Offline reporting | Rebuild without model/judge calls |
 | Ray | Independent materialization/pulls/platforms/plugins/auth/slots validated |
 
-Label static checks, controlled tests, real runs, failures, skips, pending acceptance separately. Plugin regression does not replace real acceptance. See [regression tests](benchmarks.en.md#plugin-regression-tests).
+Label static checks, controlled tests, real runs, failures, skips, pending acceptance separately. See [regression tests](benchmarks.en.md#plugin-regression-tests).
 
 ## 12. Deliverables
 

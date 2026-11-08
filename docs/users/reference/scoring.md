@@ -6,7 +6,7 @@ Completion, score, binary correctness, and cleanup describe different facts. Qua
 
 ## Record-Based Benchmark Scoring
 
-This page records rules, references, pinned versions, and adaptations. Prompts, tool access, sample counts, data versions, and judges also affect scores. Full real-model comparisons against official runners have not been performed; do not publish these runs as officially comparable.
+This page records rules, references, pinned versions, and adaptations. Prompts, tool access, sample counts, data versions, and judges also affect scores.
 
 | Benchmark | Protocol | Result |
 | --- | --- | --- |

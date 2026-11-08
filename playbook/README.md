@@ -4,6 +4,8 @@
 
 每个 Benchmark 使用一个子目录，YAML 直接放在 `playbook/<benchmark>/` 下，不再按 Solver、版本或场景建立更深目录；这些差异通过文件名区分。
 
+此目录只放真实 Benchmark 使用的实验 YAML 及配套网络 YAML。自建测试题目、测试配置、插件、Bundle 和素材放在 `tests/fixtures/`，临时测试输出放在 `.scratch/`。
+
 第一次使用先完成[安装说明](../docs/users/installation.zh-CN.md)，再按[两题快速上手](../docs/users/quick-start.zh-CN.md)检查环境。示例可能需要专用 Bundle、镜像、裁判或 Ray，运行前先阅读注释并执行 doctor。
 
 | Benchmark | 目录 | 运行配置 |

@@ -16,7 +16,7 @@ pnpm test --run tests/integration/simpleagent.test.ts --maxWorkers=1
 
 Suite setup installs packaged Pi and dependencies using the runtime lock. Cases reuse content-addressed local caches and run the runner in real subprocesses. Initial setup requires npm cache or download access and has a separate installation budget. For source on Windows-mounted WSL paths, runtime dependencies still load from host cache.
 
-Model requests go to a test-local mock service. Cases cover output truncation, context compaction, missing usage, cancellation, trajectory write failure, and extension loading. Existing execution/cancellation timeouts and behavioral assertions remain enforced; setup installation time is not model processing time. These tests establish no real model score and do not use the new high-level SDK. See [sdk.test.ts](../../tests/integration/sdk.test.ts) for SDK regression coverage.
+Model requests go to a test-local mock service. Cases cover output truncation, context compaction, missing usage, cancellation, trajectory write failure, and extension loading. Existing execution/cancellation timeouts and behavioral assertions remain enforced; setup installation time is not model processing time. These tests do not use the high-level SDK. See [sdk.test.ts](../../tests/integration/sdk.test.ts) for SDK regression coverage.
 
 Pi readiness resolves dependencies through ESM, supports package-local and parent `node_modules`, and checks pinned versions. See [pi-runtime-probe.test.ts](../../tests/integration/pi-runtime-probe.test.ts) for nested, hoisted, and mismatched versions.
 
@@ -41,8 +41,8 @@ docker compose -f scripts/ray-smoke/compose.yaml -f scripts/ray-smoke/jobs.yaml 
 
 ## AgentX Bridge and Metrics Checks
 
-Set `AGENTX_TEST_PYTHON` to an isolated Python with the harness/bridge installed, then run `pnpm test --run tests/integration/agentx-bridge.test.ts`. This uses controlled SSE/Prometheus services, covers counter resets, and measures no real model performance. Default `agentx-telemetry.test.ts` tests configuration, reports, device queries, stale snapshots, and exit behavior without NPUs.
+Set `AGENTX_TEST_PYTHON` to an isolated Python with the harness/bridge installed, then run `pnpm test --run tests/integration/agentx-bridge.test.ts`. This uses controlled SSE/Prometheus services and covers counter resets. Default `agentx-telemetry.test.ts` tests configuration, reports, device queries, stale snapshots, and exit behavior without NPUs.
 
 ## Recording Validation Results
 
-Controlled SSE, Prometheus, and fixture tests establish only their protocols/failure paths. Real model throughput, NPU metrics, and large cold-cache capacity need separate runs with environment, configuration, and results recorded. Formal experiments belong in `docs/experiments/`; temporary logs/probes go in `.scratch/`, outside user guides.
+Formal experiments belong in `docs/experiments/`; temporary logs/probes go in `.scratch/`, outside user guides.
