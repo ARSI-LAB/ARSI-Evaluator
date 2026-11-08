@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
 
 import { expectNonEmptyString, expectRecord, rejectUnknown } from "./schema.js";
 import { BUILTIN_RUNTIME_ID } from "../core/builtin-runtime.js";
-import { PACKAGE_RUNTIME_ID } from "../core/package-provenance.js";
+import { PACKAGE_RUNTIME_ID, packageDirectory } from "../core/package-provenance.js";
 
 export type PluginPatchEntry = {
   id: string;
@@ -27,6 +27,10 @@ export type ResolvedPlugin = {
 };
 
 export const PATCH_METADATA_ID = "cordis.patch.yaml";
+
+export function bundledPluginPatchPath(): string {
+  return fileURLToPath(new URL("bundled-plugins.patch.yaml", packageDirectory()));
+}
 
 function digest(content: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;

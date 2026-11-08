@@ -112,7 +112,7 @@ Two build modes are available:
 - **Type check plus `tsc` emit**: declare only `build.tsconfig`, for plugins that compile straight to ESM.
 - **Custom bundling script**: declare `build.script` and let the plugin produce `dist/` itself, for plugins that need esbuild, resource hashes, or static asset copies (such as aisbench and docops). Both may be combined: `tsc` runs first, then the script.
 
-Plugins loaded only through `--patch` declare `patch`, so the build installs the patch file into `dist/plugins/<id>/`. Example: [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json):
+The build collects repository plugin entrypoints in `dist/bundled-plugins.patch.yaml`. The CLI, SDK, and Ray load it when opening the registry. When the manifest declares `patch`, the build preserves its module IDs and installs the original patch in `dist/plugins/<id>/`. With only `entry`, it uses the manifest's `id`. For example, see [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json):
 
 ```json
 {
@@ -125,10 +125,10 @@ Plugins loaded only through `--patch` declare `patch`, so the build installs the
 }
 ```
 
-Load it with:
+Use bundled plugins directly in an experiment configuration.
 
 ```bash
-ember-evaluator run experiment.yaml --patch dist/plugins/aisbench/cordis.patch.yaml
+ember-evaluator run experiment.yaml
 ```
 
 | Field | Required | Meaning |
@@ -136,8 +136,8 @@ ember-evaluator run experiment.yaml --patch dist/plugins/aisbench/cordis.patch.y
 | `id` | Yes | Must equal the directory name and decides the `dist/plugins/<id>/` location |
 | `description` | No | Plugin summary |
 | `version` | No | Inherits the root `package.json` version when omitted, so it is maintained in one place |
-| `entry` | No | Plugin module entry pointing at compiled JS; used by `--patch` entries that point at the plugin itself |
-| `bundled` | No | `true` marks a plugin shipped with the host |
+| `entry` | No | Compiled JS entry used for default loading when `patch` is absent |
+| `bundled` | No | Describes package inclusion. Installed entrypoints determine default registration |
 | `patch` | No | Path to the plugin's `cordis.patch.yaml`; copied into `dist/plugins/<id>/` with every `./dist/` prefix rewritten to `./` |
 | `build.tsconfig` | With `build` and without `build.script` | The plugin's own tsconfig, used for a type check (`noEmit`) or to emit into `dist` |
 | `build.script` | With `build` and without `build.tsconfig` | Plugin-owned Node bundling script run with the plugin directory as cwd; produces `dist/` |
@@ -194,7 +194,7 @@ metrics:                       # Explicit lists replace defaults; include built-
     # config: {}               # Component options go here; this example rejects nonempty options
 ```
 
-Pass patches explicitly; omission loads built-ins only:
+`--patch` adds plugins to the default set. An identical ID and entry digest register once. An ID shared by different modules raises an error.
 
 ```bash
 ember-evaluator run experiments/gsm8k.yaml --patch <path>/plugins/cordis.patch.yaml

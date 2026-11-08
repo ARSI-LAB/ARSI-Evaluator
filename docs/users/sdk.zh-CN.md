@@ -69,7 +69,7 @@ try {
 | --- | --- |
 | `configPath` | 实验 YAML；相对路径以调用时的当前目录解析 |
 | `networkConfigPath` | 网络 YAML，路径相对当前工作目录；省略时读取 `EVALUATOR_NETWORK_CONFIG`，再读取 `~/.ember-evaluator/network.yaml` |
-| `patchPath` | 显式插件 patch；相对当前目录解析，不自动扫描配置旁的 patch |
+| `patchPath` | 在默认注册的随包插件之外追加插件。路径相对当前目录解析 |
 | `overrides` | 与 CLI 相同的模型覆盖项：`model`、`endpoint`、`apiKey`、`apiKeyEnv` |
 | `env` | 用于 YAML 变量展开和模型认证，省略时使用 `process.env`；显式传入时使用该对象，不自动合并 |
 | `signal` | 调用方的 `AbortSignal` |

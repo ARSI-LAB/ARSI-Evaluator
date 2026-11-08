@@ -67,6 +67,22 @@ test("SDK applies YAML offset and maxTasks", async () => {
   await released(root);
 });
 
+test("SDK uses bundled reporting alongside an explicit plugin and rebuilds the report", async () => {
+  const { options } = await fixture("pass", { metrics: ["aisbench-performance"], reporter: "aisbench-markdown" });
+  const sdk = new Evaluator();
+  const result = await sdk.run(options);
+  if (result.kind !== "local") throw new Error("Expected a local result");
+  expect(result.exitCode).toBe(0);
+  expect(await sdk.report(result.runDirectory)).toBe(result.reportPath);
+  expect(await readFile(join(result.runDirectory, "metrics.json"), "utf8")).toContain("aisbench-performance");
+});
+
+test("SDK rejects a different plugin using a bundled plugin ID", async () => {
+  const { root, options } = await fixture();
+  await writeFile(join(root, "patch.yaml"), JSON.stringify([{ insert: [{ id: "aisbench-plugin", name: "./plugin.mjs" }] }]));
+  await expect(new Evaluator().run(options)).rejects.toThrow(/aisbench-plugin conflicts with a bundled plugin/u);
+});
+
 test("SDK resumes the same run and rebuilds a report without authentication", async () => {
   const { root, options } = await fixture();
   const sdk = new Evaluator();

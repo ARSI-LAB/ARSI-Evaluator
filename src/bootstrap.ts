@@ -70,7 +70,7 @@ export async function bootstrap(
     { role: "reporter" as const, name: config.experiment.reporter.name },
   ];
   const registry = sharedRegistry ?? await openPluginRegistry(patchPath);
-  const { ctx, patch, pluginVersions } = registry;
+  const { ctx, patch, entries, pluginVersions } = registry;
   const reportingProviders = Object.fromEntries(reportingSelections.flatMap(selection => {
     const key = `${selection.role}:${selection.name}`;
     const provider = registry.reportingProviders[key];
@@ -112,7 +112,7 @@ export async function bootstrap(
       pluginRuntime: {
         configDirectory: runtime.configDirectory,
         ...(patch.patchPath === null ? {} : { patchPath: patch.patchPath }),
-        entries: structuredClone(patch.entries),
+        entries: structuredClone(entries),
         reportingProviders,
       },
       async dispose() {

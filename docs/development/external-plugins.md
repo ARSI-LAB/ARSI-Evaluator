@@ -207,7 +207,7 @@ ember-evaluator run experiment.yaml --patch cordis.patch.yaml
 - `--dry-run` 还会解析数据来源、枚举并选择题目，可能联网下载数据。它不会调用 Solver，也不会验证指标计算、报告渲染及全部运行时能力。
 - 正式运行会调用模型。成功后检查输出 run 目录下 `metrics.json` 的 `metrics.valid-count`，本例选中数应为 1；`valid` 由实际评分状态决定。内置 Markdown 不保证展示任意自定义指标，先以 `metrics.json` 验证结果。
 
-`--patch` 相对当前工作目录；patch 中的文件路径和包解析相对 patch 目录；实验中的 `output.directory` 及工厂用 `resolvePath()` 解析的路径相对实验 YAML 目录。省略 `--patch` 只加载内置插件，不会扫描同目录的 patch。
+`--patch` 在默认组件之外追加插件，路径相对当前工作目录。patch 中的模块路径和包解析相对 patch 目录。实验中的 `output.directory` 及工厂用 `resolvePath()` 解析的路径相对实验 YAML 目录。
 
 续跑仍显式传入相同 patch：
 
