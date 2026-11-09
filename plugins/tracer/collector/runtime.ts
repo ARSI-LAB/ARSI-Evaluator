@@ -26,6 +26,8 @@ export interface Cfg {
 export class AsyncQueue<T> {
   private readonly items: T[] = [];
   private readonly waiters: Array<(item: T) => void> = [];
+  private readonly idle: Array<() => void> = [];
+  private pending = 0;
   private closed = false;
 
   constructor(private readonly capacity: number) {}
@@ -38,10 +40,12 @@ export class AsyncQueue<T> {
   push(item: T): boolean {
     const waiter = this.waiters.shift();
     if (waiter !== undefined) {
+      this.pending += 1;
       waiter(item);
       return true;
     }
     if (this.items.length >= this.capacity) return false;
+    this.pending += 1;
     this.items.push(item);
     return true;
   }
@@ -53,6 +57,18 @@ export class AsyncQueue<T> {
     return new Promise<T | undefined>(resolve => {
       this.waiters.push(resolve as (item: T) => void);
     });
+  }
+
+  /** Marks the last shifted item as processed, which is what whenIdle() observes. */
+  complete(): void {
+    this.pending -= 1;
+    if (this.pending === 0) for (const resolve of this.idle.splice(0)) resolve();
+  }
+
+  /** Resolves once every item enqueued so far has been processed. */
+  whenIdle(): Promise<void> {
+    if (this.pending === 0) return Promise.resolve();
+    return new Promise<void>(resolve => this.idle.push(resolve));
   }
 
   close(): void {

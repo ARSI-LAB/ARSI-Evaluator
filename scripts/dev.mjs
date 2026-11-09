@@ -32,12 +32,14 @@ const runtimeAssets = [
   "dist/adapters/harness/pi/runner.js",
   "dist/adapters/harness/pi/builtin-provenance.json",
   "dist/package-provenance.json",
+  "dist/bundled-plugins.patch.yaml",
 ].map(path => resolve(root, path));
 
 if (!RUNTIME_FREE && runtimeAssets.some(path => !existsSync(path))) {
-  process.stderr.write("[dev] packaging the Agent runtime once (tsc + package-runtime)\n");
+  process.stderr.write("[dev] packaging the Agent runtime and plugins once (tsc + build-plugins + package-runtime)\n");
   for (const step of [
     ["node_modules/typescript/bin/tsc", ["-p", "tsconfig.build.json"]],
+    ["scripts/build-plugins.mjs", []],
     ["scripts/package-runtime.mjs", []],
   ]) {
     const code = await exec(process.execPath, [step[0], ...step[1]]);

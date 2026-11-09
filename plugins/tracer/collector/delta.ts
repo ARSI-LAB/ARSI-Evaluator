@@ -93,6 +93,21 @@ function diff(current: unknown, previous: unknown): number | null {
   return round(current - previous, 4);
 }
 
+/** Config values nest objects and arrays (for example run.taskIds); reference equality would report them as changed. */
+function sameValue(current: unknown, previous: unknown): boolean {
+  if (current === previous) return true;
+  if (Array.isArray(current) || Array.isArray(previous)) {
+    return Array.isArray(current) && Array.isArray(previous) && current.length === previous.length
+      && current.every((item, index) => sameValue(item, previous[index]));
+  }
+  if (current === null || previous === null || typeof current !== "object" || typeof previous !== "object") return false;
+  const left = current as Obj;
+  const right = previous as Obj;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length
+    && keys.every(key => Object.hasOwn(right, key) && sameValue(left[key], right[key]));
+}
+
 /** Adaptive millisecond units: values like 2270415ms are unreadable as raw milliseconds. */
 function fmtMs(value: unknown, signed = false): string {
   if (!isNumber(value)) return "—";
@@ -129,7 +144,7 @@ function attribution(currentRun: Obj | null, parentRun: Obj | null, lang: Lang):
   const unchanged: string[] = [];
   for (const [key] of DOMAIN_KEYS) {
     if (!(key in current) || !(key in previous)) continue;
-    if (current[key] === previous[key]) unchanged.push(key);
+    if (sameValue(current[key], previous[key])) unchanged.push(key);
     else changed.push(key);
   }
   const domains: string[] = [];

@@ -529,6 +529,7 @@ export async function consumer(): Promise<void> {
           // Already removed.
         }
       }
+      RT.st.queue.complete();
     }
   }
 }

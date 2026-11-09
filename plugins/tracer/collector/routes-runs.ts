@@ -75,6 +75,10 @@ export function registerRunRoutes(router: Router): void {
     if (RT.store === null) return storeDisabled();
     await ctx.body();
     const epoch = ctx.params.epoch!;
+    // The client exports signals/conclusion as soon as this responds, so the
+    // spooled evidence has to be in SQLite first; otherwise a backlog silently
+    // drops the last batches from the exported analysis.
+    await RT.st.queue.whenIdle();
     const run = RT.store.finishRun(epoch);
     // analysis_pending tells callers to keep polling /v1/feedback for LLM results.
     const pendingAnalysis = pending(RT.store, epoch);
