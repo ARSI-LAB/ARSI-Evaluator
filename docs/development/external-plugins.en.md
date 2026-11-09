@@ -207,7 +207,7 @@ ember-evaluator run experiment.yaml --patch cordis.patch.yaml
 - `--dry-run` also resolves the dataset, enumerates tasks, and selects them; it may download data. It does not call the Solver or validate metric computation, report rendering, and every runtime capability.
 - A real run calls the model. Inspect `metrics.valid-count` in the output run's `metrics.json`. This example selects one task; `valid` depends on its scoring status. The built-in Markdown reporter does not guarantee display of arbitrary custom metrics, so verify the JSON first.
 
-`--patch` is relative to the process working directory. Module paths and package resolution are relative to the patch directory. Experiment output and factory paths resolved by `resolvePath()` are relative to the experiment YAML. Omitting `--patch` loads only built-ins; adjacent patch files are not discovered automatically.
+`--patch` adds plugins to the default set, with a path relative to the working directory. Module paths and package resolution are relative to the patch directory. Experiment output and factory paths resolved by `resolvePath()` are relative to the experiment YAML.
 
 Resume with the same explicit patch:
 

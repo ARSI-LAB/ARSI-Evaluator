@@ -46,10 +46,12 @@ export async function verifyPackageDirectory(root: string): Promise<string> {
   return digest;
 }
 
+export function packageDirectory(): URL {
+  const local = new URL("../", import.meta.url);
+  return local.pathname.endsWith("/src/") ? new URL("../../dist/", import.meta.url) : local;
+}
+
 /** Verify at run bootstrap and Ray startup; do not cache across deployments. */
 export async function loadPackageDigest(): Promise<string> {
-  const local = new URL("../", import.meta.url);
-  // Source execution verifies its built distributable; installed execution verifies itself.
-  const root = local.pathname.replaceAll("\\", "/").endsWith("/src/") ? new URL("../../dist/", import.meta.url) : local;
-  return await verifyPackageDirectory(fileURLToPath(root));
+  return await verifyPackageDirectory(fileURLToPath(packageDirectory()));
 }

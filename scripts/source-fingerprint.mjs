@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const buildInputs = [
   "src",
+  "plugins",
   "scripts",
   "package.json",
   "pnpm-lock.yaml",
@@ -15,13 +16,15 @@ const buildInputs = [
   "tsconfig.build.json",
 ];
 
+const generatedDirectories = new Set(["__pycache__", "node_modules", "dist"]);
+
 async function filesAt(path, files) {
   const stat = await lstat(path);
   if (stat.isSymbolicLink()) throw new Error(`Build input is a symlink: ${path}`);
   if (stat.isDirectory()) {
     for (const name of (await readdir(path)).sort()) {
-      // Python imports can create bytecode during tests without changing build inputs.
-      if (name === "__pycache__" || /\.py[co]$/u.test(name)) continue;
+      // Generated caches, installed dependencies, and build outputs are not source inputs.
+      if (generatedDirectories.has(name) || /\.py[co]$/u.test(name)) continue;
       await filesAt(join(path, name), files);
     }
   } else if (stat.isFile()) {

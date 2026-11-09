@@ -69,7 +69,7 @@ Set the YAML model variables in the current terminal as shown in [quick start](q
 | --- | --- |
 | `configPath` | Experiment YAML; relative to the working directory at call time |
 | `networkConfigPath` | Network YAML, relative to the working directory; defaults to `EVALUATOR_NETWORK_CONFIG`, then `~/.ember-evaluator/network.yaml` |
-| `patchPath` | Explicit plugin patch, relative to the current directory; no automatic scan beside configuration |
+| `patchPath` | Adds plugins alongside bundled defaults. The path is relative to the current directory |
 | `overrides` | CLI-equivalent `model` `overrides`: `model`, `endpoint`, `apiKey`, `apiKeyEnv` |
 | `env` | YAML variable expansion and model authentication; defaults to `process.env`; an explicit object replaces it without merging |
 | `signal` | Caller-provided `AbortSignal` |
