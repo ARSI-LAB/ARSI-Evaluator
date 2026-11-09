@@ -63,7 +63,7 @@ Ember Evaluator 用 YAML 选择任务和组件，用 `--patch` 加载自定义�
 
 #### 1. 安装 CLI
 
-准备 Node.js 24.x（至少 24.22.1）、pnpm 11 或 12，以及能读取私有 AgentBundle 仓库的 Git。缺少 pnpm 时，先执行 `npm install --global pnpm`。
+准备 Node.js 24.x（至少 24.22.1）、pnpm 11 或 12 和 Git。缺少 pnpm 时，先执行 `npm install --global pnpm`。
 
 ```bash
 git clone https://github.com/evolving-foundry/ember-evaluator.git

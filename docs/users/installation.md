@@ -6,7 +6,7 @@
 
 ## Install from Source
 
-Prepare the Evaluator repository, Node.js **24.22.1 or later 24.x**, pnpm **11 or 12**, and Git. The installation machine needs GitHub read access to the [private AgentBundle repository](https://github.com/evolving-foundry/agentbundle).
+Prepare the Evaluator repository, Node.js **24.22.1 or later 24.x**, pnpm **11 or 12**, and Git.
 
 If pnpm is missing, run `npm install --global pnpm`. Then run these commands from the **Evaluator repository root**:
 
@@ -16,7 +16,7 @@ pnpm add -g .
 ember-evaluator --help
 ```
 
-The help output confirms installation. Dependencies and builds are handled automatically; no separate AgentBundle clone or build command is needed. Keep the Evaluator directory and its dependencies.
+The help output confirms installation. pnpm fetches the AgentBundle SDK from its public GitHub repository and builds it automatically. Keep the Evaluator directory and its dependencies. [AgentBundle on GitHub](https://github.com/evolving-foundry/agentbundle)
 
 Top-level `--help` lists command purposes. Use `ember-evaluator run --help` for run parameters, or `ember-evaluator cleanup images --help` for nested commands. Each command describes its arguments and options.
 

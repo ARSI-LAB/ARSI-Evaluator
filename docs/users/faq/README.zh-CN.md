@@ -10,7 +10,7 @@
 
 ### 为什么使用 SimpleAgent 也会安装 AgentBundle？
 
-Evaluator 导入内置插件时需要 AgentBundle SDK，因此 pnpm 会自动下载并构建它，即使本次选择 SimpleAgent。无需手动克隆 AgentBundle，但安装机器需要 GitHub 私仓的读取权限。这与待评测的 `AGENT_BUNDLE_PATH` 不同。完整命令见[安装指南](../installation.zh-CN.md#直接安装)。
+Evaluator 导入内置插件时会用到 AgentBundle SDK，因此即使选择 SimpleAgent，pnpm 也会自动下载并构建这个依赖。`AGENT_BUNDLE_PATH` 指向要评测的 Bundle。 [安装指南](../installation.zh-CN.md#直接安装)
 
 ### 为什么换到另一个目录后找不到命令或配置？
 

@@ -63,7 +63,7 @@ Run ember-evaluator --help and confirm that this agent can discover and read the
 
 #### 1. Install the CLI
 
-Use Node.js 24.x (at least 24.22.1), pnpm 11 or 12, and Git with read access to the private AgentBundle repository. If needed, install pnpm with `npm install --global pnpm`.
+Use Node.js 24.x (at least 24.22.1), pnpm 11 or 12, and Git. If needed, install pnpm with `npm install --global pnpm`.
 
 ```bash
 git clone https://github.com/evolving-foundry/ember-evaluator.git

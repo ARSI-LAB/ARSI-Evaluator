@@ -8,7 +8,7 @@
 
 ## 1. 准备安装与 Docker
 
-先按[源码安装](../installation.zh-CN.md#直接安装)配置 GitHub 读取权限并安装、构建 Evaluator。AgentBundle SDK 会自动下载和构建，无需手动克隆。
+先安装并构建 Evaluator。pnpm 会自动下载并构建 AgentBundle SDK。 [源码安装](../installation.zh-CN.md#直接安装)
 
 按安装指南注册 `ember-evaluator` 后，在 Evaluator 仓库根目录执行以下命令，以便读取仓库中的 Playbook。执行机器还需要可用的 Docker Engine，以及模型 API、任务数据与镜像的访问条件。
 

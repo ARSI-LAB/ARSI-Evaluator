@@ -6,7 +6,7 @@
 
 ## 直接安装
 
-准备好 Evaluator 仓库、Node.js **24.22.1 或更新的 24.x**、pnpm **11 或 12** 和 Git。安装机器需要有 [AgentBundle 私仓](https://github.com/evolving-foundry/agentbundle)的 GitHub 读取权限。
+准备好 Evaluator 仓库、Node.js **24.22.1 或更新的 24.x**、pnpm **11 或 12** 和 Git。
 
 没有 pnpm 时，先运行 `npm install --global pnpm`。然后在 **Evaluator 仓库根目录**执行：
 
@@ -16,7 +16,7 @@ pnpm add -g .
 ember-evaluator --help
 ```
 
-看到帮助信息即安装成功。依赖和构建会自动完成，无需单独克隆 AgentBundle 或再次执行构建。请保留 Evaluator 目录及其依赖。
+看到帮助信息即安装成功。pnpm 会从公开的 GitHub 仓库下载 AgentBundle SDK 并自动构建。请保留 Evaluator 目录及其依赖。 [AgentBundle 仓库](https://github.com/evolving-foundry/agentbundle)
 
 顶层 `--help` 列出各命令用途。使用 `ember-evaluator run --help` 查看运行参数，使用 `ember-evaluator cleanup images --help` 查看嵌套命令；各命令的帮助会列出位置参数和选项含义。
 
