@@ -101,12 +101,12 @@ export function apply(ctx) {
 
 Execution components receive the experiment's `npu` or `gpu` selection through `runtime.hardware`, supplied by bootstrap and Ray workers. Historical SDK callers that omit it mean NPU. Accelerator-dependent plugins select an implementation and reject unsupported hardware before allocating resources; other plugins need not probe devices. Metrics/Reporter keep their reporting context and never probe hardware for offline reports.
 
-TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Compile to JavaScript first; CLI does not load `.ts` entries.
+TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Released packages only load compiled JavaScript; `pnpm dev` started from source falls back to the matching `.ts` file declared by the manifest.
 
 
 ## Building and extending repository plugins
 
-`pnpm build` scans `plugins/*/ember-plugin.json`, compiles and copies files to `dist/external-plugins/<id>`, and writes the complete `dist/external-plugins/index.json` catalog. Plugins without CLI commands are included. Core evaluation components stay in src/plugins and their dist/plugins output is never overwritten.
+`pnpm build` scans `plugins/*/ember-plugin.json`, validates each manifest, builds it, and installs the declared files into `dist/plugins/<id>/`; it also writes `dist/bundled-plugins.patch.yaml` and the `dist/plugins/index.json` catalog. Directories without a manifest are not compiled or copied and can only be imported from source.
 
 ```json
 {
@@ -123,11 +123,23 @@ TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryCon
 }
 ```
 
-ID must match the directory name. Version defaults to the host version. entry is the Cordis entry; optional cli loads CLI registrations. Omit build.tsconfig for precompiled JavaScript; otherwise compilation targets the plugin's dist directory. Required build.install accepts relative paths or from/to resource copies. Manifest paths remain valid after installation; escaping paths and symlinks are rejected.
+ID must match the directory name. Version defaults to the host version. entry is the Cordis entry; optional cli loads CLI registrations. Both build.tsconfig and build.script are optional: install precompiled JavaScript by declaring only build.install, and a declared tsconfig runs `tsc` during the build. Required build.install accepts relative paths or from/to resource copies; `dist` contents are flattened into `dist/plugins/<id>/` while other paths keep their relative location. Manifest paths remain valid after installation; escaping paths and symlinks are rejected.
+
+Build output:
+
+```text
+dist/plugins/
+├── <id>/
+│   ├── ember-plugin.json  # copied verbatim for runtime provenance
+│   ├── cordis.patch.yaml  # only when the manifest declares patch
+│   └── index.js
+```
+
+The manifest entry is the compiled path relative to the plugin directory (for example `./dist/index.js`) and lands under `dist/plugins/<id>/`. When started directly from TypeScript sources (`pnpm dev`), a missing declared artifact falls back to the matching `.ts` file; released packages only load compiled JavaScript.
 
 When a plugin only adds options to an existing command, declare `flags` instead of shipping a CLI module: the host registers them from the manifest, `command` currently supports `run`, flags use `--name`, `--name <value>` or `--name [value]`, and `config` names the activation key written when the flag carries a value. `flags` and `cli` may be combined; conflict checks cover both. Use a `cli` module for dedicated subcommands or dynamic logic.
 
-Plugins that need esbuild or other custom output may declare `build.script`, executed with the plugin directory as cwd; the script owns the `dist` output, so a declared `build.tsconfig` does not run `tsc` during the build and root `pnpm typecheck` covers those sources. Plugins loaded only through `--patch` declare `patch`, and the build copies `cordis.patch.yaml` into the installed directory.
+Plugins that need esbuild or other custom output may declare `build.script`, executed with the plugin directory as cwd; the script owns the `dist` output. When `build.tsconfig` is also declared, `tsc` runs before the script. Plugins loaded only through `--patch` declare `patch`, and the build copies `cordis.patch.yaml` into the installed directory and rewrites its `./dist/` prefix to `./`.
 
 The CLI module exports `registerCli(cli: PluginCliRegistrar)`, importing types from `ember-evaluator`:
 

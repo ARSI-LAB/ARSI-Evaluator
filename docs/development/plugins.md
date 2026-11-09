@@ -101,12 +101,12 @@ export function apply(ctx) {
 
 执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，bootstrap 和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
 
-使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
+使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。发布产物只加载已编译的 JavaScript；从源码启动的 `pnpm dev` 会按清单回退到对应的 `.ts` 文件。
 
 
 ## 仓库插件构建与扩展
 
-`pnpm build` 扫描 `plugins/*/ember-plugin.json`，编译和复制资源到 `dist/external-plugins/<id>`，生成完整索引 `dist/external-plugins/index.json`。无 CLI 的插件也进入索引。`src/plugins` 只存放八类评测组件，其 `dist/plugins` 产物不会被外部插件覆盖。
+`pnpm build` 扫描 `plugins/*/ember-plugin.json`，依次校验清单、按清单构建，并把声明的文件安装到 `dist/plugins/<id>/`；构建同时生成 `dist/bundled-plugins.patch.yaml` 和索引 `dist/plugins/index.json`。没有清单的目录不编译、不复制，只能在源码中直接 import。
 
 ```json
 {
@@ -123,11 +123,23 @@ export function apply(ctx) {
 }
 ```
 
-ID 必须与目录名一致。version 默认使用宿主包版本。entry 是 Cordis 入口，cli 是可选的 CLI 注册模块。可省略 build.tsconfig 来安装已经编译的 JavaScript；指定时编译输出固定到插件目录下的 dist。build.install 必填；字符串保持相对路径，from/to 指定资源复制位置。安装后清单的相对路径仍然有效，越界路径和符号链接会被拒绝。
+ID 必须与目录名一致。version 默认继承宿主包版本。entry 是 Cordis 入口，cli 是可选的 CLI 注册模块。build.tsconfig 和 build.script 都可省略：只安装已编译的 JavaScript 时给出 build.install 即可，声明 tsconfig 时构建会执行 tsc。build.install 必填；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置。安装后清单的相对路径仍然有效，越界路径和符号链接会被拒绝。
+
+构建产物：
+
+```text
+dist/plugins/
+├── <id>/
+│   ├── ember-plugin.json  # 原样复制，便于运行时追溯来源
+│   ├── cordis.patch.yaml  # 仅在清单声明 patch 时存在
+│   └── index.js
+```
+
+清单中的 entry 是相对插件目录的编译产物路径（如 `./dist/index.js`），安装后位于 `dist/plugins/<id>/` 下。从 TypeScript 源码直接启动（`pnpm dev`）时，若声明的产物不存在，入口回退到对应的 `.ts` 文件；发布产物只加载已编译的 JavaScript。
 
 只给已有命令加参数时，可声明 `flags` 而不写 CLI 模块：宿主按清单注册参数，command 目前仅支持 `run`；flag 支持 `--name`、`--name <value>`、`--name [value]`；config 指定写入插件配置的键，声明 config 时 flag 必须能取值。`flags` 与 `cli` 可以同时使用，冲突检查覆盖两者。需要自己的子命令或动态逻辑时，再提供 `cli` 模块。
 
-需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行，由脚本自行产出 `dist`；此时即使声明 `build.tsconfig` 也不会在构建中执行 `tsc`，插件源码的类型检查由根 `pnpm typecheck` 覆盖。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录。
+需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行，由脚本自行产出 `dist`；同时声明 `build.tsconfig` 时先执行 `tsc`，再执行脚本。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录，并把其中 `./dist/` 前缀改写为 `./`。
 
 CLI 模块导出 `registerCli(cli: PluginCliRegistrar)`，公共类型从 `ember-evaluator` 导入：
 

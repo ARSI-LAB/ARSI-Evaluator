@@ -6,6 +6,13 @@ import type { ErrorCode } from "../errors/registry.js";
 
 export type EvaluationKind = "quality" | "performance";
 
+export type RunPluginEntry = {
+  id: string;
+  name: string;
+  /** When present, resolve the entry from the installed Evaluator package. */
+  bundledVersion?: string;
+};
+
 export type Usage = {
   inputTokens: number | null;
   outputTokens: number | null;
@@ -161,7 +168,7 @@ export type RunManifest = {
     /** Original Ray Jobs coordinator paths when the downloaded run was localized. */
     coordinatorConfigDirectory?: string;
     coordinatorPatchPath?: string;
-    entries: { id: string; name: string }[];
+    entries: RunPluginEntry[];
     reportingProviders?: Record<string, string>;
     /** Activated extensions and credential-free options, restored for resume/retry. */
     plugins?: import("./plugin-extension.js").PluginActivation[];

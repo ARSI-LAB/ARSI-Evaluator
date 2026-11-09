@@ -12,6 +12,6 @@
   ],
   "build": {
     "tsconfig": "./tsconfig.json",
-    "install": ["dist", { "from": "collector/view", "to": "dist/collector/view" }, { "from": "collector/schemas", "to": "dist/collector/schemas" }]
+    "install": ["dist", { "from": "collector/view", "to": "collector/view" }, { "from": "collector/schemas", "to": "collector/schemas" }]
   }
 }

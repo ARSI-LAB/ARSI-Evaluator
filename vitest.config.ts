@@ -22,7 +22,7 @@ export default defineConfig({
     maxWorkers: 4,
     include: [
       ...pluginTests,
-      "tests/unit/**/*.test.ts",
+      "tests/unit/**/*.test.{ts,mjs}",
       "tests/integration/**/*.test.ts",
     ],
     // Plugin integration suites drive a built host CLI and the plugin's own

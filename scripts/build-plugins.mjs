@@ -1,112 +1,192 @@
 import { spawnSync } from "node:child_process";
-import { lstat, cp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse, stringify } from "yaml";
 
+// Repository plugins declare themselves in plugins/<name>/ember-plugin.json. The installed
+// modules are collected in one patch for the packaged runtime and indexed for discovery.
 const FLAG_PATTERN = /^--([a-z][a-z0-9-]*)(?: +(?:<([a-z][a-z0-9-]*)>|\[([a-z][a-z0-9-]*)\]))?$/u;
 
-function localPath(base, path) {
-  if (typeof path !== "string" || !path || isAbsolute(path) || path.includes("\\")) throw new Error(`Invalid plugin path: ${path}`);
-  const target = resolve(base, path);
-  const rel = relative(base, target);
-  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(`Plugin path escapes directory: ${path}`);
-  return target;
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "";
 }
 
-async function noSymlinks(path) {
-  const stat = await lstat(path);
-  if (stat.isSymbolicLink()) throw new Error(`Plugin build input is a symlink: ${path}`);
-  if (stat.isDirectory()) for (const name of await readdir(path)) await noSymlinks(join(path, name));
+function installSource(entry) {
+  return typeof entry === "string" ? { from: entry, to: entry } : entry;
 }
 
-function pluginFlags(manifest) {
+function pluginFlags(manifest, fail) {
   if (manifest.flags === undefined) return [];
-  if (!Array.isArray(manifest.flags)) throw new Error(`Plugin ${manifest.id}: flags must be an array`);
+  if (!Array.isArray(manifest.flags)) fail("flags must be an array");
   const names = new Set();
   return manifest.flags.map((value, index) => {
-    const label = `Plugin ${manifest.id}: flags[${index}]`;
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+    const label = `flags[${index}]`;
+    if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`);
     const unknown = Object.keys(value).find(key => !["command", "flag", "description", "config"].includes(key));
-    if (unknown !== undefined) throw new Error(`${label} contains unknown field ${unknown}`);
-    if (value.command !== "run") throw new Error(`${label}.command must be run`);
-    if (typeof value.description !== "string" || !value.description.trim()) throw new Error(`${label}.description must be a non-empty string`);
+    if (unknown !== undefined) fail(`${label} contains unknown field ${unknown}`);
+    if (value.command !== "run") fail(`${label}.command must be run`);
+    if (!nonEmptyString(value.description)) fail(`${label}.description must be a non-empty string`);
     const match = typeof value.flag === "string" ? FLAG_PATTERN.exec(value.flag) : null;
-    if (!match) throw new Error(`${label}.flag must look like "--name", "--name <value>" or "--name [value]"`);
-    if (names.has(match[1])) throw new Error(`${label}.flag duplicates --${match[1]}`);
+    if (!match) fail(`${label}.flag must look like "--name", "--name <value>" or "--name [value]"`);
+    if (names.has(match[1])) fail(`${label}.flag duplicates --${match[1]}`);
     names.add(match[1]);
     if (value.config !== undefined) {
-      if (typeof value.config !== "string" || !/^[a-z][A-Za-z0-9]*$/u.test(value.config)) throw new Error(`${label}.config must be a camelCase identifier`);
-      if (match[2] === undefined && match[3] === undefined) throw new Error(`${label}.config requires a value placeholder in flag`);
+      if (typeof value.config !== "string" || !/^[a-z][A-Za-z0-9]*$/u.test(value.config)) fail(`${label}.config must be a camelCase identifier`);
+      if (match[2] === undefined && match[3] === undefined) fail(`${label}.config requires a value placeholder in flag`);
     }
-    return { command: "run", flag: value.flag, description: value.description, ...(value.config === undefined ? {} : { config: value.config }) };
+    return { command: "run", flag: value.flag, description: value.description,
+      ...(value.config === undefined ? {} : { config: value.config }) };
   });
 }
 
-export async function buildPlugins(root) {
-  const directory = join(root, "plugins");
-  let entries;
-  try { entries = await readdir(directory, { withFileTypes: true }); }
-  catch (error) { if (error.code !== "ENOENT") throw error; entries = []; }
-  const version = JSON.parse(await readFile(join(root, "package.json"), "utf8")).version;
-  const output = localPath(root, "dist/external-plugins");
-  const existing = await lstat(output).catch(error => { if (error.code !== "ENOENT") throw error; });
-  if (existing?.isSymbolicLink()) throw new Error("Refusing to replace linked plugin output");
-  await rm(output, { recursive: true, force: true });
-  const plugins = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!entry.isDirectory()) continue;
-    const base = join(directory, entry.name);
-    let manifest;
-    try { manifest = JSON.parse(await readFile(join(base, "ember-plugin.json"), "utf8")); }
-    catch (error) { if (error.code === "ENOENT") continue; throw error; }
-    if (manifest?.id !== entry.name || !/^[a-z][a-z0-9-]*$/u.test(manifest.id)) throw new Error(`Invalid plugin manifest: ${entry.name}`);
-    if (typeof (manifest.version ?? version) !== "string" || !(manifest.version ?? version).trim()) throw new Error(`Missing plugin version: ${entry.name}`);
-    localPath(base, manifest.entry);
-    if (manifest.cli !== undefined) localPath(base, manifest.cli);
-    if (manifest.patch !== undefined) localPath(base, manifest.patch);
-    const flags = pluginFlags(manifest);
-    const install = manifest.build?.install;
-    if (!Array.isArray(install) || !install.length) throw new Error(`Plugin ${entry.name}: build.install is required`);
-    for (const item of install) { localPath(base, typeof item === "string" ? item : item.from); localPath(base, typeof item === "string" ? item : item.to); }
-    // A custom build script owns its output; root typecheck still covers these sources.
-    if (manifest.build.tsconfig !== undefined && manifest.build.script === undefined) {
-      const tsconfig = localPath(base, manifest.build.tsconfig);
-      await noSymlinks(tsconfig);
-      const compiledOutput = localPath(base, "dist");
-      const existingOutput = await lstat(compiledOutput).catch(error => { if (error.code !== "ENOENT") throw error; });
-      if (existingOutput?.isSymbolicLink()) throw new Error("Refusing to replace linked compiler output");
-      await rm(compiledOutput, { recursive: true, force: true });
-      const compiled = spawnSync(process.execPath, [join(root, "node_modules/typescript/bin/tsc"), "-p", tsconfig, "--outDir", compiledOutput], { cwd: root, stdio: "inherit", windowsHide: true });
-      if (compiled.error) throw compiled.error;
-      if (compiled.status !== 0) throw new Error(`TypeScript build failed for ${entry.name}`);
-    }
-    if (manifest.build.script !== undefined) {
-      const script = localPath(base, manifest.build.script);
-      await noSymlinks(script);
-      const built = spawnSync(process.execPath, [script], { cwd: base, stdio: "inherit", windowsHide: true });
-      if (built.error) throw built.error;
-      if (built.status !== 0) throw new Error(`Build script failed for ${entry.name}`);
-    }
-    const target = join(root, "dist/external-plugins", entry.name);
-    await mkdir(target, { recursive: true });
-    for (const item of install) {
-      const source = localPath(base, typeof item === "string" ? item : item.from);
-      await noSymlinks(source);
-      await cp(source, localPath(target, typeof item === "string" ? item : item.to), { recursive: true });
-    }
-    for (const path of [manifest.entry, ...(manifest.cli ? [manifest.cli] : [])]) {
-      if (!(await lstat(localPath(target, path))).isFile()) throw new Error(`Missing installed plugin entry: ${path}`);
-    }
-    if (manifest.patch !== undefined) await cp(localPath(base, manifest.patch), join(target, "cordis.patch.yaml"));
-    await writeFile(join(target, "ember-plugin.json"), JSON.stringify(manifest, null, 2) + "\n");
-    plugins.push({ id: manifest.id, version: manifest.version ?? version,
-      entry: `${entry.name}/${relative(base, localPath(base, manifest.entry)).split(sep).join("/")}`,
-      ...(manifest.cli === undefined ? {} : { cli: `${entry.name}/${relative(base, localPath(base, manifest.cli)).split(sep).join("/")}` }),
-      ...(flags.length === 0 ? {} : { flags }) });
-  }
-  await mkdir(join(root, "dist/external-plugins"), { recursive: true });
-  await writeFile(join(root, "dist/external-plugins/index.json"), JSON.stringify({ plugins }, null, 2) + "\n");
+function relativePath(root, path) {
+  return relative(root, path).split(sep).join("/");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  await buildPlugins(fileURLToPath(new URL("../", import.meta.url)));
+export async function buildPlugins(root = fileURLToPath(new URL("..", import.meta.url))) {
+  const pluginsDir = join(root, "plugins");
+  const distRoot = join(root, "dist");
+  const typescript = join(root, "node_modules", "typescript", "bin", "tsc");
+
+  async function loadManifests() {
+    if (!existsSync(pluginsDir)) return [];
+    const names = (await readdir(pluginsDir, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort();
+    const manifests = [];
+    for (const name of names) {
+      const file = join(pluginsDir, name, "ember-plugin.json");
+      if (!existsSync(file)) continue;
+      const fail = message => { throw new Error(`${relativePath(root, file)}: ${message}`); };
+      let manifest;
+      try {
+        manifest = JSON.parse(await readFile(file, "utf8"));
+      } catch (error) {
+        fail(`invalid JSON: ${error.message}`);
+      }
+      if (!nonEmptyString(manifest.id)) fail("id must be a non-empty string");
+      if (manifest.id !== name) fail(`id "${manifest.id}" must match the directory name`);
+      if (manifest.version !== undefined && !nonEmptyString(manifest.version)) {
+        fail("version must be a non-empty string when present");
+      }
+      if (manifest.entry !== undefined && !nonEmptyString(manifest.entry)) {
+        fail("entry must point at a compiled module when present");
+      }
+      if (manifest.cli !== undefined && !nonEmptyString(manifest.cli)) {
+        fail("cli must point at a compiled module when present");
+      }
+      const flags = pluginFlags(manifest, fail);
+      if (manifest.build !== undefined) {
+        const { tsconfig, script } = manifest.build;
+        if (tsconfig !== undefined && !nonEmptyString(tsconfig)) {
+          fail("build.tsconfig must point at a tsconfig file when present");
+        }
+        if (script !== undefined && !nonEmptyString(script)) {
+          fail("build.script must point at a Node script when present");
+        }
+        if (!Array.isArray(manifest.build.install) || manifest.build.install.length === 0) {
+          fail("build.install must list the files to compile or copy into the runtime");
+        }
+        for (const entry of manifest.build.install) {
+          const item = installSource(entry);
+          if (!nonEmptyString(item.from) || !nonEmptyString(item.to)) fail("build.install contains an empty path");
+        }
+      }
+      if (manifest.patch !== undefined && !nonEmptyString(manifest.patch)) {
+        fail("patch must point at a cordis.patch.yaml file when present");
+      }
+      manifests.push({ name, dir: join(pluginsDir, name), file, manifest, flags, fail });
+    }
+    return manifests;
+  }
+
+  async function buildPlugin({ name, dir, file, manifest, flags, fail }, version) {
+    if (manifest.build === undefined) return undefined;
+    const { tsconfig: tsconfigEntry, script, install } = manifest.build;
+    await rm(join(dir, "dist"), { recursive: true, force: true });
+    if (tsconfigEntry !== undefined) {
+      const tsconfig = join(dir, tsconfigEntry);
+      if (!existsSync(tsconfig)) fail(`missing tsconfig: ${relativePath(root, tsconfig)}`);
+      const compiled = spawnSync(process.execPath, [typescript, "-p", tsconfig], { cwd: root, stdio: "inherit" });
+      if (compiled.status !== 0) fail(`TypeScript build failed for ${name}`);
+    }
+    if (script !== undefined) {
+      const scriptPath = join(dir, script);
+      if (!existsSync(scriptPath)) fail(`missing build script: ${relativePath(root, scriptPath)}`);
+      const built = spawnSync(process.execPath, [scriptPath], { cwd: dir, stdio: "inherit" });
+      if (built.status !== 0) fail(`build script failed for ${name}`);
+    }
+    const target = join(distRoot, "plugins", name);
+    await rm(target, { recursive: true, force: true });
+    await mkdir(target, { recursive: true });
+    for (const entry of install) {
+      const { from, to } = installSource(entry);
+      const source = join(dir, from);
+      if (!existsSync(source)) fail(`install path does not exist: ${relativePath(root, source)}`);
+      // The compiled output is flattened into dist/plugins/<id>/; static assets keep their relative path.
+      if (from === "dist") {
+        for (const child of await readdir(source)) {
+          await cp(join(source, child), join(target, child), { recursive: true });
+        }
+      } else {
+        await cp(source, join(target, to), { recursive: true });
+      }
+    }
+    const moduleName = value => `./${value.replace(/^\.\/dist\//u, "").replace(/^\.\//u, "")}`;
+    let operations = [];
+    if (manifest.patch !== undefined) {
+      const patchFile = join(dir, manifest.patch);
+      if (!existsSync(patchFile)) fail(`missing patch: ${relativePath(root, patchFile)}`);
+      // The compiled entry lands at the plugin root, so ./dist/ prefixed entries are rewritten there.
+      const patch = (await readFile(patchFile, "utf8")).replace(/^(\s*name:\s*["']?)\.\/dist\//gmu, "$1./");
+      await writeFile(join(target, "cordis.patch.yaml"), patch);
+      operations = parse(patch, { maxAliasCount: 100 });
+    } else if (manifest.entry !== undefined) {
+      operations = [{ insert: [{ id: name, name: moduleName(manifest.entry) }] }];
+    }
+    await cp(file, join(target, "ember-plugin.json"));
+    if (!Array.isArray(operations) || operations.some(operation => !Array.isArray(operation?.insert))) {
+      fail("plugin patch must contain a list of insert operations");
+    }
+    const modules = operations.map(operation => ({
+      ...operation,
+      insert: operation.insert.map(entry => {
+        if (!nonEmptyString(entry?.name)) fail("plugin patch entry must have a module name");
+        const modulePath = resolve(target, entry.name);
+        if (!entry.name.startsWith("./") || !modulePath.startsWith(target + sep) || !existsSync(modulePath)) {
+          fail(`plugin entry must point at an installed module: ${entry.name}`);
+        }
+        return { ...entry, name: `./${relativePath(distRoot, modulePath)}` };
+      }),
+    }));
+    const installName = value => `${name}/${value.replace(/^\.\/dist\//u, "").replace(/^\.\//u, "")}`;
+    const record = {
+      id: manifest.id,
+      version: manifest.version ?? version,
+      entry: manifest.entry === undefined ? modules.flatMap(operation => operation.insert)[0]?.name.replace(/^\.\/plugins\//u, "") : installName(manifest.entry),
+      ...(manifest.cli === undefined ? {} : { cli: installName(manifest.cli) }),
+      ...(flags.length === 0 ? {} : { flags }),
+    };
+    if (record.entry === undefined) fail("plugin must declare an entry module");
+    return { operations: modules, record };
+  }
+
+  const version = JSON.parse(await readFile(join(root, "package.json"), "utf8")).version;
+  const operations = [];
+  const records = [];
+  for (const plugin of await loadManifests()) {
+    const built = await buildPlugin(plugin, version);
+    if (built === undefined) continue;
+    operations.push(...built.operations);
+    records.push(built.record);
+  }
+  await writeFile(join(distRoot, "bundled-plugins.patch.yaml"), stringify(operations));
+  await writeFile(join(distRoot, "plugins/index.json"), JSON.stringify({ plugins: records }, null, 2) + "\n");
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  await buildPlugins();
+}

@@ -1,6 +1,6 @@
 import type { JsonValue } from "./task.js";
 import type { RunStore } from "./run-store.js";
-import type { PluginFactoryContext } from "../registry.js";
+import type { PluginFactoryContext } from "./plugin.js";
 
 /** Persistable options only: use environment references for credentials. */
 export type PluginActivation = { id: string; config: Record<string, JsonValue> };
