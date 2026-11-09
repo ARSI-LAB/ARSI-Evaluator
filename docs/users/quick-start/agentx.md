@@ -8,7 +8,7 @@ AgentX uses `doctor → run --dry-run → run` like other benchmarks. Start infe
 
 ## 1. Choose an Environment and Build
 
-Configure read access to the private AgentBundle GitHub repository as described in [installation](../installation.md#install-from-source). For the optional management container, run this from Evaluator on a Linux Docker host; skip for direct host execution:
+For the optional management container, run this command from the Evaluator repository on a Linux Docker host. To run directly on the host, start with the build commands below.
 
 ```bash
 bash scripts/toolbox/run.sh

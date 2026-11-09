@@ -8,7 +8,7 @@ AgentX 使用与其他 Benchmark 相同的 `doctor → run --dry-run → run` �
 
 ## 1. 选择运行环境并构建
 
-先按[安装指南](../installation.zh-CN.md#直接安装)配置 AgentBundle GitHub 私仓的读取权限。需要管理容器时，在 Linux Docker 宿主机的 Evaluator 仓库执行以下命令；直接裸机运行时跳过：
+使用管理容器时，在 Linux Docker 宿主机的 Evaluator 仓库执行以下命令。直接在宿主机运行时，从后面的构建命令开始。
 
 ```bash
 bash scripts/toolbox/run.sh

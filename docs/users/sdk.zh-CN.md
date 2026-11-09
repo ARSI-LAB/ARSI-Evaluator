@@ -26,7 +26,7 @@ pnpm pack --pack-destination .scratch/packages
 pnpm add '/path/to/ember-evaluator-0.1.0.tgz'
 ```
 
-发行包仍有 AgentBundle GitHub 依赖，使用 pnpm 安装并保留相应仓库的读取权限。Evaluator 保持 `private: true`，本指南不表示已发布到公共 npm。
+Evaluator 的包清单设置了 `private: true`。上面的命令通过本地链接或 `.tgz` 文件安装 SDK。
 
 ## 执行 YAML 实验
 

@@ -14,17 +14,9 @@ bash scripts/toolbox/run.sh
 
 首次启动会构建镜像，完成后进入容器终端。退出后，再执行同一命令即可重新进入。
 
-## 在管理容器通过 HTTPS 登录 GitHub
+## 在管理容器安装 Evaluator
 
-在容器内的仓库根目录执行：
-
-```bash
-bash scripts/toolbox/git-login.sh
-```
-
-按提示输入 GitHub 账号和访问令牌，账号需有 `evolving-foundry/agentbundle` 私仓读取权限。令牌只在内存中缓存 8 小时；重新进入容器或认证过期后，再运行一次登录脚本。
-
-登录后，按[安装指南](../installation.zh-CN.md#直接安装)完成三步安装，确认 `ember-evaluator --help` 正常输出。容器已配置好 pnpm，无需运行 `pnpm setup`。
+在容器内的仓库根目录按[安装指南](../installation.zh-CN.md#直接安装)安装，确认 `ember-evaluator --help` 正常输出。容器已配置好 pnpm。
 
 ## 在容器中运行实验
 
@@ -46,7 +38,7 @@ docker exec -it ember-evaluator-toolbox bash
 ## 环境边界
 
 - 源码和评测结果与宿主机共享；依赖和 Git 配置保存在 Docker 卷中，退出容器后保留。
-- 容器使用宿主机 Docker，具有管理其容器和镜像的权限。宿主机的 Git 凭据不会自动带入。
+- 容器使用宿主机 Docker，可以管理其容器和镜像。
 - 保留启动脚本设置的挂载路径。本方案不适用于 Windows Docker Desktop 或远程 Docker daemon。
 - 退出管理容器不会自动停止 Ray 集群。
 
