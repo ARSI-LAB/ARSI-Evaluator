@@ -116,16 +116,52 @@ function updateProfMode(){
   if(on&&AUTO_TAB){AUTO_TAB=false;syncSession(null);setTab("met");return;}
   if(TAB==="traj")updateMeta();
 }
+// Attempts of one task stay together so retries are not scattered by arrival order;
+// every task with a task id gets a header, which keeps the rail hierarchy uniform.
+const TASK_COLLAPSED=new Set();
+const taskKeyOf=t=>{const id=t&&t.traj&&t.traj.task_id;return id==null||id===""?null:String(id);};
+const taskGroupKey=id=>"task:"+id;
+const startedOf=t=>{const v=Number(t&&t.traj&&t.traj.started_at);return isFinite(v)?v:null;};
+function trajCard(i,nested){const t=TRACES[i],m=trajMeta(t.traj);
+  return `<button class="trajitem ${i===ACTIVE?"on":""} ${m.cls==="bad"?"error":""}${nested?" nested":""}" data-i="${i}">`+
+    `<span class="trow"><span class="tdot ${m.cls}"></span><span class="tcode">${tr("Trajectory {n}",{n:t.id})}</span>${t.isNew&&i!==ACTIVE?'<span class="tnew">NEW</span>':""}</span>`+
+    `<small>${esc(t.session)}</small>`+
+    `<span class="tmeta"><span class="cnt">${tr("{n} steps",{n:m.steps})}</span><span class="cnt">${durOf(t.traj)}</span>`+
+    (m.model?`<span class="cnt">${esc(trunc(m.model))}</span>`:"")+
+    (m.tok!=null?`<span class="cnt">${fmtNum(m.tok)} tok</span>`:"")+
+    `</span></button>`;}
+function taskHeader(key,task,items,open){
+  // Keep the full task id as the group key and tooltip; only the visible label drops the benchmark prefix,
+  // and opaque UUID task ids show their first six characters instead of the unreadable full value.
+  const leaf=task.split("/").pop()||task;
+  const short=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(leaf)?leaf.slice(0,6):leaf;
+  const cls=items.map(i=>trajMeta(TRACES[i].traj).cls);
+  const dot=cls.includes("bad")?"bad":cls.includes("warn")?"warn":cls.includes("none")?"none":"";
+  const fresh=items.some(i=>TRACES[i].isNew)?'<span class="tnew">NEW</span>':"";
+  return `<button class="trajgroup" data-task="${esc(key)}" title="${esc(task)}">`+
+    `<span class="trow"><span class="caret">${open?"▾":"▸"}</span><span class="tdot ${dot}"></span>`+
+    `<span class="tcode">${esc(short)}</span>${fresh}</span>`+
+    `<small>${items.length===1?tr("1 attempt"):tr("{n} attempts",{n:items.length})}</small></button>`;}
 function renderNav(){const el=$("#trajList");$("#railCount").textContent=TRACES.length;
-  el.innerHTML=TRACES.map((t,i)=>{const m=trajMeta(t.traj);
-    return `<button class="trajitem ${i===ACTIVE?"on":""} ${m.cls==="bad"?"error":""}" data-i="${i}">`+
-      `<span class="trow"><span class="tdot ${m.cls}"></span><span class="tcode">${tr("Trajectory {n}",{n:t.id})}</span>${t.isNew&&i!==ACTIVE?'<span class="tnew">NEW</span>':""}</span>`+
-      `<small>${esc(t.session)}</small>`+
-      `<span class="tmeta"><span class="cnt">${tr("{n} steps",{n:m.steps})}</span><span class="cnt">${durOf(t.traj)}</span>`+
-      (m.model?`<span class="cnt">${esc(trunc(m.model))}</span>`:"")+
-      (m.tok!=null?`<span class="cnt">${fmtNum(m.tok)} tok</span>`:"")+
-      `</span></button>`;}).join("");}
+  const groups=new Map();
+  TRACES.forEach((t,i)=>{const task=taskKeyOf(t),key=task===null?"__untasked__":taskGroupKey(task);
+    if(!groups.has(key))groups.set(key,{task,items:[]});
+    groups.get(key).items.push(i);});
+  const out=[];
+  groups.forEach((g,key)=>{
+    const items=g.items.slice().sort((a,b)=>{
+      const x=startedOf(TRACES[a]),y=startedOf(TRACES[b]);
+      return (x==null?Number.MAX_SAFE_INTEGER:x)-(y==null?Number.MAX_SAFE_INTEGER:y)||a-b;});
+    if(g.task===null){items.forEach(i=>out.push(trajCard(i,false)));return;}
+    const open=!TASK_COLLAPSED.has(key);
+    out.push(taskHeader(key,g.task,items,open));
+    if(open)items.forEach(i=>out.push(trajCard(i,true)));
+  });
+  el.innerHTML=out.join("");}
+function toggleTask(key){if(TASK_COLLAPSED.has(key))TASK_COLLAPSED.delete(key);else TASK_COLLAPSED.add(key);renderNav();}
+function revealTask(i){const k=taskKeyOf(TRACES[i]);if(k!==null)TASK_COLLAPSED.delete(taskGroupKey(k));}
 function selectTrace(i,auto){const r=TRACES[i];if(!r)return;
+  revealTask(i);
   ACTIVE=i;SEL_KEY=null;USER_PICKED=!auto;
   TRACES.forEach(t=>{if(t.isNew)t.isNew=false;});
   build(r.traj);render();renderNav();syncSession(r.session);
@@ -153,7 +189,7 @@ function addTrace(o){
   // Once the user picked a trace manually, newly arriving traces are only flagged NEW and no longer steal the view
   const mark=!PENDING_SESSION&&USER_PICKED;
   TRACES.push({id:++TRACEID,traj:o,session,isNew:mark});if(TRACES.length>100)TRACES.shift();
-  if(!PENDING_SESSION&&!mark){ACTIVE=TRACES.length-1;build(o);render();if(!profilingOnly())syncSession(TRACES[ACTIVE].session);}
+  if(!PENDING_SESSION&&!mark){ACTIVE=TRACES.length-1;revealTask(ACTIVE);build(o);render();if(!profilingOnly())syncSession(TRACES[ACTIVE].session);}
   renderNav();updateProfMode();scheduleFbRefresh();}
 // Write the selected trace into the URL (?session=) so refresh or a shared link restores it; null clears it
 function syncSession(s){const u=new URL(location.href);

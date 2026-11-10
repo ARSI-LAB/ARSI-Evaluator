@@ -74,6 +74,7 @@ const ZH={
   "This run's trajectory.jsonl only records start / harness / end lifecycle events and no agent steps. Inference metrics, hardware metrics and measurement trust are on the Metrics tab.":"该 run 的 trajectory.jsonl 只记录 start / harness / end 生命周期事件，没有 Agent 执行步骤。推理指标、硬件指标与测量可信度见「指标」页。",
   "attempt lifeline":"attempt 生命线",
   "{n} attempts":"{n} 个 attempt",
+  "1 attempt":"1 个 attempt",
   "Status":"状态",
   "Start":"开始",
   "End":"结束",

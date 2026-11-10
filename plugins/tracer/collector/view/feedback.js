@@ -2,7 +2,7 @@ let CUR_EPOCH=new URLSearchParams(location.search).get("epoch")||"",EPOCHS=[];
 // Without an epoch param in the URL, follow the latest run; once the user picks an epoch manually, pin it so new runs cannot steal the view.
 let FOLLOW_LATEST=!CUR_EPOCH;
 function resetView(){
-  TRACES.length=0;ACTIVE=-1;TRACEID=0;TRAJ=null;ROWS=[];STEPS=[];SEQ=0;COLLAPSED.clear();
+  TRACES.length=0;ACTIVE=-1;TRACEID=0;TRAJ=null;ROWS=[];STEPS=[];SEQ=0;COLLAPSED.clear();TASK_COLLAPSED.clear();
   METRICS=null;METRICS_RAW=null;ATTEMPT={key:null,trajKey:null,sumKey:null,warn:null};SUMMARIES.clear();SUM_META.clear();
   PENDING_SESSION=null;SEL_KEY=null;CUR_ROWS=[];CUR_ROW=null;CUR_STEP=null;
   USER_PICKED=false;FILTER="";const f=$("#filter");if(f)f.value="";

@@ -12,7 +12,9 @@ function tabFromHash(){
   return TABS.includes(t)?t:null;
 }
 document.getElementById("tabs").onclick=e=>{const b=e.target.closest(".tab");if(b){AUTO_TAB=false;setTab(b.dataset.t);}};
-document.getElementById("trajList").onclick=e=>{const b=e.target.closest(".trajitem");if(!b)return;selectTrace(+b.dataset.i);renderNav();};
+document.getElementById("trajList").onclick=e=>{const g=e.target.closest(".trajgroup");
+  if(g){toggleTask(g.dataset.task);return;}
+  const b=e.target.closest(".trajitem");if(!b)return;selectTrace(+b.dataset.i);renderNav();};
 document.getElementById("expandAll").onclick=()=>{COLLAPSED.clear();render();};
 document.getElementById("collapseAll").onclick=()=>{ROWS.forEach(r=>{if(r.hasChildren)COLLAPSED.add(r.id);});render();};
 document.getElementById("resetZoom").onclick=()=>{VS=DATA0;VE=DATA1;render();};

@@ -324,6 +324,12 @@ button,.tab,.viewbtn{font-size:14px}
 .stat b.ok{color:#3fb950}.stat b.bad{color:#f85149}
 .trajitem.error{border-left-color:#f85149}
 .trajitem .trow{display:flex;align-items:center;gap:6px}
+/* Task group header: one collapsible row above the attempts of the same task; attempts indent under it. */
+.trajgroup{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;padding:6px 8px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.trajgroup .trow{display:flex;align-items:center;gap:6px;min-width:0}
+.trajgroup .tcode{font-weight:600;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trajgroup small{color:var(--dim);font-size:11px;padding-left:18px}
+.trajitem.nested{width:auto;margin-left:12px}
 .tdot{width:7px;height:7px;border-radius:50%;flex:none;background:#3fb950}
 .tdot.bad{background:#f85149}.tdot.warn{background:#d29922}.tdot.none{background:#6e7681}
 .tnew{background:#1f6feb;color:#fff;border-radius:8px;padding:0 5px;font-size:11px;flex:none}
