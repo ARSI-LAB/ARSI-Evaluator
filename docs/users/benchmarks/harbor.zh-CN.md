@@ -89,7 +89,9 @@ Compose 同时声明 image 和 build 时只选择 image，不要求未采用的�
 
 只有协议明确约定了交付目录时，接入配置才应通过 `benchmark.config.defaults.artifactPaths` 提供默认路径；任务自身的 `artifacts` 声明优先，空数组会禁用默认值。配置明确指定的 `taskProfiles.extraPaths` 也属于额外收集声明；`artifacts = []` 同样禁用它。这些配置不改变 solver 工作目录和验证规则。需要保留交付文件时，应按题目声明准确的路径；明确声明的路径不存在时，仍记录 `ARTIFACT_COLLECTION_INCOMPLETE`，由官方验证器决定奖励。
 
-默认求解超时记有效零分，不生成官方验证 verdict。需要遵守原生“失败后仍评分”规则的接入通过 `defaults.scoreAfterSolveFailure: true` 启用验证已有工作区，并保留验证器的实际奖励和求解错误；WorkBuddy Sec 默认开启。`defaults.timeoutMultiplier` 缩放任务声明的求解及验证时限，显式 run 阶段时限优先；`defaults.agentUser` / `defaults.verifierUser` 补充缺省执行用户。多容器任务收集前，已停止的 main 只以 Evaluator 的维护入口重新启动，不重放任务启动脚本；sidecar 保持运行，以便执行 `verifier.collect` 并保存快照。收集命令失败会记录错误，并在停止写入后尝试导出已有文件；无法停止写入或完成导出时仍报告产物收集失败。
+求解超时且整题还有时间时，默认让 verifier 评分已有工作区，并保留实际奖励和超时记录。用 `run.scoreAfterSolveTimeout: false` 将本次 run 的解题超时改为直接计有效 0 分。其他求解错误结束当前 attempt，并保存错误和已有产物。[run 配置](../config.zh-CN.md#整题与阶段超时)
+
+`defaults.timeoutMultiplier` 缩放任务声明的求解及验证时限，显式 run 阶段时限优先。`defaults.agentUser` / `defaults.verifierUser` 补充缺省执行用户。多容器任务收集前，已停止的 main 只以 Evaluator 的维护入口重新启动，不重放任务启动脚本。sidecar 保持运行，以便执行 `verifier.collect` 并保存快照。收集命令失败会记录错误，并在停止写入后尝试导出已有文件。无法停止写入或完成导出时仍报告产物收集失败。
 
 `no-network` 的求解阶段仅允许模型网关；完全离线验证不使用模型网关。Docker 支持任务声明的 Compose 服务组、健康检查、依赖启动条件和 `network_mode: service:<名称>`，Solver 在 main 中运行，不暴露 Docker socket。Compose 需要 v2；只有 `main` 的配置可使用白名单、模型网关或离线网络，并保留任务的 `command` / `entrypoint`。包含额外任务服务的配置仍要求 bridge 网络；与白名单及其他隔离网络组合时明确拒绝，不降级为公网。SimpleAgent 支持公开 `skills_dir` 和 HTTP/SSE MCP。GPU、Windows 容器及未实现的 Compose 或步骤字段仍报不支持。
 

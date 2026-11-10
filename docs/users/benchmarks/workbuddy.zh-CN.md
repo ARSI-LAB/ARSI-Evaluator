@@ -86,7 +86,7 @@ Sec 归档含安全样本，**不要解压到 Windows 目录或 WSL 的 `/mnt/c`
 
 Sec 枚举完整 60 题，包含 51 道单步骤和 9 道多步骤任务。多步骤的公开指令和验证入口分别位于 `steps/<name>/instruction.md`、`steps/<name>/tests/test.sh`；各步骤共享任务环境，逐步加载公开 `workdir` 文件，不会提前向 Agent 提供后续步骤材料。`dotnet-3stage-rat-loader` 分析三阶段加载器，但评测步骤为 `unpack`、`analyze` 两步。
 
-阶段执行和奖励规则采用固定上游 [Harbor `527d50d`](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/multi_step.py)：每步运行原生验证器，`min_reward` 不满足时停止后续步骤。默认对已有验证结果按奖励键取均值，缺失维度记 0；没有验证结果的步骤不进入均值分母。`final` 使用最后执行步骤的验证结果。Agent 超时或异常后仍验证已留下的文件；有有效奖励时保存该奖励及原始错误，不自动覆盖为零分。没有产生奖励的验证器错误仍如实保留。
+每步的奖励阈值和聚合规则采用固定上游 [Harbor `527d50d`](https://github.com/harbor-framework/harbor/blob/527d50deb63a5d279e8c20593c18a2cbc7f61f9e/src/harbor/trial/multi_step.py)。每步运行原生验证器，`min_reward` 不满足时停止后续步骤。默认对已有验证结果按奖励键取均值，缺失维度记 0。没有验证结果的步骤从均值分母中排除。`final` 使用最后执行步骤的验证结果。Agent 解题超时且整题还有时间时，默认验证已留下的文件。设置 `run.scoreAfterSolveTimeout: false` 时，整题计有效 0 分。其他求解错误或验证器执行失败会结束当前 attempt，并保存错误和已完成步骤的结果。
 
 Sec Profile 按[官方场景配置](https://github.com/Tencent/workbuddy-bench/blob/625b2233093ae4f23e76be28c1f341d41cc70373/configs/bench/wb-bench-sec-v1.0.yaml)将求解及验证时限乘 2，使用 `dev` 求解、`root` 验证。整题保护上限为 36000 秒，避免旧的 6000 秒上限提前截断官方阶段时限。阶段时限可被显式 run 配置覆盖，比较成绩时应保留实际配置。官方默认每题 3 次独立尝试；Evaluator 的任务故障重试不能替代独立尝试，应执行三次完整独立 run，分别保存结果。SimpleAgent 可通过 `services.default.contextWindow: 200000` 配置官方上下文阈值，该字段不限制单次回复长度；不同 Solver 的提示、工具及压缩实现仍由各自 harness 决定。
 

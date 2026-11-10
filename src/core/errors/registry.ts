@@ -33,7 +33,7 @@ export const ERROR_CODES = {
   ENV_PREPARED_IMAGE_LOST: definition("infrastructure", "node", "stop_dispatch", "An image referenced by the preparation receipt is missing or changed. Stop dispatch and prepare it again."),
   ENV_PREPARATION_FAILED: definition("infrastructure", "attempt", "finalize", "Check the original environment preparation error; failure is reported without retrying."),
   ENV_PREPARATION_TIMEOUT: definition("infrastructure", "attempt", "finalize", "Environment startup or installation exceeded the preparation budget. Check operation logs; no automatic retry is performed."),
-  SOLVER_AGENT_TIMEOUT: definition("solver", "attempt", "finalize", "The Agent solve budget is exhausted. Preserve partial evidence, count a valid score of zero and continue filling execution slots."),
+  SOLVER_AGENT_TIMEOUT: definition("solver", "attempt", "finalize", "The Agent solve budget is exhausted. Preserve partial evidence for verification when the task budget permits."),
   SOLVER_PROCESS_CRASHED: definition("solver", "attempt", "finalize", "Check the Agent exit code, signal and container logs; exit code 137 alone does not prove OOM."),
   SOLVER_PROTOCOL_INVALID: definition("solver", "attempt", "finalize", "Check the Agent event stream and adapter version; preserve the original protocol evidence."),
   SOLVER_RESULT_INCOMPLETE: definition("solver", "attempt", "finalize", "The Agent did not finish the current turn. Preserve partial traces; retry only with explicit network evidence."),

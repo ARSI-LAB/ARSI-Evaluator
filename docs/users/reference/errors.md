@@ -28,7 +28,7 @@ Full diagnostics automatically save in attempt result.json. Preparation diagnost
 
 New attempts omit status/timeoutKind; CLI/report labels derive from these fields. Legacy results convert at local read boundaries without rewriting files. New submissions/remote uploads reject old fields.
 
-- **Agent timeout**: valid zero in the denominator, no retry, replenish after cleanup. Without verifier, `verdict` remains null; timeout policy supplies zero.
+- **Agent timeout**: Grade existing work by default while the task still has time. When the task deadline expires or grading after timeout is disabled, `agent_timeout` counts as a valid zero and `verdict` remains null. [Timeouts and concurrency](../concurrency.md)
 - **System failure**: invalid without a reliable legal score, excluded from scoring denominator. Recoverable networking retries only failed operations; exhaustion records `NETWORK_FAILURE` without new attempts. Explicit Retry-After may extend operation backoff.
 - **Preparation failure**: pulls/non-build installs recover only safe network operations. Build failures do not rerun tasks; APT retries within commands. Platforms, permissions, compilation, and ordinary deadlines are ineligible. `run.onError` controls ordinary failures; agents do not execute before batch barriers pass.
 - **Global authentication/quota/storage/protocol failures**: stop the run even with continue.
@@ -66,7 +66,7 @@ CLI exits:`0` completed including wrong answers/valid agent timeouts;`1` runtime
 | `ENV_CPU_BUDGET_FAILED` | Cannot apply CPU budget | Invalid, no retry |
 | `ENV_PREPARED_IMAGE_LOST` | Receipt image missing/changed | Stop dispatch |
 | `ENV_PREPARATION_FAILED` / `ENV_PREPARATION_TIMEOUT` | Other preparation failure/timeout | Invalid, no retry |
-| `SOLVER_AGENT_TIMEOUT` | Agent budget exhausted | Valid zero, no retry |
+| `SOLVER_AGENT_TIMEOUT` | Agent budget exhausted | Grade existing work by default if the task still has time |
 | `SOLVER_PROCESS_CRASHED` | Abnormal agent exit | Invalid, no retry;137 alone does not prove OOM |
 | `SOLVER_PROTOCOL_INVALID` | Invalid events/status/output | Invalid, no retry |
 | `SOLVER_RESULT_INCOMPLETE` | Agent turn incomplete | Invalid; only explicit network evidence qualifies recovery |

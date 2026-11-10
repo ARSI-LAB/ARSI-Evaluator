@@ -10,7 +10,7 @@ export type HarborConfig = {
   source?: DirectorySource;
   tasks: { root: string; id: "directory" | "task.name" | "metadata.task_id"; expectedCount?: number; requireTestScript: boolean; metadataFields: string[] };
   defaults: { workdir?: string; buildTimeoutSeconds: number; artifactPaths?: string[]; timeoutMultiplier?: number;
-    agentUser?: string; verifierUser?: string; scoreAfterSolveFailure?: boolean };
+    agentUser?: string; verifierUser?: string };
   scoring: { primary: string; passThreshold: number; errorValues: number[] };
   taskProfiles?: Record<string, HarborStateProfile>;
 };
@@ -66,10 +66,9 @@ export function parseHarborConfig(value: unknown): HarborConfig {
   if (!Array.isArray(metadataFields) || metadataFields.some(field => typeof field !== "string" || !/^[A-Za-z_]\w*$/u.test(field))) throw new TypeError("Invalid tasks.metadataFields");
   if (metadataFields.some(field => ["steps", "interaction", "services", "mcp_servers"].includes(String(field)))) throw new TypeError("Execution capabilities cannot be treated as metadata");
   const defaults = expectRecord(config.defaults ?? {}, "harbor.defaults");
-  rejectUnknown(defaults, ["workdir", "buildTimeoutSeconds", "artifactPaths", "timeoutMultiplier", "agentUser", "verifierUser", "scoreAfterSolveFailure"], "harbor.defaults");
+  rejectUnknown(defaults, ["workdir", "buildTimeoutSeconds", "artifactPaths", "timeoutMultiplier", "agentUser", "verifierUser"], "harbor.defaults");
   for (const field of ["agentUser", "verifierUser"] as const) if (defaults[field] !== undefined &&
     (typeof defaults[field] !== "string" || !/^[a-z_][a-z0-9_-]*$/u.test(defaults[field]))) throw new TypeError(`Invalid defaults.${field}`);
-  if (defaults.scoreAfterSolveFailure !== undefined && typeof defaults.scoreAfterSolveFailure !== "boolean") throw new TypeError("Invalid defaults.scoreAfterSolveFailure");
   const artifactPaths = defaults.artifactPaths;
   if (artifactPaths !== undefined && (!Array.isArray(artifactPaths) || artifactPaths.some(value =>
     typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value === "/" ||
@@ -100,7 +99,6 @@ export function parseHarborConfig(value: unknown): HarborConfig {
       ...(defaults.timeoutMultiplier === undefined ? {} : { timeoutMultiplier: expectPositiveNumber(defaults.timeoutMultiplier, "defaults.timeoutMultiplier") }),
       ...(typeof defaults.agentUser === "string" ? { agentUser: defaults.agentUser } : {}),
       ...(typeof defaults.verifierUser === "string" ? { verifierUser: defaults.verifierUser } : {}),
-      ...(typeof defaults.scoreAfterSolveFailure === "boolean" ? { scoreAfterSolveFailure: defaults.scoreAfterSolveFailure } : {}),
       ...(artifactPaths === undefined ? {} : { artifactPaths: artifactPaths as string[] }),
       ...(defaults.workdir === undefined ? {} : { workdir: expectNonEmptyString(defaults.workdir, "defaults.workdir") }) },
     scoring: { primary: expectNonEmptyString(scoring.primary ?? "reward", "scoring.primary"), passThreshold: threshold, errorValues: errors as number[] },

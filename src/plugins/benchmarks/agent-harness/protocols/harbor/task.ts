@@ -333,7 +333,6 @@ async function prepareHarborStage(
     ...(typeof declaredEnvironment.skills_dir === "string" ? { skillsDirectories: [declaredEnvironment.skills_dir] } : {}),
     ...(publicMcp.length ? { mcpServers: publicMcp } : {}) },
     solveEnv, verifyEnv, verification, verificationMode: mode,
-    ...(config.defaults.scoreAfterSolveFailure === undefined ? {} : { scoreAfterSolveFailure: config.defaults.scoreAfterSolveFailure }),
     ...(mode === "shared" ? { verificationNetwork: phaseNetwork(declaredVerifier, declaredEnvironment) } : {}),
     transfer: mode === "shared" ? null : artifactSpec,
     ...(mode === "shared" && artifactSpec ? { artifactCollection: artifactSpec } : {}),

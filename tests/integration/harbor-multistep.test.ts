@@ -77,15 +77,15 @@ test.each([
   { reward: 0.8, strategy: "mean", count: 2, score: 0.9, failure: "none" },
   { reward: 0.8, strategy: "final", count: 2, score: 1, failure: "none" },
   { reward: 0.8, strategy: "mean", count: 2, score: 0.9, failure: "solve-timeout" },
-  { reward: 0.8, strategy: "mean", count: 2, score: 0.8, failure: "verify" },
-  { reward: 0.8, strategy: "final", count: 2, score: null, failure: "verify" },
+  { reward: 0.8, strategy: "mean", count: 2, score: null, failure: "force-zero" },
 ])("executes shared steps with threshold/strategy $reward $strategy $failure", async ({ reward, strategy, count, score, failure }) => {
   const { root, config } = await fixture();
   const value = harness(root);
+  const forceZero = failure === "force-zero";
   const prepare = value.components.benchmark.prepare.bind(value.components.benchmark);
   value.components.benchmark.prepare = async (...args) => {
     const base = await prepare(...args);
-    const task: PreparedTask = { ...base, verificationMode: "shared", scoreAfterSolveFailure: true };
+    const task: PreparedTask = { ...base, verificationMode: "shared" };
     return { ...task, verification: { stepRewardStrategy: strategy }, steps: [
       { name: "first", minReward: 0.6, task: { ...task, input: { id: "a", prompt: "first" } } },
       { name: "second", task: { ...task, input: { id: "a", prompt: "second" } } },
@@ -104,22 +104,30 @@ test.each([
   const solve = value.components.solver.solve.bind(value.components.solver);
   value.components.solver.solve = async (...args) => {
     const result = await solve(...args);
-    if (failure === "solve-timeout" && value.inputs.length === 1) throw new PhaseTimeoutError("solve");
+    if ((failure === "solve-timeout" && value.inputs.length === 1) || (forceZero && value.inputs.length === 2))
+      throw new PhaseTimeoutError("solve");
     return result;
   };
   value.components.benchmark.verify = async () => {
     const score = verified++ === 0 ? reward : 1;
-    if (failure === "verify" && verified === 2) throw new Error("native verifier failed");
     return { score, passed: score >= 1, details: { rewards: { reward: score } } };
   };
   await value.components.store.create(value.config.experiment.output.directory, { ...storeRun, source, taskIds: ["a"] }, {});
   try {
     const record = await runTask(onDemand({ runId: storeRun.runId, taskId: "a", attemptId: "first", ref: { id: "a", recordKey: "a" },
-      configFingerprint: storeRun.configFingerprint }), value.components, source, signal());
+      configFingerprint: storeRun.configFingerprint }), value.components, source, signal(), forceZero ? { scoreAfterSolveTimeout: false } : {});
     expect(record.errors).toHaveLength(failure === "none" ? 0 : 1);
-    expect(record).toMatchObject({ executionStatus: score === null ? "failed" : "completed", scoreStatus: score === null ? "invalid" : "valid",
+    if (forceZero) {
+      expect(record.errors[0]?.code).toBe("SOLVER_AGENT_TIMEOUT");
+      expect(record.steps?.[0]?.verdict?.score).toBe(reward);
+      expect(record.steps?.[0]?.errors).toEqual([]);
+      expect(record.steps?.[1]?.errors.map(error => error.code)).toEqual(["SOLVER_AGENT_TIMEOUT"]);
+    }
+    expect(record).toMatchObject({ executionStatus: forceZero ? "agent_timeout" : "completed",
+      scoreStatus: "valid",
       verdict: score === null ? null : { score },
-      solve: { usage: { totalTokens: (failure === "solve-timeout" ? count - 1 : count) * 5 } } });
+      solve: { usage: { totalTokens: (failure === "solve-timeout" || forceZero ? count - 1 : count) * 5 } } });
+    expect(verified).toBe(forceZero ? count - 1 : count);
     expect(record.steps).toHaveLength(count);
     expect(value.inputs.map(input => input.prompt)).toEqual(["first", "second"].slice(0, count));
     expect(value.events.filter(event => event === "solve.environment")).toHaveLength(1);

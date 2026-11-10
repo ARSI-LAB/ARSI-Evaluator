@@ -241,7 +241,7 @@ test.each(["solve", "verify"] as const)("pipeline preparation preserves the task
   const record = result.records[0];
   expect(record?.errors).toContainEqual(expect.objectContaining({ phase,
     code: phase === "solve" ? "SOLVER_AGENT_TIMEOUT" : "VERIFY_TIMEOUT" }));
-  expect(record?.executionStatus).toBe(phase === "solve" ? "agent_timeout" : "failed");
+  expect(record?.executionStatus).toBe(phase === "solve" ? "completed" : "failed");
   expect(record?.cleanupStatus).toBe("cleaned");
   expect(events).toContain("solve.cleanup");
   if (phase === "verify") expect(events).toContain("verify.cleanup");
