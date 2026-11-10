@@ -10,7 +10,7 @@ export type KernelCommand = (
   & Pick<KernelExecOptions, "python" | "timeoutMs" | "outputLimitBytes" | "cleanupGraceMs" | "cleanupTimeoutMs">;
 
 export async function executeKernelCommand(command: KernelCommand, signal: AbortSignal) {
-  const [{ kernelBench, kernelPrecision, KernelExecError }, { kernelProfile }] = await Promise.all([
+  const [{ kernelBench, kernelPrecision, KernelExecError }, { profileSingleKernel }] = await Promise.all([
     import("../plugins/benchmarks/operator/kernel/runtime/cli.js"),
     import("../plugins/benchmarks/operator/kernel/runtime/profile.js"),
   ]);
@@ -22,7 +22,7 @@ export async function executeKernelCommand(command: KernelCommand, signal: Abort
     ...(command.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: command.cleanupTimeoutMs }),
     ...(command.device === 0 ? {} : { device: command.device }) };
   try {
-    const payload = command.kind === "kernel-profile" ? await kernelProfile(command, options)
+    const payload = command.kind === "kernel-profile" ? await profileSingleKernel(command, options)
       : command.kind === "kernel-precision" ? await kernelPrecision(command, options) : await kernelBench(command, options);
     return { kind: "completed" as const, payload };
   } catch (error) {

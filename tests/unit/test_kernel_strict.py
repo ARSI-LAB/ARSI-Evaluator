@@ -119,7 +119,7 @@ class StrictTests(unittest.TestCase):
 
 
 class WorkerCoreTests(unittest.TestCase):
-    def run_candidate(self, defect=None, candidate_error=None, input_unmodified=True, prepared_timer=True, seeds=None):
+    def run_candidate(self, defect=None, candidate_error=None, input_unmodified=True, emit_layout=True, seeds=None):
         import copy, contextlib, types, sys
         # Device APIs are test doubles; this exercises the fixed checker, not NPU execution.
         sync_calls = []
@@ -157,7 +157,7 @@ class WorkerCoreTests(unittest.TestCase):
                 for a, b in zip(left, right): compare(a, b)
             else:
                 if left.values != right.values: raise AssertionError('Tensor values changed')
-        request = {'hashes': {}, 'candidate': 'candidate.py', 'problem': 'problem.py', 'dataRoot': '.',
+        request = {'hashes': {}, 'candidate': 'candidate/kernel.py', 'candidateRoot': 'candidate', 'problem': 'problem.py', 'dataRoot': '.',
             'contractSha256': 'test-fixture', 'seeds': [42] if seeds is None else seeds, 'rtol': 0, 'atol': 0, 'warmup': 5, 'repeat': 20,
             'contract': {'inputs': [{'shape': [2,4], 'dtype': 'float16', 'contiguous': True}],
                 'output': {'shape': [2,2,2], 'dtype': 'float16', 'contiguous': True, 'independent': True}, 'inputUnmodified': input_unmodified}}
@@ -175,13 +175,11 @@ class WorkerCoreTests(unittest.TestCase):
             before = len(sync_calls)
             for _ in range(kwargs['warmup'] + kwargs['active']): function()
             timings.append({**kwargs, 'synchronizations': len(sync_calls) - before}); return 2 if len(timings) == 1 else 1
-        timer = types.SimpleNamespace(IS_NPU=True, bench_kernel_ms=bench)
-        if prepared_timer:
-            def bench_prepared(function, prepare, **kwargs):
-                if prepared_timer != 'legacy-evidence':
-                    kwargs['audit']['stepLayout'] = 'prepare-then-run'
-                return bench(lambda: function(prepare()), **kwargs)
-            timer.bench_prepared_kernel_ms = bench_prepared
+        def bench_prepared(function, prepare, **kwargs):
+            if emit_layout:
+                kwargs['audit']['stepLayout'] = 'prepare-then-run'
+            return bench(lambda: function(prepare()), **kwargs)
+        timer = types.SimpleNamespace(bench_kernel_ms=bench, bench_prepared_kernel_ms=bench_prepared)
         class CandidateError(Exception): pass
         api = {'verify_hashes': lambda _: None, 'npu_device_id': lambda: 0,
             'load_module': lambda *_: timer,
@@ -217,12 +215,9 @@ class WorkerCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'Tensor values changed'):
             self.run_candidate('reference-mutation', input_unmodified=True)
 
-    def test_external_timer_without_preparation_only_supports_immutable_contracts(self):
-        self.assertEqual(self.run_candidate(prepared_timer=False)[0]['status'], 'passed')
-        with self.assertRaisesRegex(RuntimeError, 'bench_prepared_kernel_ms'):
-            self.run_candidate('mutation', input_unmodified=False, prepared_timer=False)
+    def test_mutable_input_requires_preparation_evidence(self):
         with self.assertRaisesRegex(RuntimeError, 'prepare-then-run'):
-            self.run_candidate('mutation', input_unmodified=False, prepared_timer='legacy-evidence')
+            self.run_candidate('mutation', input_unmodified=False, emit_layout=False)
 
     def test_many_seed_check_updates_scale_with_emitted_evidence(self):
         seeds = list(range(16))

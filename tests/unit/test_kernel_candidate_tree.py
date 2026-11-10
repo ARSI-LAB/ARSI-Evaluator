@@ -40,7 +40,7 @@ class CandidateTreeTests(unittest.TestCase):
         self.request = {'hashes': self.hashes, 'problem': str(self.root / 'problem.py'),
             'candidate': str(self.candidate_root / 'kernels/problem.py'), 'dataRoot': str(self.root),
             'candidateRoot': str(self.candidate_root), 'seeds': [42], 'warmup': 2, 'repeat': 3,
-            'rtol': 0, 'atol': 0, 'outputIndices': None}
+            'rtol': 0, 'atol': 0, 'outputIndices': None, 'inputUnmodified': True}
         self.calls = []
         def output_value():
             self.calls.append('output')
@@ -54,7 +54,7 @@ class CandidateTreeTests(unittest.TestCase):
             inference_mode=contextlib.nullcontext, npu=types.SimpleNamespace(is_available=lambda: True,
                 set_device=lambda _: None, manual_seed_all=lambda _: None, synchronize=lambda: None,
                 current_device=lambda: 0, device_count=lambda: 1, get_device_name=lambda _: 'fixture'))
-        self.timer = types.SimpleNamespace(IS_NPU=True, bench_kernel_ms=lambda run, **_: (run(), 1)[1])
+        self.timer = types.SimpleNamespace(bench_kernel_ms=lambda run, **_: (run(), 1)[1])
         self.mstx = types.SimpleNamespace(get_tool_id=lambda: 4097, range_start=lambda *_: 0, range_end=lambda _: None)
 
     @contextlib.contextmanager

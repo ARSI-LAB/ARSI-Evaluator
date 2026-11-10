@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { EnvironmentSession } from "../../../../../core/contracts/environment.js";
+import { lockedCandidateFiles, type KernelRequest } from "./request.js";
 import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
 import { expectNonEmptyString, expectRecord } from "../../../../../core/validation/input.js";
 import { VerificationError } from "../../../../../core/errors/verification-error.js";
@@ -21,15 +22,11 @@ export class NpuKernelBackend implements KernelBackend {
 
   runtimeFiles(): { path: string; origin: string }[] {
     const asset = (name: string) => fileURLToPath(new URL(name, import.meta.url));
-    return [
-      { path: "runtime/precision.py", origin: asset("precision.py") },
-      { path: "runtime/timing.py", origin: this.config.kernelRoot === undefined ? asset("timing.py")
-        : join(this.config.kernelRoot, "src/kernel_agent/kernel_agent/triton_kernel_agent/opt_worker_component/benchmarking/bench_kernel_util.py") },
-      ...["msprof_replay.py", "strict.py", "timing_evidence.py"].map(name => ({ path: `runtime/${name}`, origin: asset(name) })),
-    ];
+    return ["precision.py", "timing.py", "msprof_replay.py", "strict.py", "timing_evidence.py"]
+      .map(name => ({ path: `runtime/${name}`, origin: asset(name) }));
   }
 
-  async execute(request: Record<string, unknown>, session: EnvironmentSession, signal: AbortSignal): Promise<unknown> {
+  async execute(request: KernelRequest, session: EnvironmentSession, signal: AbortSignal): Promise<unknown> {
     if (request.operation === "profile") {
       const profile: Record<string, unknown> = {};
       await this.collectProfiling(request, session, signal, profile);
@@ -54,7 +51,7 @@ export class NpuKernelBackend implements KernelBackend {
   }
 
   /** Collect detailed metrics through kernelProfile when enabled; record failures without affecting acceptance timing or scoring. */
-  private async collectProfiling(request: Record<string, unknown>, session: EnvironmentSession,
+  private async collectProfiling(request: KernelRequest, session: EnvironmentSession,
     signal: AbortSignal, value: Record<string, unknown>): Promise<void> {
     const fail = (error: string): void => {
       value.profiling = { schemaVersion: 1, status: "failed", error, kernels: [], metadata: {}, artifacts: [] };
@@ -64,15 +61,11 @@ export class NpuKernelBackend implements KernelBackend {
       const inputUnmodified = request.contract === undefined ? true : expectRecord(request.contract, "kernel contract").inputUnmodified;
       if (typeof inputUnmodified !== "boolean") throw new TypeError("contract.inputUnmodified must be a boolean");
       const { enabled: _enabled, roundNum, ...capture } = this.config.profiling;
-      const candidateRoot = request.candidateRoot === undefined ? undefined : expectNonEmptyString(request.candidateRoot, "candidateRoot");
-      const hashes = expectRecord(request.hashes, "kernel source hashes");
       await kernelProfile({
         ...capture,
         problem: join(session.workdir, String(request.problem)),
         kernel: join(session.workdir, String(request.candidate)),
-        ...(candidateRoot === undefined ? {} : { candidateRoot: join(session.workdir, candidateRoot),
-          candidateFiles: Object.entries(hashes).filter(([path]) => path.startsWith(`${candidateRoot}/`))
-            .map(([path, hash]) => ({ path: path.slice(candidateRoot.length + 1), sha256: expectNonEmptyString(hash, "candidate source hash") })) }),
+        candidateRoot: join(session.workdir, request.candidateRoot), candidateFiles: lockedCandidateFiles(request),
         out: join(session.verifierOutputDir, `${stem}.json`),
         round: roundNum,
         caseId: String(request.caseId),
@@ -84,8 +77,8 @@ export class NpuKernelBackend implements KernelBackend {
         ...(this.config.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: this.config.cleanupTimeoutMs }),
         env: this.environment() },
         { session, atomDirectory: join(session.workdir, "runtime"),
-          ...(candidateRoot === undefined ? {} : { sourceContext: { dataRoot: join(session.workdir, expectNonEmptyString(request.dataRoot, "kernel dataRoot")),
-            hashes: Object.fromEntries(Object.entries(hashes).map(([path, hash]) => [join(session.workdir, path), expectNonEmptyString(hash, "locked source hash")])) } }) });
+          sourceContext: { dataRoot: join(session.workdir, expectNonEmptyString(request.dataRoot, "kernel dataRoot")),
+            hashes: Object.fromEntries(Object.entries(request.hashes).map(([path, hash]) => [join(session.workdir, path), hash])) } });
       const raw = expectRecord(JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8")), "kernel profile");
       const metadata = expectRecord(raw.metadata, "kernel profile metadata");
       value.profiling = prefixProfilingPaths(raw, expectNonEmptyString(metadata.artifactRoot, "profile artifact root"));

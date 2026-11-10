@@ -29,15 +29,13 @@ Example services are required placeholders with unusable URLs. The loader requir
 
 ## Task Files
 
-Manifest paths are relative to its directory and must list reference/candidate dependencies. Absolute paths/.. are invalid. Dependencies retain relative structure in verification workspaces. Candidates must be self-contained Python or depend only on listed public helpers.
+Use manifest-relative paths for the reference, candidate and dependencies. Every task declares a `candidateRoot` import directory, including tasks with a single candidate file. Place the candidate entry under that directory and the reference outside it. Declare the entry in `candidate` and list all other required files in `files`, including package initializers, reference dependencies and candidate resources. Paths must stay within the manifest directory. Candidate sources must be regular files, with no symbolic links in their paths.
 
-Reference/candidate remain under `data/<manifest-relative-path>`; candidates are not renamed/moved out. Same-directory helpers, relative package imports, and root-based packages are supported when all .py/__init__.py `files` are listed. Both run in one Python process; use distinct helpers and explicit package paths.
+Precision, strict timing and profiling preserve the declared package layout. For example, an entry at `candidate/kernels/kernel.py` can import `.tiling` when `candidate/kernels/__init__.py` and `candidate/kernels/tiling.py` are listed. The reference imports from the manifest directory. Both modules run in one Python process, so use distinct names for top-level helpers.
 
-For a candidate file tree, set optional `candidateRoot` to its manifest-relative import directory. The candidate entry must be inside that directory and the reference must be outside it. List every candidate helper, package initializer and other required resource in `files`; `candidate` already declares the entry. For example, use `candidateRoot: "candidate"`, `candidate: "candidate/kernels/kernel.py"`, and `files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py"]` alongside `problem: "problem.py"`. Relative imports inside `kernels` and imports from the candidate root work in precision, strict timing and detailed profiling. The manifest remains schemaVersion 1; omitting `candidateRoot` retains the manifest directory as the evaluation import root.
+Profiling stages the declared candidate files in a dedicated directory. `profiling.metadata.sources.candidateFiles` lists their root-relative paths and SHA-256 hashes in path order. The cache identity includes the entry path, every candidate file and the kernel selection policy. SDK captures also include the reference path and locked reference dependencies and runtime files. A change to a helper invalidates cached measurements. Direct `kernelProfile` calls require the absolute `candidateRoot` and a complete `candidateFiles: {path: string; sha256: string}[]` inventory. The standalone `kernel profile --kernel` command constructs a one-file inventory.
 
-Profiling stages the complete declared candidate tree in its own directory, preserving paths even when the reference and entry have the same basename. Explicit trees require safe regular files without symbolic links. `profiling.metadata.sources.candidateFiles` records sorted root-relative `{path, sha256}` entries including the candidate. The entry's `candidate.sha256` retains its original meaning; layout and every member hash participate in cache identity, so changing only a helper invalidates cached evidence. Direct `kernelProfile` callers can supply absolute `candidateRoot` together with `candidateFiles: {path: string; sha256: string}[]`; both fields are required together. Calls omitting both retain standalone single-file compatibility.
-
-For explicit trees, profiling selects the first Triton `@jit` function in the entry, then searches declared Python helpers in deterministic path order if the entry contains none. If no declared file defines one, it falls back to the entry filename stem. `metadata.kernelSelection` records this `entry-first-then-declared-python/v1` policy and the selected source/name; the policy participates in cache identity. SDK profiling also retains the original manifest data root and all locked source hashes, so nested reference imports work and changing a declared reference helper invalidates cached evidence. Reference and other fixed source bytes are checked before cache reuse and again by replay.
+Profiling selects the first Triton `@jit` function in the entry, then checks declared Python helpers in path order. If none defines a Triton function, profiling uses the entry filename stem. `metadata.kernelSelection` records the policy, source path and selected name.
 
 ```json
 {
@@ -46,7 +44,8 @@ For explicit trees, profiling selects the first Triton `@jit` function in the en
     {
       "id": "operator-example",
       "problem": "problem.py",
-      "candidate": "candidate.py",
+      "candidateRoot": "candidate",
+      "candidate": "candidate/kernel.py",
       "files": ["input.py"],
       "referenceKind": "original-kernel",
       "outputIndices": [0]
@@ -84,7 +83,7 @@ A strict success requires every check to pass and observed identities for Python
 
 Strict timing uses schemaVersion 2 / `profiler-flow/v1` evidence and CPU-to-NPU flow associations to assign device kernels to profiler steps. Raw CSV Step Id values are retained, not rewritten or trusted as the sole association. The audit rejects incomplete/ambiguous evidence and excludes warmup steps. The reported iteration mean covers all device kernels, not host launch time. CSV and trace artifacts accompany timing results. Public SDK exports parse contracts, assessments and timing evidence, and audit each timing sample.
 
-With `inputUnmodified: false`, warmup and measured calls each receive fresh inputs. The timer synchronizes input preparation before measuring the operator. Reference and candidate samples record `stepLayout: "prepare-then-run"`. To audit these samples, pass the locked task contract to `parseKernelTimingEvidence(value, contract)` and `auditKernelTimingSample(sample, csv, trace, contract)`. The raw trace retains preparation activity. Only execution steps contribute to the reported mean. Detailed profiling likewise prepares the formal input before opening the MSTX range.
+Successful strict evaluations record schema version 2 timing evidence for both the reference and candidate, with the requested warmup and repeat counts. With `inputUnmodified: false`, warmup and measured calls each receive fresh inputs. The timer synchronizes input preparation before measuring the operator. Reference and candidate samples record `stepLayout: "prepare-then-run"`. To audit these samples, pass the locked task contract to `parseKernelTimingEvidence(value, contract)` and `auditKernelTimingSample(sample, csv, trace, contract)`. The raw trace retains preparation activity. Only execution steps contribute to the reported mean. Detailed profiling likewise prepares the formal input before opening the MSTX range.
 
 ## Detailed Profiling
 
@@ -154,9 +153,9 @@ Two explicit collection protocols are supported:
 
 Missing required evidence produces unavailable diagnostics, distinct from incorrect candidate code. Raw CSV, trace when available, replay metadata and process logs are retained. Source identity, case, seed, warmup, collection and device context identify reusable evidence. Independent profile runs disable disk cache so the caller owns reuse; evaluation-mode caching is optional.
 
-`KA_MSPROF_CACHE_DISABLED=1` disables disk caching even with an explicit `cacheDir`. Otherwise, the directory is `cacheDir`, then `KA_MSPROF_CACHE_DIR`, then `~/.kernel_agent/msprof_cache`. A hit requires matching candidate bytes, explicit tree layout/member hashes, reference hash, case, seed, warmup, collection and device scope; cached replay metadata is validated and available cached profile evidence is copied into the current attempt. `profiling.metadata.cacheRequested`, `cacheEnabled` and `cacheHit` distinguish requested caching, actual availability and reuse.
+`KA_MSPROF_CACHE_DISABLED=1` disables disk caching even with an explicit `cacheDir`. Otherwise, the directory is `cacheDir`, then `KA_MSPROF_CACHE_DIR`, then `~/.kernel_agent/msprof_cache`. A hit requires matching candidate bytes, tree layout and member hashes, reference hash, case, seed, warmup, collection and device scope; cached replay metadata is validated and available cached profile evidence is copied into the current attempt. `profiling.metadata.cacheRequested`, `cacheEnabled` and `cacheHit` distinguish requested caching, actual availability and reuse.
 
-Before publishing a completed independent diagnostic, the benchmark checks the effective case/seed/warmup/collection, trace availability, frozen candidate/reference hashes, the full declared candidate tree when `candidateRoot` is explicit, and replay logical device 0. A mismatch fails verification. A failed collection produces `verdict.details.status: unavailable`, `verdict.passed: null` and no candidate score. This differs from an incorrect candidate in a full evaluation.
+Before publishing a completed independent diagnostic, the benchmark checks the effective case/seed/warmup/collection, trace availability, frozen candidate/reference hashes, the full declared candidate tree, and replay logical device 0. A mismatch fails verification. A failed collection produces `verdict.details.status: unavailable`, `verdict.passed: null` and no candidate score. This differs from an incorrect candidate in a full evaluation.
 
 Parsing retains ngo-agent-style block tables, final-row selection and three-decimal numeric rounding. Empty, nonnumeric and nonfinite CSV cells are omitted from per-block metrics; measured zero is preserved. Missing roofline inputs remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Diagnostic roofline classifications are hints, not proof of speedup. Profiler durations do not replace referenceMs/candidateMs.
 
@@ -177,7 +176,7 @@ Parsing retains ngo-agent-style block tables, final-row selection and three-deci
 
 Evaluation type is quality; independent profiling uses performance. `passed/score` means output equivalence only:1 on pass,0 for candidate error/incorrectness. Correct slower candidates still pass with speedup<1.
 
-Timing now ships as `timing.bench_kernel_ms` without external source access. Optional `benchmark.config.kernelRoot` retains external timing compatibility, locking external modules and their behavior. Both reference/candidate use `triton_only=False` for all device kernels per call, excluding CPU launch overhead. Built-in timing retains real reductions such as ReduceSum and validates finite nonnegative CSV rows. Missing columns/data, incomplete records, or nonpositive totals invalidate timing. Warmup is excluded; units ms. Timing uses the final seed's input; separate shapes into tasks. For mutable-input strict tasks, a custom timer must provide `bench_prepared_kernel_ms(run, prepare, **options)` and emit the prepared-step evidence described above.
+The benchmark locks and uses the packaged NPU timer. Both reference/candidate use `triton_only=False` for all device kernels per call, excluding CPU launch overhead. Built-in timing retains real reductions such as ReduceSum and validates finite nonnegative CSV rows. Missing columns/data, incomplete records, or nonpositive totals invalidate timing. Warmup is excluded; units ms. Timing uses the final seed's input; separate shapes into tasks.
 
 `metrics.json` `metrics["kernel"]` contains:
 
@@ -199,14 +198,14 @@ Missing NPUs, reference failures, missing/invalid timing, worker protocol errors
 
 Evaluation attempts save `verifier/kernel-result.json`; independent profiling saves the validated diagnostic receipt as `verifier/kernel-profile-result.json`. Profiling saves `verifier/kernel-profile.json`, `kernel-profile.raw.json` and a `kernel-profile_profiling_root/` artifact tree, including replay metadata, raw CSVs, trace when requested, `profiling/original-result.json` and logs. Use the saved `profiling.artifacts` list for verifier-relative paths. Each capture attempt has its own replay result, profiler output and Triton cache. The kernel's artifact list identifies its selected capture, and the top-level list also retains failed attempts for diagnosis. For failures, inspect `profiling.error`, `profiling/logs/profiler.log`, `console.log` for the first attempt and `console-attempt-N.log` for retries in the same log directory. For timeout without full results, inspect attempt `errors`; the framework stops worker process groups. Saved results rebuild offline.
 
-`report.md` labels new original-kernel results and displays original metrics/L2/status/evidence. Historical LAST/unmarked results retain their definitions. `metrics.json` stores coverage/task summaries without recollection. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
+`report.md` shows the selected block, its metrics and L2 analysis, capture status and evidence links. `metrics.json` stores coverage and per-task summaries. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
 
 ```text
 profiling.schemaVersion = 1
 profiling.status / error                    # Collection status and error
 profiling.kernels[].name                    # Kernel identity
 profiling.kernels[].metrics[blockId]         # Available fields from the selected block
-profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1; historical results have older values or omit this field
+profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1
 profiling.kernels[].metadata.upstreamCommit # Pinned source implementation commit
 profiling.kernels[].metadata.originalMetadata # Captured paths, round and timestamp
 profiling.metadata.diagnosticProtocol       # Effective case, seed, warmup, collection, scope and selection policy
@@ -219,7 +218,7 @@ profiling.analysis.trace / roofline         # Each analysis may be null when una
 profiling.artifacts                        # Raw evidence paths relative to verifier/
 ```
 
-Older saved results may contain `originalResultJson`, `originalReturnedNone` or `serializationConversions`; current capture does not require or emit those metadata fields. Locate current `original-result.json` through `profiling.artifacts`. Historical records are read without recollecting or redefining their metrics.
+Completed profiles require `kernel-original-f542-v1` in the profile and kernel metadata. The replay receipt and diagnostic protocol record the effective `inputUnmodified` setting.
 
 Check executionStatus/scoreStatus/verdict.passed for correctness/timing and `profiling.status` independently for collection. Profile failure does not imply incorrectness. Numeric consumers must verify actual required finite fields, not only exit codes. Uses existing CLI/Node SDK without HTTP services; Python may subprocess the CLI and read JSON. Offline reports call neither models nor NPUs.
 

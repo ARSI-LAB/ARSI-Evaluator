@@ -8,7 +8,7 @@ import { KernelBenchmark, parseKernelConfig } from "../../src/plugins/benchmarks
 import type { EnvironmentSession, CommandSpec, ProcessHandle } from "../../src/core/contracts/environment.js";
 
 async function fixture(
-  mode: "complete" | "missing" | "cleanup" | "no-trace" | "missing-l2" | "wrong-seed" | "wrong-capture" = "complete",
+  mode: "complete" | "missing" | "cleanup" | "no-trace" | "missing-l2" | "wrong-seed" | "missing-input-policy" | "wrong-capture" = "complete",
   device = 0,
   operation: "evaluate" | "profile" = "profile",
   collection?: "Default" | "PipeTimeline,Default",
@@ -29,7 +29,8 @@ async function fixture(
   const dir = await mkdtemp(join(tmpdir(), "kernel-profile-sdk-"));
   const manifest = join(dir, "manifest.json");
   await writeFile(join(dir, "problem.py"), "class Model: pass\n");
-  await writeFile(join(dir, "candidate.py"), "def kernel_function(x): return x\n");
+  await mkdir(join(dir, "candidate"));
+  await writeFile(join(dir, "candidate/kernel.py"), "def kernel_function(x): return x\n");
   if (candidateTree) {
     await mkdir(join(dir, "candidate/kernels"), { recursive: true });
     await writeFile(join(dir, "candidate/kernels/problem.py"), "from .tiling import run\ndef kernel_function(x): return run(x)\n");
@@ -46,8 +47,8 @@ async function fixture(
   }
   const tensor = { dtype: "float16", shape: [1], contiguous: true };
   const contract = { schemaVersion: 1, caseId: "fixed", inputs: [tensor], output: { ...tensor, independent: true }, inputUnmodified };
-  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, tasks: [{ id: "fixed", problem: "problem.py", candidate: "candidate.py", referenceKind: "pytorch",
-    ...(candidateTree ? { candidate: "candidate/kernels/problem.py", candidateRoot: "candidate",
+  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, tasks: [{ id: "fixed", problem: "problem.py", candidate: "candidate/kernel.py", candidateRoot: "candidate", referenceKind: "pytorch",
+    ...(candidateTree ? { candidate: "candidate/kernels/problem.py",
       files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py",
         ...(nestedReference ? ["refs/__init__.py", "refs/pkg/__init__.py", "refs/inputs.py"] : [])] } : {}),
     ...(nestedReference ? { problem: "refs/pkg/problem.py" } : {}),
@@ -82,7 +83,7 @@ async function fixture(
         if (mode !== "missing-l2") await writeFile(join(profile, "L2Cache.csv"), "block_id,sub_block_id\n0,vector\n");
         await writeFile(join(profile, "ResourceConflictRatio.csv"), "block_id,aiv_vec_wait_ratio\n0,0.1\n");
         if (mode === "complete") await writeFile(join(profile, "trace.json"), JSON.stringify({ traceEvents: [{ pid: "core0.veccore0", tid: "VECTOR", ts: 0, dur: 10 }] }));
-        await writeFile(resultPath, JSON.stringify({ inputUnmodified: (replayRequest as { inputUnmodified?: boolean }).inputUnmodified,
+        await writeFile(resultPath, JSON.stringify({ inputUnmodified: mode === "missing-input-policy" ? undefined : (replayRequest as { inputUnmodified: boolean }).inputUnmodified,
           seed: mode === "wrong-seed" ? 41 : 42, warmup: 7, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1, capture: { method: "mstx", range: "rsi_operator_profile", toolId: 4097, rangeId: 0, warmupCompleted: mode === "wrong-capture" ? 6 : 7, callsInRange: 1 }, deviceName: "Ascend950PR", inputContract: "unchanged problem.get_inputs", environment: { device: "fixture950 logical=0", visibleDevices: "0" } }));
       }
       return { stdout: (async function* () { if (outputBytes) yield Buffer.from("x".repeat(outputBytes)); })(), stderr: (async function* () {})(), done: Promise.resolve({ code: attempt?.code ?? exitCode, signal: null }),
@@ -342,6 +343,15 @@ test("Default diagnostics retain the actual replay seed check", async () => {
 });
 
 
+test("diagnostics reject replay receipts missing the input mutation policy", async () => {
+  const f = await fixture("missing-input-policy", 0, "profile", "Default");
+  try {
+    const verdict = await f.benchmark.verify(f.task, f.solve, f.session, f.signal);
+    expect(verdict).toMatchObject({ details: { status: "unavailable",
+      profiling: { error: expect.stringContaining("Replay effective input protocol mismatch") } } });
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
 test.each(["Default", "PipeTimeline,Default"] as const)("diagnostics require actual capture receipts (%s)", async (collection) => {
   const f = await fixture("wrong-capture", 0, "profile", collection);
   try {
@@ -356,7 +366,8 @@ test.each(["Default", "PipeTimeline,Default"] as const)("diagnostics require act
 test("capture cache preserves receipts and separates collection and seed protocols", async () => {
   const f = await fixture();
   try {
-    const args = { problem: join(f.dir, "problem.py"), kernel: join(f.dir, "candidate.py"),
+    const args = { problem: join(f.dir, "problem.py"), kernel: join(f.dir, "candidate/kernel.py"), candidateRoot: join(f.dir, "candidate"),
+      candidateFiles: [{ path: "kernel.py", sha256: f.solve.finalText }],
       round: 1, seed: 42, warmup: 7, caseId: "fixed", cacheEnabled: true, cacheDir: join(f.dir, "cache") };
     const options = { env: { ASCEND_RT_VISIBLE_DEVICES: "0", KERNEL_NPU_DEVICE: "0" } };
     const execution = { session: f.session, atomDirectory: join(f.session.workdir, "runtime") };
@@ -438,11 +449,11 @@ test("explicit profile trees reject unsafe, changed, missing and incomplete sour
     const candidateFiles = await treeFiles(candidateRoot);
     const args = { problem: join(f.dir, "problem.py"), kernel: join(candidateRoot, "kernels/problem.py"), candidateRoot,
       round: 1, seed: 42, warmup: 7, cacheEnabled: false, out: join(f.dir, "unsafe.json") };
-    for (const files of [undefined, [], candidateFiles.slice(0, 1), [...candidateFiles, ...candidateFiles],
+    for (const files of [[], candidateFiles.slice(0, 1), [...candidateFiles, ...candidateFiles],
       [...candidateFiles, { path: "../escape.py", sha256: "a".repeat(64) }],
       candidateFiles.map(file => ({ ...file, sha256: "b".repeat(64) })),
       [...candidateFiles, { path: "missing.py", sha256: "a".repeat(64) }]]) {
-      await expect(kernelProfile({ ...args, ...(files === undefined ? {} : { candidateFiles: files }) }, {},
+      await expect(kernelProfile({ ...args, candidateFiles: files }, {},
         { session: f.session, atomDirectory: join(f.session.workdir, "runtime") })).rejects.toThrow();
     }
     const helper = join(candidateRoot, "kernels/tiling.py");

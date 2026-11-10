@@ -24,8 +24,9 @@ function checkDeviceAndOrder(rows: KernelTimingRow[]): void {
 }
 function sample(value: unknown, contract?: Pick<KernelContract, "inputUnmodified">): KernelTimingSample {
   const r = expectRecord(value, "timing sample");
-  if (r.stepLayout !== undefined && (r.stepLayout !== "prepare-then-run" || contract?.inputUnmodified !== false))
-    throw new TypeError("Timing preparation steps require a mutable-input contract");
+  const stepLayout = contract?.inputUnmodified === false ? "prepare-then-run" : undefined;
+  if (r.stepLayout !== stepLayout)
+    throw new TypeError("Timing stepLayout must be prepare-then-run for mutable inputs and absent for immutable inputs");
   const path = (key: string): string => {
     const value = expectNonEmptyString(r[key], `timing.${key}`);
     if (value.startsWith("/") || /[\\:\x00]/u.test(value) || value.split("/").some(p => p === ".." || p === "." || !p)) throw new TypeError("Unsafe timing evidence path");
@@ -58,7 +59,7 @@ function sample(value: unknown, contract?: Pick<KernelContract, "inputUnmodified
   const recomputed = rows.reduce((sum,row) => sum + (row.step >= warmup ? row.durationUs : 0),0) / repeat / 1000;
   if (!Number.isFinite(recomputed) || Math.abs(meanMs-recomputed) > Math.max(1e-12, Math.abs(recomputed)*1e-9)) throw new TypeError("Timing mean does not match rows");
   return {csvPath,csvSha256,tracePath,traceSha256,warmup,repeat,meanMs,rows,
-    ...(r.stepLayout === undefined ? {} : { stepLayout: r.stepLayout })};
+    ...(stepLayout === undefined ? {} : { stepLayout })};
 }
 export function parseKernelTimingEvidence(value: unknown, contract?: Pick<KernelContract, "inputUnmodified">): KernelTimingEvidence {
   const r = expectRecord(value,"kernel timing evidence");

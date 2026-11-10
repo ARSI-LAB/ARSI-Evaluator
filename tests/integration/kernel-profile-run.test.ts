@@ -17,9 +17,11 @@ async function fixture(ids: string[], selected: string[], taskTimeout: number) {
   await writeFile(join(root, "problem.py"), "class Model: pass\n");
   const tasks = [];
   for (const id of ids) {
-    const candidate = `${id}.py`;
+    const candidateRoot = `candidates/${id}`;
+    await mkdir(join(root, candidateRoot), { recursive: true });
+    const candidate = `${candidateRoot}/kernel.py`;
     await writeFile(join(root, candidate), `# ${id}\ndef kernel_function(x): return x\n`);
-    tasks.push({ id, problem: "problem.py", candidate, referenceKind: "pytorch" });
+    tasks.push({ id, problem: "problem.py", candidate, candidateRoot, referenceKind: "pytorch" });
   }
   await writeFile(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, tasks }));
   const configPath = join(root, "config.yaml");
@@ -45,13 +47,21 @@ mkdirSync(dir, { recursive: true });
 writeFileSync(join(dir, "PipeUtilization.csv"), "block_id,sub_block_id,aiv_vec_ratio\\n0,vector,0.5\\n");
 writeFileSync(join(dir, "L2Cache.csv"), "block_id,sub_block_id\\n0,vector\\n");
 writeFileSync(join(dir, "ResourceConflictRatio.csv"), "block_id,aiv_vec_wait_ratio\\n0,0.1\\n");
-writeFileSync(replay, JSON.stringify({ seed: 0, warmup: 25, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1,
+writeFileSync(replay, JSON.stringify({ seed: 0, warmup: 25, inputUnmodified: true, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1,
   environment: { visibleDevices: "0" }, capture: { method: "mstx", range: "rsi_operator_profile", toolId: 4097, rangeId: 0, warmupCompleted: 25, callsInRange: 1 } }));
 `, { mode: 0o755 });
   const result = await run();
   if (result.kind !== "local") throw new Error("expected a local result");
   expect(result.snapshot.run.taskIds).toEqual(["first", "last"]);
   expect(result.snapshot.records).toHaveLength(2);
+  const report = await readFile(join(result.runDirectory, "report.md"), "utf8");
+  expect(report).toContain("| first / kernel | 0 | 0.5 |");
+  expect(report).toContain("No obvious L2 Cache optimization space is observed.");
+  for (const link of report.matchAll(/\]\(([^)]+\/original-result\.json)\)/gu)) {
+    const artifact = JSON.parse(await readFile(join(result.runDirectory, decodeURIComponent(link[1]!)), "utf8"));
+    expect(artifact.metrics["0"].aiv_vec_ratio).toBe(0.5);
+  }
+  expect(report.match(/\]\([^)]+\/original-result\.json\)/gu)).toHaveLength(2);
   for (const { key, verdict } of result.snapshot.records) {
     const hash = createHash("sha256").update(`# ${key.taskId}\ndef kernel_function(x): return x\n`).digest("hex");
     expect(verdict).toMatchObject({ passed: null, details: { status: "completed", candidateSha256: hash,

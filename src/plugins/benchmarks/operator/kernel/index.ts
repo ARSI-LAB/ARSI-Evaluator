@@ -8,6 +8,7 @@ import type { SolveResult, VerifyResult, EvaluationKind } from "../../../../core
 import { expectRecord, expectNonEmptyString, expectPositiveInteger, rejectUnknown } from "../../../../core/validation/input.js";
 import { type EffectiveConfig } from "../../../../core/contracts/config.js";
 import type { HardwareKind } from "../../../../core/contracts/hardware.js";
+import { lockedCandidateFiles, type KernelRequest } from "./runtime/request.js";
 import { assertKernelHardware, createKernelBackend, type KernelBackend } from "./runtime/backend.js";
 import { parseKernelSeeds } from "./runtime/seeds.js";
 import { MAX_KERNEL_TIMER_MS } from "./runtime/cli.js";
@@ -29,7 +30,7 @@ function positiveTimer(value: unknown, name: string, millisecondsPerUnit = 1): n
 
 export function parseKernelConfig(value: unknown) {
   const c = expectRecord(value, "kernel");
-  rejectUnknown(c, ["operation", "manifest", "kernelRoot", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "outputLimitBytes", "cleanupGraceMs", "cleanupTimeoutMs", "profiling"], "kernel");
+  rejectUnknown(c, ["operation", "manifest", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "outputLimitBytes", "cleanupGraceMs", "cleanupTimeoutMs", "profiling"], "kernel");
   const p = expectRecord(c.profiling ?? {}, "profiling");
   rejectUnknown(p, ["enabled", "collection", "warmup", "attemptTimeoutSeconds", "maxAttempts", "retryDelayMs", "roundNum", "msprofBin", "deviceName", "cacheEnabled", "cacheDir", "cacheMaxEntries"], "profiling");
   if (p.enabled !== undefined && typeof p.enabled !== "boolean") throw new TypeError("profiling.enabled must be boolean");
@@ -76,7 +77,7 @@ export function parseKernelConfig(value: unknown) {
     if (!profiling.enabled) throw new TypeError("Independent profile requires profiling.enabled=true");
     if (profiling.cacheEnabled) throw new TypeError("Independent profile requires cacheEnabled=false; callers own evidence reuse");
   }
-  return { operation, manifest: expectNonEmptyString(c.manifest, "manifest"), ...(c.kernelRoot === undefined ? {} : { kernelRoot: expectNonEmptyString(c.kernelRoot, "kernelRoot") }),
+  return { operation, manifest: expectNonEmptyString(c.manifest, "manifest"),
     python: expectNonEmptyString(c.python ?? "python3", "python"), device, seeds,
     rtol: nonnegative(c.rtol ?? 0.001, "rtol"), atol: nonnegative(c.atol ?? 0.001, "atol"),
     warmup: expectPositiveInteger(c.warmup ?? 5, "warmup"), repeat: expectPositiveInteger(c.repeat ?? 20, "repeat"),
@@ -104,11 +105,10 @@ export function parseKernelManifest(value: unknown) {
       throw new TypeError("outputIndices must be unique nonnegative integers");
     const problem = relativeFile(t.problem, "problem");
     const candidate = relativeFile(t.candidate, "candidate");
-    const candidateRoot = t.candidateRoot === undefined ? undefined : relativeFile(t.candidateRoot, "candidateRoot");
-    if (candidateRoot !== undefined && (!candidate.startsWith(`${candidateRoot}/`) || problem === candidateRoot || problem.startsWith(`${candidateRoot}/`)))
+    const candidateRoot = relativeFile(t.candidateRoot, "candidateRoot");
+    if (!candidate.startsWith(`${candidateRoot}/`) || problem === candidateRoot || problem.startsWith(`${candidateRoot}/`))
       throw new TypeError("candidateRoot must contain the candidate and exclude the reference");
-    return { id, problem, candidate,
-      ...(candidateRoot === undefined ? {} : { candidateRoot }),
+    return { id, problem, candidate, candidateRoot,
       files: files.map(f => relativeFile(f, "files")), referenceKind: t.referenceKind,
       ...(t.contract === undefined ? {} : { contract: parseKernelContract(t.contract) }),
       ...(indices === undefined ? {} : { outputIndices: indices as number[] }) };
@@ -158,7 +158,7 @@ export class KernelBenchmark implements Benchmark {
     const files = [{ path: "manifest.json", sha256: digest(manifest), origin: this.config.manifest }];
     for (const path of paths) {
       signal.throwIfAborted();
-      const origin = await this.dataFile(path, tasks.some(task => task.candidateRoot !== undefined && path.startsWith(`${task.candidateRoot}/`)));
+      const origin = await this.dataFile(path, tasks.some(task => path.startsWith(`${task.candidateRoot}/`)));
       files.push({ path: `data/${path}`, sha256: digest(await readFile(origin)), origin });
     }
     for (const { path, origin } of this.backend.runtimeFiles()) {
@@ -195,7 +195,7 @@ export class KernelBenchmark implements Benchmark {
     return {
       input: { id: task.id, prompt: "Submit the frozen kernel artifact for independent evaluation.", payload: { candidateSha256: candidate.sha256 } },
       verification: { schemaVersion: 1, caseId: task.id, operation: this.config.operation, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
-        ...(task.candidateRoot === undefined ? {} : { candidateRoot: `data/${task.candidateRoot}` }),
+        candidateRoot: `data/${task.candidateRoot}`,
         files: selected.map(f => ({ source: f.origin, target: f.path })),
         problem: `data/${task.problem}`, referenceKind: task.referenceKind, outputIndices: task.outputIndices ?? null,
         seeds: this.config.seeds, rtol: this.config.rtol, atol: this.config.atol, warmup: this.config.warmup, repeat: this.config.repeat,
@@ -211,7 +211,10 @@ export class KernelBenchmark implements Benchmark {
 
   async verify(task: PreparedTask, result: SolveResult, session: EnvironmentSession | null, signal: AbortSignal): Promise<VerifyResult> {
     if (!session) throw new Error("Kernel verification requires a private environment session");
-    const { files, ...request } = expectRecord(task.verification, "kernel verification descriptor");
+    const { files, ...descriptor } = expectRecord(task.verification, "kernel verification descriptor");
+    const hashes = Object.fromEntries(Object.entries(expectRecord(descriptor.hashes, "kernel source hashes"))
+      .map(([path, hash]) => [path, expectNonEmptyString(hash, "locked source hash")]));
+    const request: KernelRequest = { ...descriptor, hashes, candidateRoot: expectNonEmptyString(descriptor.candidateRoot, "candidateRoot") };
     if (result.finalText !== request.candidateSha256) throw new Error("Solver submitted a different kernel identity");
     const active = AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutSeconds * 1000)]);
     if (!Array.isArray(files)) throw new Error("Missing verifier files");
@@ -222,23 +225,20 @@ export class KernelBenchmark implements Benchmark {
       await session.upload(file.source, file.target, active);
     }
     const value = await this.backend.execute(request, session, active);
-    const hashes = expectRecord(request.hashes, "kernel source hashes");
-    const candidateFiles = request.candidateRoot === undefined ? undefined : Object.entries(hashes)
-      .filter(([path]) => path.startsWith(`${String(request.candidateRoot)}/`))
-      .map(([path, hash]) => ({ path: path.slice(String(request.candidateRoot).length + 1), sha256: expectNonEmptyString(hash, "candidate source hash") }))
-      .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    const candidateFiles = lockedCandidateFiles(request);
     if (this.config.operation === "profile") {
       const verdict = kernelProfileVerdict(value, String(request.candidateSha256), String(request.referenceKind), {
         caseId: String(request.caseId), seed: this.config.seeds[0]!, warmup: this.config.profiling.warmup ?? 25,
         collection: this.config.profiling.collection,
+        inputUnmodified: request.contract === undefined || parseKernelContract(request.contract).inputUnmodified,
         problemSha256: expectNonEmptyString(hashes[String(request.problem)], "problem source hash"),
-        ...(candidateFiles === undefined ? {} : { candidateFiles }),
+        candidateFiles,
         ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
       });
       await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
       return verdict;
     }
-    return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), this.config.profiling.enabled,
-      request.contract === undefined ? undefined : { contract: parseKernelContract(request.contract), protocol: this.config }, candidateFiles);
+    return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), candidateFiles, this.config.profiling.enabled,
+      request.contract === undefined ? undefined : { contract: parseKernelContract(request.contract), protocol: this.config });
   }
 }

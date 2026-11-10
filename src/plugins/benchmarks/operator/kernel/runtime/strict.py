@@ -82,9 +82,8 @@ def evaluate(request, profile_root, api):
     device = api['npu_device_id']()
     torch.npu.set_device(device)
     assessment['environment'] = observe_environment(torch, torch_npu, device)
-    timer = api['load_module'](Path('runtime/timing.py'), 'kernel_strict_timer')
-    if not timer.IS_NPU: raise RuntimeError('kernel benchmark did not select NPU')
-    problem = api['load_task_module'](request['problem'], request['dataRoot'], 'problem')
+    timer = api['load_module'](Path(__file__).with_name('timing.py'), 'kernel_strict_timer')
+    problem = api['load_task_module'](request['problem'], request['dataRoot'])
     # new_assessment emits checks in seed, call, CHECKS order, including unattempted calls.
     check_offset = 0
     call_failed = False
@@ -107,8 +106,9 @@ def evaluate(request, profile_root, api):
                 raise api['CandidateError'](str(exc)) from exc
             raise
 
+    candidate_root = request['candidateRoot']
     try:
-        candidate = api['load_task_module'](request['candidate'], request.get('candidateRoot', request['dataRoot']), 'kernel').kernel_function
+        candidate = api['load_task_module'](request['candidate'], candidate_root).kernel_function
         if not callable(candidate): raise TypeError('kernel_function must be callable')
     except Exception as exc:
         if error_owner(exc) == 'candidate':
@@ -167,10 +167,7 @@ def evaluate(request, profile_root, api):
             if contract['inputUnmodified']:
                 ms = timer.bench_kernel_ms(lambda: run(inputs), **options)
             else:
-                bench = getattr(timer, 'bench_prepared_kernel_ms', None)
-                if not callable(bench):
-                    raise RuntimeError('Mutable-input contracts require a timer with bench_prepared_kernel_ms')
-                ms = bench(run, lambda: api['clone_tree'](inputs, torch), **options)
+                ms = timer.bench_prepared_kernel_ms(run, lambda: api['clone_tree'](inputs, torch), **options)
                 if audit.get('stepLayout') != 'prepare-then-run':
                     raise RuntimeError('Mutable-input timer must emit prepare-then-run timing evidence')
             return api['positive_measurement'](ms), audit

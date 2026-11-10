@@ -44,12 +44,6 @@ export function getNpuSpecs(deviceName: string): NpuSpecs | null {
 /** 未指定型号时的兜底型号（与原版 get_ub_ratio 行为一致）。 */
 export const DEFAULT_NPU_DEVICE = "ASCEND 950PR 128G";
 
-/** 从 Triton kernel 源码提取 @jit（含 @triton.jit 点分形式）函数名；找不到回退文件干。 */
-export function extractTritonKernelName(kernelFile: string, source: string): string {
-  const stem = kernelFile.split(/[/\\]/).pop()?.replace(/\.py$/, "") ?? "kernel";
-  return findTritonKernelName(source) ?? stem;
-}
-
 export function findTritonKernelName(source: string): string | undefined {
   const lines = source.split("\n");
   let pendingJit = false;

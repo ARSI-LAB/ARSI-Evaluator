@@ -5,7 +5,7 @@ import { parseKernelManifest } from "../../src/plugins/benchmarks/operator/kerne
 const contract = { schemaVersion: 1, caseId: "fixed", inputs: [{ shape: [2, 4], dtype: "float16", contiguous: true }],
   output: { shape: [2, 2, 2], dtype: "float16", contiguous: true, independent: true }, inputUnmodified: true };
 test("kernel manifest accepts and validates an explicit strict contract", () => {
-  const task = { id: "t", problem: "p.py", candidate: "c.py", referenceKind: "pytorch", contract };
+  const task = { id: "t", problem: "p.py", candidate: "candidate/c.py", candidateRoot: "candidate", referenceKind: "pytorch", contract };
   expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]?.contract).toEqual(contract);
   expect(() => parseKernelContract({ ...contract, output: { ...contract.output, shape: [0] } })).toThrow(/shape/);
   expect(() => parseKernelContract({ ...contract, unknown: true })).toThrow(/unknown/i);
@@ -15,7 +15,7 @@ test("strict manifests retain mixed floating dtypes, scalars and optional contig
     { shape: [], dtype: "float32", contiguous: true },
     { shape: [2, 3], dtype: "bfloat16", contiguous: false },
   ], output: { shape: [], dtype: "bfloat16", contiguous: true, independent: true } };
-  const task = { id: "t", problem: "p.py", candidate: "c.py", referenceKind: "pytorch", contract: mixed };
+  const task = { id: "t", problem: "p.py", candidate: "candidate/c.py", candidateRoot: "candidate", referenceKind: "pytorch", contract: mixed };
   expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]?.contract).toEqual(mixed);
   for (const change of [{ dtype: "int32" }, { dtype: "float64" }, { contiguous: 0 }, { shape: [2, 0] }])
     expect(() => parseKernelContract({ ...mixed, inputs: [{ ...mixed.inputs[0], ...change }] })).toThrow();
@@ -70,16 +70,16 @@ test("strict verdict binds the worker's effective protocol to the requested sett
     timingScope: "all-device-kernels", status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2,
     assessment: assessment() };
   const strict = { contract: parsed, protocol: { ...protocol, repeat: 21 } };
-  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", false, strict)).toThrow(/Effective protocol mismatch: repeat/);
+  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, strict)).toThrow(/Effective protocol mismatch: repeat/);
 });
 
 test("strict verdict refuses not-run checks and unattributed candidate defects", () => {
   const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: assessment() };
-  expect(kernelVerdict(value, value.candidateSha256, "pytorch", false, { contract: parsed, protocol }).passed).toBe(true);
+  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/timing evidence/i);
   value.assessment.checks[0]!.status = "not-run";
-  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", false, { contract: parsed, protocol })).toThrow(/Strict checks/);
-  expect(() => kernelVerdict({ ...value, status: "candidate_error", referenceMs: null, candidateMs: null, speedup: null }, value.candidateSha256, "pytorch", false, { contract: parsed, protocol })).toThrow(/evidence/);
+  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/Strict checks/);
+  expect(() => kernelVerdict({ ...value, status: "candidate_error", referenceMs: null, candidateMs: null, speedup: null }, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/evidence/);
 });
 
 
@@ -87,13 +87,13 @@ test("strict performance verdict requires the observed environment identity", ()
   const checks = { ...assessment(), environment: { ...assessment().environment, driver: null } };
   const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: checks };
-  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", false, { contract: parsed, protocol })).toThrow(/environment/);
+  expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/environment/);
 });
 
-test("live mutable-input verdict requires preparation evidence for both timers", () => {
-  const mutable = { ...parsed, inputUnmodified: false };
+test.each([true, false])("strict timing matches both timers to the input policy and iteration counts (%s)", inputUnmodified => {
+  const taskContract = { ...parsed, inputUnmodified };
   const checks = assessment();
-  checks.contractSha256 = kernelContractDigest(mutable);
+  checks.contractSha256 = kernelContractDigest(taskContract);
   checks.effectiveProtocol.warmup = 1;
   checks.effectiveProtocol.repeat = 1;
   const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
@@ -103,10 +103,16 @@ test("live mutable-input verdict requires preparation evidence for both timers",
     tracePath: `profile-${side}/trace_view.json`, traceSha256: "0".repeat(64), warmup: 1, repeat: 1, meanMs: 0.001,
     rows: [0, 1].map(step => ({ step, device: "0", stream: "1", name: "work", startUs: step, durationUs: 1 })),
   });
-  const old = { schemaVersion: 2, method: "profiler-flow/v1", reference: sample("reference"), candidate: sample("candidate") };
-  const verdict = (result: unknown) => kernelVerdict(result, value.candidateSha256, "pytorch", false, { contract: mutable, protocol: { ...protocol, warmup: 1, repeat: 1 } });
-  expect(() => verdict(value)).toThrow(/prepare-then-run/);
-  expect(() => verdict({ ...value, timingEvidence: old })).toThrow(/prepare-then-run/);
-  expect(verdict({ ...value, timingEvidence: { ...old, reference: { ...old.reference, stepLayout: "prepare-then-run" },
-    candidate: { ...old.candidate, stepLayout: "prepare-then-run" } } }).passed).toBe(true);
+  const unprepared = { schemaVersion: 2, method: "profiler-flow/v1", reference: sample("reference"), candidate: sample("candidate") };
+  const verdict = (result: unknown) => kernelVerdict(result, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: taskContract, protocol: { ...protocol, warmup: 1, repeat: 1 } });
+  expect(() => verdict(value)).toThrow(/timing evidence/i);
+  const prepared = { ...unprepared, reference: { ...unprepared.reference, stepLayout: "prepare-then-run" },
+    candidate: { ...unprepared.candidate, stepLayout: "prepare-then-run" } };
+  const matching = inputUnmodified ? unprepared : prepared;
+  expect(() => verdict({ ...value, timingEvidence: inputUnmodified ? prepared : unprepared })).toThrow(/prepare-then-run/);
+  expect(verdict({ ...value, timingEvidence: matching }).passed).toBe(true);
+  const differentRepeat = (side: typeof matching.reference) => ({ ...side, repeat: 2,
+    rows: [...side.rows, { ...side.rows[1]!, step: 2, startUs: 2 }] });
+  expect(() => verdict({ ...value, timingEvidence: { ...matching, reference: differentRepeat(matching.reference),
+    candidate: differentRepeat(matching.candidate) } })).toThrow(/warmup or repeat mismatch/);
 });

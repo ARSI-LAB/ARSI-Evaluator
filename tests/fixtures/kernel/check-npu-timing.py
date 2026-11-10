@@ -24,7 +24,6 @@ sys.modules["torch_npu"] = types.ModuleType("torch_npu")
 spec = importlib.util.spec_from_file_location("npu_timing", sys.argv[1])
 timing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timing)
-assert timing.IS_NPU is True  # precision.py and external timers share this contract.
 assert not calls, "Import must not select a device"
 
 def forbidden():

@@ -34,9 +34,6 @@ import torch
 # Explicit NPU execution: never probe CUDA or substitute CPU timing.
 import torch_npu
 
-# Explicit backend identity consumed by precision.py, including external timers.
-IS_NPU = True
-
 
 def _logical_npu_device_id() -> int:
     requested = os.environ.get("KERNEL_NPU_DEVICE") or os.environ.get("ASCEND_DEVICE_ID") or os.environ.get("DEVICE_ID")
@@ -283,11 +280,10 @@ def _bench_atom_main():
         if not torch.npu.is_available():
             raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
         torch.npu.set_device(_logical_npu_device_id())
-        from precision import CandidateError, clone_tree, load_module, load_task_module
+        from precision import CandidateError, clone_tree, load_task_module
 
-        problem = load_task_module(args.problem, str(Path(args.problem).resolve().parent), "problem")
-        kernel_mod = load_module(args.kernel, "kernel_atom_kernel")
-        candidate = kernel_mod.kernel_function
+        problem = load_task_module(args.problem, Path(args.problem).resolve().parent)
+        candidate = load_task_module(args.kernel, Path(args.kernel).resolve().parent).kernel_function
         if not callable(candidate):
             raise CandidateError("kernel_function must be callable")
         inputs = problem.get_inputs()

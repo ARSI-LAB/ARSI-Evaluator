@@ -1,8 +1,9 @@
-import { kernelProfile } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
+import { profileSingleKernel } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
 import { kernelBench, kernelPrecision } from "../../src/plugins/benchmarks/operator/kernel/runtime/cli.js";
 import { NpuKernelBackend } from "../../src/plugins/benchmarks/operator/kernel/runtime/npu.js";
 import { LocalEnvironment } from "../../src/plugins/environments/local/environment.js";
@@ -58,13 +59,15 @@ sys.exit(subprocess.call(shlex.split(app), env={k: os.environ[k] for k in keep i
       if (sdk) {
         const backend = new NpuKernelBackend({ python, device: 3,
           profiling: { enabled: profiling, roundNum: 1, msprofBin: msprof, maxAttempts: 1, cacheEnabled: false } });
-        const session = await new LocalEnvironment(root).prepare({ workdir: ".", image: null, runtime: [], env: backend.environment(),
-          initialFiles: [{ source: problem, target: "data/problem.py" }, { source: kernel, target: "data/candidate.py" },
-            ...backend.runtimeFiles().map(({ origin, path }) => ({ source: origin, target: path }))] },
+        const sessionFiles = [{ source: problem, target: "data/problem.py" }, { source: kernel, target: "data/candidate/kernel.py" },
+          ...backend.runtimeFiles().map(({ origin, path }) => ({ source: origin, target: path }))];
+        const session = await new LocalEnvironment(root).prepare({ workdir: ".", image: null, runtime: [], env: backend.environment(), initialFiles: sessionFiles },
           { root, agent: join(root, "agent"), verifier: join(root, "verifier"), artifacts: join(root, "artifacts") }, "solve", signal);
         try {
-          await backend.execute({ operation: profiling ? "profile" : "evaluate", candidateSha256: "a".repeat(64),
-            problem: "data/problem.py", candidate: "data/candidate.py", dataRoot: "data", hashes: {}, seeds: [0], referenceKind: "pytorch" },
+          const hashes = Object.fromEntries(await Promise.all(sessionFiles.map(async ({ source, target }) =>
+            [target, createHash("sha256").update(await readFile(source)).digest("hex")] as const)));
+          await backend.execute({ operation: profiling ? "profile" : "evaluate", candidateSha256: hashes["data/candidate/kernel.py"],
+            problem: "data/problem.py", candidate: "data/candidate/kernel.py", candidateRoot: "data/candidate", dataRoot: "data", hashes, seeds: [0], referenceKind: "pytorch" },
           session, signal);
         } finally { await session.dispose(signal); }
       } else {
@@ -72,7 +75,7 @@ sys.exit(subprocess.call(shlex.split(app), env={k: os.environ[k] for k in keep i
         const args = { problem, kernel, out };
         if (operation === "precision") await kernelPrecision(args, options);
         else if (operation === "bench") await kernelBench(args, options);
-        else await kernelProfile({ ...args, round: 1, cacheEnabled: false, maxAttempts: 1, msprofBin: msprof }, options);
+        else await profileSingleKernel({ ...args, round: 1, cacheEnabled: false, maxAttempts: 1, msprofBin: msprof }, options);
       }
       const expected = { ASCEND_HOME_PATH: sdk ? "/fixture/cann" : "/override/cann", ASCEND_OPP_PATH: "/fixture/opp", TOOLCHAIN_HOME: "/fixture/compiler",
         ASCEND_RT_VISIBLE_DEVICES: sdk ? "3" : "0,1,2", KERNEL_NPU_DEVICE: sdk ? "0" : "2",

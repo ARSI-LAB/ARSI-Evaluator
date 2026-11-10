@@ -29,15 +29,13 @@ ember-evaluator run playbook/kernel/existing.yaml
 
 ## 任务文件
 
-清单中的路径相对清单目录，必须列出参考和候选依赖的文件，不能使用绝对路径或 `..`。依赖按原相对结构放入验证工作区。候选应是自包含的 Python 文件，或只依赖明确列出的公共辅助模块。
+参考、候选及依赖均使用清单目录内的相对路径。每个任务都要声明候选导入目录 `candidateRoot`，单文件任务也是如此。候选入口放在该目录内，参考放在目录外。`candidate` 指定入口，`files` 列出其余所需文件，包括包初始化文件、参考依赖和候选资源。候选源文件必须是普通文件，路径中不得包含符号链接。
 
-候选与参考均保留在 `data/<清单相对路径>`，不会将候选重命名后移出原目录。支持同目录辅助模块、包内相对导入，以及以清单根目录为起点的包导入；相关 `.py` 和 `__init__.py` 文件均须列入 `files`。参考与候选在同一 Python 进程中运行，辅助模块应使用不冲突的名称，优先使用明确的包路径。
+精度检查、严格计时和 profiling 均保留声明的包结构。例如，入口 `candidate/kernels/kernel.py` 可以从 `.tiling` 导入函数，清单需列出 `candidate/kernels/__init__.py` 和 `candidate/kernels/tiling.py`。参考从清单目录导入模块。参考与候选运行在同一 Python 进程，顶层辅助模块应使用不同名称。
 
-多文件候选可使用可选的 `candidateRoot` 指定相对清单目录的候选导入根。候选入口必须在该目录内，参考文件必须在目录外。所有候选 helper、包初始化文件和所需资源均须列入 `files`；入口由 `candidate` 声明。例如，设置 `candidateRoot: "candidate"`、`candidate: "candidate/kernels/kernel.py"`、`files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py"]`，参考为 `problem: "problem.py"`。精度检查、严格计时及详细 profiling 均支持 `kernels` 包内相对导入和从候选根开始的导入。清单仍使用 schemaVersion 1；省略 `candidateRoot` 时，评测导入根仍为清单目录。
+Profiling 将声明的候选文件复制到独立目录。`profiling.metadata.sources.candidateFiles` 按相对候选根的路径排序，记录每个文件及其 SHA-256。缓存标识包含入口路径、所有候选文件和内核选择策略。SDK 的缓存标识还包含参考路径、锁定的参考依赖和运行时文件。任何辅助文件变化都会使缓存失效。直接调用 `kernelProfile` 时必须提供绝对路径 `candidateRoot` 和完整的 `candidateFiles: {path: string; sha256: string}[]` 清单。独立命令 `kernel profile --kernel` 会按输入路径构造单文件清单。
 
-Profiling 将完整的已声明候选树复制到独立目录并保留路径，参考与入口同名时也不会覆盖。显式候选树要求安全的普通文件，不允许符号链接。`profiling.metadata.sources.candidateFiles` 按根相对路径排序记录包含入口的 `{path, sha256}` 清单。入口的 `candidate.sha256` 含义保持不变；缓存标识包含目录布局及每个文件的哈希，仅修改 helper 也会使旧缓存失效。直接调用 `kernelProfile` 时可同时传入绝对路径 `candidateRoot` 和 `candidateFiles: {path: string; sha256: string}[]`，两者必须配对；均省略时保留单文件调用兼容性。
-
-显式候选树的 profiling 优先选择入口中的第一个 Triton `@jit` 函数；入口没有定义时，按确定性的路径顺序扫描已声明 Python helper；均未找到时才使用入口文件名。`metadata.kernelSelection` 记录 `entry-first-then-declared-python/v1` 策略、选中的源路径和函数名；该策略参与缓存身份。SDK profiling 同时保留原清单数据根和全部锁定源码哈希，以支持参考文件的嵌套导入，并使参考 helper 的变更使旧缓存失效。缓存复用前和 replay 执行时均检查参考及其他固定源码的字节。
+Profiling 优先选择入口中的第一个 Triton `@jit` 函数，再按路径顺序检查已声明的 Python 辅助模块。如果都没有定义该函数，则使用入口文件的主文件名。`metadata.kernelSelection` 记录选择策略、源路径和选中的名称。
 
 ```json
 {
@@ -46,7 +44,8 @@ Profiling 将完整的已声明候选树复制到独立目录并保留路径，�
     {
       "id": "operator-example",
       "problem": "problem.py",
-      "candidate": "candidate.py",
+      "candidateRoot": "candidate",
+      "candidate": "candidate/kernel.py",
       "files": ["input.py"],
       "referenceKind": "original-kernel",
       "outputIndices": [0]
@@ -84,7 +83,7 @@ Manifest 的任务可提供 `contract`，包含 schemaVersion 1、caseId、输�
 
 严格计时保存 schemaVersion 2 / `profiler-flow/v1` 证据，通过 CPU→NPU flow 关联分配设备 kernel 到 profiler Step。原 CSV Step Id 原样保留，不改写，也不作为唯一关联依据。审计拒绝缺失或歧义证据并排除 warmup Step。均值包含每次调用的全部设备 kernel，不包含主机发射时延；CSV 与 trace 随结果保存。公共 SDK 导出契约、assessment、计时证据解析和逐样本审计接口。
 
-设置 `inputUnmodified: false` 后，每次预热和正式调用都使用一份新输入。计时器先完成并同步输入准备，再测量算子。参考与候选的样本均记录 `stepLayout: "prepare-then-run"`。审计这类样本时，将冻结的任务契约传给 `parseKernelTimingEvidence(value, contract)` 和 `auditKernelTimingSample(sample, csv, trace, contract)`。原始 trace 保留准备活动，均值只计入执行步骤。详细 profiling 也会在开启 MSTX 区间前准备好正式输入。
+严格评测通过时，参考和候选均生成 schema 版本 2 计时证据，记录请求的预热与正式调用次数。设置 `inputUnmodified: false` 后，每次预热和正式调用都使用一份新输入。计时器先完成并同步输入准备，再测量算子。参考与候选的样本均记录 `stepLayout: "prepare-then-run"`。审计这类样本时，将冻结的任务契约传给 `parseKernelTimingEvidence(value, contract)` 和 `auditKernelTimingSample(sample, csv, trace, contract)`。原始 trace 保留准备活动，均值只计入执行步骤。详细 profiling 也会在开启 MSTX 区间前准备好正式输入。
 
 ## 详细性能采集
 
@@ -154,9 +153,9 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 
 缺少必需证据时诊断不可用，与候选数值错误区分。保留原始 CSV、可用 trace、replay 元数据与进程日志。源码身份、case、seed、warmup、collection 和设备环境共同标识可复用证据。独立 profile 关闭磁盘缓存，由调用方管理复用；evaluate 模式可显式使用缓存。
 
-`KA_MSPROF_CACHE_DISABLED=1` 会禁用磁盘缓存，即使显式设置了 `cacheDir`。否则目录依次取 `cacheDir`、`KA_MSPROF_CACHE_DIR`、`~/.kernel_agent/msprof_cache`。命中要求候选字节、显式候选树的布局及各文件哈希、参考哈希、case、seed、warmup、collection 与设备范围一致；缓存中的 replay 元数据会重新校验，仍可读取的缓存 profile 证据复制到当前 attempt。`profiling.metadata.cacheRequested`、`cacheEnabled` 与 `cacheHit` 分别表示缓存请求、实际启用和复用。
+`KA_MSPROF_CACHE_DISABLED=1` 会禁用磁盘缓存，即使显式设置了 `cacheDir`。否则目录依次取 `cacheDir`、`KA_MSPROF_CACHE_DIR`、`~/.kernel_agent/msprof_cache`。命中要求候选字节、候选树的布局及各文件哈希、参考哈希、case、seed、warmup、collection 与设备范围一致；缓存中的 replay 元数据会重新校验，仍可读取的缓存 profile 证据复制到当前 attempt。`profiling.metadata.cacheRequested`、`cacheEnabled` 与 `cacheHit` 分别表示缓存请求、实际启用和复用。
 
-发布已完成的独立诊断前，Benchmark 核对有效 case/seed/warmup/collection、trace 可用状态、冻结候选与参考哈希、显式 `candidateRoot` 对应的完整候选树证据，以及 replay 逻辑设备 0；不匹配属于验证失败。采集失败返回 `verdict.details.status: unavailable`、`verdict.passed: null`，不包含候选分数，与完整评测中的候选不正确区分。
+发布已完成的独立诊断前，Benchmark 核对有效 case/seed/warmup/collection、trace 可用状态、冻结候选与参考哈希、完整候选树证据，以及 replay 逻辑设备 0；不匹配属于验证失败。采集失败返回 `verdict.details.status: unavailable`、`verdict.passed: null`，不包含候选分数，与完整评测中的候选不正确区分。
 
 指标解析沿用 ngo-agent 的 block 表、末行选择和数值保留三位小数。空白、非数值和非有限 CSV 单元格不进入逐 block 指标，真实零值保留。Roofline 缺少的输入保持 null。依赖硬编码硬件规格推导的 UB 占比与核利用率标为不可用；硬件事实来自已核实上下文。Roofline 分类只提供方向，不能证明加速。Profiler 耗时不替代 referenceMs/candidateMs。
 
@@ -177,7 +176,7 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 
 常规评测类型为 `quality`，独立诊断为 `performance`。`passed/score` 只表示输出等价性，通过为 1，候选错误或不正确为 0。正确但更慢的候选仍为通过，`speedup < 1`。
 
-计时模块已迁入 Evaluator，默认使用随包发布的 `timing.bench_kernel_ms`，无需访问外部源码目录。兼容已有配置时，可以显式设置 `benchmark.config.kernelRoot` 使用该外部仓库的计时模块；此时来源锁包含外部模块，且适用外部模块自身的计时行为。参考与候选均使用 `triton_only=False`，统计整个调用中所有设备 kernel 的耗时，不含 CPU 发射开销。内置计时器保留真实 ReduceSum 等归约耗时，逐行验证 CSV 耗时是否为有限非负数；缺列、空数据、记录数不完整或非正总耗时均视为无效测量。预热在有效样本之外，耗时单位为 ms。当前计时使用最后一个测试种子的输入；多种 shape 应拆成独立任务。 对允许修改输入的严格任务，自定义计时模块需提供 `bench_prepared_kernel_ms(run, prepare, **options)` 并生成上述准备与执行步骤的证据。
+评测使用随包发布的 NPU 计时器，并将计时模块纳入来源锁。参考与候选均使用 `triton_only=False`，统计整个调用中所有设备 kernel 的耗时，不含 CPU 发射开销。内置计时器保留真实 ReduceSum 等归约耗时，逐行验证 CSV 耗时是否为有限非负数；缺列、空数据、记录数不完整或非正总耗时均视为无效测量。预热在有效样本之外，耗时单位为 ms。当前计时使用最后一个测试种子的输入；多种 shape 应拆成独立任务。
 
 `metrics.json` 的 `metrics["kernel"]` 字段包含：
 
@@ -199,14 +198,14 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 
 评测 attempt 保存 `verifier/kernel-result.json`；独立 profiling 将校验后的诊断回执保存为 `verifier/kernel-profile-result.json`。Profiling 保存 `verifier/kernel-profile.json`、`kernel-profile.raw.json` 和 `kernel-profile_profiling_root/` 产物树，包含 replay 元数据、原始 CSV、请求的 trace、`profiling/original-result.json` 和日志。通过 `profiling.artifacts` 获取相对 verifier 的实际路径。每次采集都有独立的 replay 结果、profiler 输出和 Triton 缓存。kernel 的产物列表指向选中的采集，顶层列表另保留失败尝试以供排查。失败时查看 `profiling.error` 和 `profiling/logs/profiler.log`。同一日志目录中的 `console.log` 对应首次尝试，`console-attempt-N.log` 对应第 N 次尝试。超时没有完整结果时查看 attempt 的 `errors`；框架负责停止 worker 进程组。已保存结果支持离线报告重建。
 
-`report.md` 给人阅读：新结果注明“原 kernel”，展示原返回指标、L2 结论、采集状态及证据链接；历史 LAST 或无输出策略结果保持原口径。`metrics.json` 是总体覆盖率与逐题摘要，字段值不会根据当前代码重新采集。RSI 需要性能反馈时读取 `tasks/<task-key>/attempts/<attempt-id>/result.json` 的 `verdict.details.profiling`：
+`report.md` 展示所选 block、指标、L2 结论、采集状态及证据链接。`metrics.json` 记录总体覆盖率与逐题摘要。RSI 需要性能反馈时读取 `tasks/<task-key>/attempts/<attempt-id>/result.json` 的 `verdict.details.profiling`：
 
 ```text
 profiling.schemaVersion = 1
 profiling.status / error                    # 采集状态与错误
 profiling.kernels[].name                    # kernel 身份
 profiling.kernels[].metrics[blockId]         # 所选 block 中可用的字段
-profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1；历史结果为旧值或无此字段
+profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1
 profiling.kernels[].metadata.upstreamCommit # 固定的来源实现提交
 profiling.kernels[].metadata.originalMetadata # 采集路径、轮次与时间
 profiling.metadata.diagnosticProtocol       # 有效 case、seed、warmup、collection、范围与选择策略
@@ -219,7 +218,7 @@ profiling.analysis.trace / roofline         # 不可用的分析分别为 null
 profiling.artifacts                        # 相对 verifier/ 的原始证据路径
 ```
 
-旧结果可能包含 `originalResultJson`、`originalReturnedNone` 或 `serializationConversions`；当前采集不要求或生成这些元数据字段。当前 `original-result.json` 通过 `profiling.artifacts` 定位。历史记录沿用已保存指标，不重新采集或改变定义。
+已完成的采集在 profile 和 kernel 元数据中都要求 `kernel-original-f542-v1`。重放回执和诊断协议均记录实际使用的 `inputUnmodified`。
 
 调用方通过 `executionStatus`、`scoreStatus`、`verdict.passed` 判断原有正确性和计时是否有效，通过 `profiling.status` 单独判断详细采集是否返回结果；采集失败不等于候选不正确。需要消费数值指标时还应检查所需字段实际存在且为有限数值，不能仅看进程退出码。该能力沿用 Evaluator CLI 和 Node.js SDK，不新增 HTTP 服务；Python 调用方可用子进程执行 CLI 后读取上述 JSON。报告重建从已保存 JSON 计算，不调用模型或再次运行 NPU。
 

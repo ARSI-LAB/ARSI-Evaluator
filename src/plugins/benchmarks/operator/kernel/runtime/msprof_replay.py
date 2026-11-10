@@ -28,7 +28,7 @@ from pathlib import Path
 import random
 import sys
 
-from precision import clone_tree, load_module, load_task_module, verify_hashes
+from precision import clone_tree, load_task_module, verify_hashes
 from strict import observe_environment
 
 
@@ -39,8 +39,7 @@ def replay(request):
         raise ValueError("Diagnostic replay requires one unsigned 32-bit seed")
     if isinstance(request["warmup"], bool) or not isinstance(request["warmup"], int) or request["warmup"] < 1:
         raise ValueError("Diagnostic replay warmup must be a positive integer")
-    # Standalone requests predating strict contracts reuse the generated inputs.
-    input_unmodified = request.get("inputUnmodified", True)
+    input_unmodified = request.get("inputUnmodified")
     if not isinstance(input_unmodified, bool):
         raise ValueError("inputUnmodified must be a boolean")
     verify_hashes(request["hashes"])
@@ -61,15 +60,8 @@ def replay(request):
     raw = os.environ.get("KERNEL_NPU_DEVICE", "")
     device = int(raw) if raw.isdigit() else 0
     torch.npu.set_device(device)
-    problem = load_task_module(request["problem"], request["dataRoot"], "problem")
-    try:
-        candidate = load_task_module(request["candidate"], request.get("candidateRoot", request["dataRoot"]), "kernel").kernel_function
-    except ValueError:
-        if "candidateRoot" in request:
-            raise
-        # Protocol-locked candidates must be under dataRoot. Standalone workers may use
-        # separate problem and kernel trees, so fall back to importing the candidate by file location.
-        candidate = load_module(request["candidate"], "kernel_msprof_kernel").kernel_function
+    problem = load_task_module(request["problem"], request["dataRoot"])
+    candidate = load_task_module(request["candidate"], request["candidateRoot"]).kernel_function
     if not callable(candidate):
         raise TypeError("kernel_function must be callable")
     seed = seeds[0]

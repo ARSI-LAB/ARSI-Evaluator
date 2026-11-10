@@ -1,5 +1,6 @@
 # 在已安装 CANN、torch_npu 和 triton-ascend 的 Linux NPU 主机运行。
-# KERNEL_MANIFEST 指向任务清单；KERNEL_EVAL_PYTHON 指向该 NPU 环境的 Python。
+# KERNEL_MANIFEST 指向任务清单，各任务的 candidateRoot 指定候选导入目录。
+# KERNEL_EVAL_PYTHON 指向该 NPU 环境的 Python。
 # KERNEL_EVAL_PLACEHOLDER 只需设置为 unused-local-evaluation，不调用模型。
 hardware: npu
 services:

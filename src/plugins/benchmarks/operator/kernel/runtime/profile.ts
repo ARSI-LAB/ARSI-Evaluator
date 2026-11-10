@@ -1,11 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { appendFile, cp, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { createHash } from "node:crypto";
-import { parseMsprofMetricsTable, rowsToMetrics, metricsToCsv, type MetricRow } from "../msprof-csv.js";
-import { analyzeL2Cache, analyzeTraceEvents, extractTritonKernelName, findTritonKernelName } from "../msprof-analysis.js";
+import { KERNEL_PROFILE_OUTPUT_POLICY, parseMsprofMetricsTable, rowsToMetrics, metricsToCsv, type MetricRow } from "../msprof-csv.js";
+import { analyzeL2Cache, analyzeTraceEvents, findTritonKernelName } from "../msprof-analysis.js";
 import { analyzeRoofline } from "../roofline.js";
 import { MsProfCache } from "../msprof-cache.js";
 import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions } from "./cli.js";
@@ -50,20 +49,18 @@ async function runProfileProcess(command: CommandSpec, signal: AbortSignal, opti
  */
 
 const UPSTREAM_COMMIT = "f542552167fef844e10b865dc001e5c019f01ea5";
-const OUTPUT_POLICY = "kernel-original-f542-v1";
 const DEFAULT_MSPROF_BIN = "/usr/local/Ascend/ascend-toolkit/latest/bin/msprof";
 
 export interface KernelProfileArgs { problem: string; kernel: string; out: string; round: number;
-  candidateRoot?: string; candidateFiles?: { path: string; sha256: string }[];
+  candidateRoot: string; candidateFiles: { path: string; sha256: string }[];
   inputUnmodified?: boolean;
   seed?: number; warmup?: number; caseId?: string; contractSha256?: string; collection?: "Default" | "PipeTimeline,Default";
   msprofBin?: string; deviceName?: string; maxAttempts?: number; attemptTimeoutSeconds?: number; retryDelayMs?: number; cacheEnabled?: boolean; cacheDir?: string; cacheMaxEntries?: number }
 
 async function stageCandidateTree(args: KernelProfileArgs, artifactsDir: string): Promise<{
   root: string; sourceRoot: string; entry: string; files: { path: string; sha256: string }[]; hashes: Record<string, string>; bytes: Buffer;
-} | null> {
-  if (args.candidateRoot === undefined && args.candidateFiles === undefined) return null;
-  if (args.candidateRoot === undefined || !isAbsolute(args.candidateRoot) || !Array.isArray(args.candidateFiles) || !args.candidateFiles.length)
+}> {
+  if (typeof args.candidateRoot !== "string" || !isAbsolute(args.candidateRoot) || !Array.isArray(args.candidateFiles) || !args.candidateFiles.length)
     throw new TypeError("candidateRoot requires an absolute directory and a nonempty candidateFiles inventory");
   const root = resolve(args.candidateRoot);
   const entry = relative(root, resolve(args.kernel)).split(sep).join("/");
@@ -82,20 +79,11 @@ async function stageCandidateTree(args: KernelProfileArgs, artifactsDir: string)
   const stagedRoot = resolve(artifactsDir, "candidate");
   const hashes: Record<string, string> = {};
   let bytes: Buffer | undefined;
-  // Reject links in the caller tree, including directories; realpath alone would hide them.
-  for (const path of [root, ...files.map(file => join(root, file.path))]) {
-    let current = path;
-    for (;;) {
-      const info = await lstat(current);
-      if (info.isSymbolicLink() || (current === path && path !== root ? !info.isFile() : !info.isDirectory()))
-        throw new TypeError(`Candidate source must be a safe regular file: ${path}`);
-      const parent = dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-  }
   for (const file of files) {
-    const content = await readFile(join(root, file.path));
+    const source = join(root, file.path);
+    if (await realpath(source) !== source || !(await lstat(source)).isFile())
+      throw new TypeError(`Candidate source must be a safe regular file: ${source}`);
+    const content = await readFile(source);
     if (createHash("sha256").update(content).digest("hex") !== file.sha256)
       throw new Error(`Locked candidate source changed: ${file.path}`);
     const staged = join(stagedRoot, file.path);
@@ -171,8 +159,7 @@ function validateReplayProtocol(value: unknown, seed: number, warmup: number, in
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new ProfileStepError("Replay effective input protocol mismatch", false);
   const replay = value as Record<string, unknown>;
-  const reusedInputs = replay.inputUnmodified === undefined ? true : replay.inputUnmodified;
-  if (replay.seed !== seed || replay.warmup !== warmup || reusedInputs !== inputUnmodified)
+  if (replay.seed !== seed || replay.warmup !== warmup || replay.inputUnmodified !== inputUnmodified)
     throw new ProfileStepError("Replay effective input protocol mismatch", false);
   const captured = replay["capture"];
   if (captured === null || typeof captured !== "object" || Array.isArray(captured))
@@ -240,7 +227,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   };
 
   const tree = await stageCandidateTree(args, artifactsDir);
-  const kernelBytes = tree?.bytes ?? await readFile(args.kernel);
+  const kernelBytes = tree.bytes;
   const context = execution?.sourceContext;
   const fixedFiles: { path: string; sha256: string }[] = [];
   if (context) {
@@ -261,29 +248,26 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       throw new Error("Locked profile problem source changed or missing");
   }
   const selectionPolicy = "entry-first-then-declared-python/v1";
-  let kernelName = tree === null ? extractTritonKernelName(args.kernel, kernelBytes.toString("utf8")) : findTritonKernelName(kernelBytes.toString("utf8"));
-  let selectedSource = tree?.entry;
-  if (tree !== null && kernelName === undefined) {
+  let kernelName = findTritonKernelName(kernelBytes.toString("utf8"));
+  let selectedSource = tree.entry;
+  if (kernelName === undefined) {
     for (const file of tree.files) {
       if (file.path === tree.entry || !file.path.endsWith(".py")) continue;
       kernelName = findTritonKernelName(await readFile(join(tree.root, file.path), "utf8"));
       if (kernelName !== undefined) { selectedSource = file.path; break; }
     }
   }
-  kernelName ??= extractTritonKernelName(args.kernel, kernelBytes.toString("utf8"));
-  // Legacy materialized files may have no extension, so give those entries a Python suffix.
-  // Explicit candidate trees retain their declared paths and independent import root.
-  const stagedKernelPath = tree === null ? resolve(join(artifactsDir, "candidate_staged.py")) : join(tree.root, tree.entry);
-  if (tree === null) await writeFile(stagedKernelPath, kernelBytes);
-  const candidateHash = createHash("sha256").update(kernelBytes).digest("hex");
-  const problemHash = sha256File(args.problem);
-  const request: Record<string, unknown> = {
-    problem: args.problem,
-    candidate: args.kernel,
-    dataRoot: context?.dataRoot ?? dirname(resolve(args.problem)),
-    ...(tree === null ? {} : { candidateRoot: tree.sourceRoot }),
-    hashes: { [args.problem]: problemHash, [args.kernel]: candidateHash,
-      ...context?.hashes, ...Object.fromEntries(tree?.files.map(file => [join(tree.sourceRoot, file.path), file.sha256]) ?? []) },
+  kernelName ??= basename(tree.entry, ".py");
+  const candidate = resolve(args.kernel);
+  const problem = resolve(args.problem);
+  const stagedKernelPath = join(tree.root, tree.entry);
+  const candidateHash = tree.hashes[stagedKernelPath]!;
+  const problemHash = sha256File(problem);
+  const dataRoot = context?.dataRoot ?? dirname(problem);
+  const request = {
+    problem, candidate, dataRoot, candidateRoot: tree.sourceRoot,
+    hashes: { [problem]: problemHash, ...context?.hashes,
+      ...Object.fromEntries(tree.files.map(file => [join(tree.sourceRoot, file.path), file.sha256])) },
     seeds: [seed], warmup, inputUnmodified,
     candidateSha256: candidateHash, referenceKind: "problem-model",
     profiling: { enabled: true, collection, roundNum: args.round, cacheEnabled },
@@ -293,7 +277,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   const result: Record<string, unknown> = {
     schemaVersion: 1, status: "failed", error: "", kernels: [],
     metadata: {
-      outputPolicy: OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT, artifactRoot: basename(root),
+      outputPolicy: KERNEL_PROFILE_OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT, artifactRoot: basename(root),
       scope: "original-first-triton-kernel-or-file-stem",
       collection, seed, roundNum: args.round, attempts: 0, cleanup: "confirmed",
       diagnosticProtocol: { caseId: args.caseId ?? "standalone", seeds: [seed], warmup, collection, inputUnmodified,
@@ -308,22 +292,17 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   const metadata = result.metadata as Record<string, unknown>;
   const started = Date.now();
   try {
-    // Preserve the _prepare_wrapper request shape: absolute paths and hashes keyed by absolute path.
     const replayRequest = {
-      problem: resolve(args.problem), candidate: stagedKernelPath,
-      dataRoot: context?.dataRoot ?? dirname(resolve(args.problem)),
-      ...(tree === null ? {} : { candidateRoot: tree.root }),
-      hashes: { [resolve(args.problem)]: (request.hashes as Record<string, string>)[args.problem],
-        [stagedKernelPath]: candidateHash, ...context?.hashes, ...tree?.hashes },
+      problem, candidate: stagedKernelPath, dataRoot, candidateRoot: tree.root,
+      hashes: { [problem]: problemHash, ...context?.hashes, ...tree.hashes },
       seeds: [seed], warmup, inputUnmodified,
     };
     const replayRequestPath = join(profilingDir, "request.json");
     await writeFile(replayRequestPath, JSON.stringify(replayRequest, null, 2), "utf8");
     metadata["sources"] = {
-      candidate: { path: resolve(args.kernel), sha256: (request.hashes as Record<string, string>)[args.kernel] },
-      ...(tree === null ? {} : { candidateFiles: tree.files }),
+      candidate: { path: candidate, sha256: candidateHash }, candidateFiles: tree.files,
       ...(context === undefined ? {} : { fixedFiles }),
-      problem: { path: replayRequest.problem, sha256: (request.hashes as Record<string, string>)[args.problem] },
+      problem: { path: problem, sha256: problemHash },
       ...(args.contractSha256 === undefined ? {} : { contractSha256: args.contractSha256 }),
     };
 
@@ -335,30 +314,26 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       ? (logicalDevice === undefined ? undefined : `device-${logicalDevice}`)
       : `${visibleDevices}${logicalDevice === undefined ? "" : `:device-${logicalDevice}`}`;
     // Only evidence from the same post-warmup capture protocol can satisfy a cache hit.
-    if (tree !== null) metadata["kernelSelection"] = { policy: selectionPolicy, sourcePath: selectedSource, kernelName };
-    const cacheScope = deviceScope === undefined ? undefined
-      : `${deviceScope}:isolated-attempts/v1:protocol=${JSON.stringify(metadata["diagnosticProtocol"])}:problem=${(request.hashes as Record<string, string>)[args.problem]}${tree === null ? "" : `:candidateTree=${JSON.stringify({ entry: tree.entry, files: tree.files, selectionPolicy })}`}${context === undefined ? "" : `:sourceContext=${JSON.stringify({ problem: relative(context.dataRoot, resolve(args.problem)).split(sep).join("/"), fixedFiles })}`}`;
+    metadata["kernelSelection"] = { policy: selectionPolicy, sourcePath: selectedSource, kernelName };
+    const cacheScope = deviceScope === undefined ? undefined : JSON.stringify({
+      deviceScope, diagnosticProtocol: metadata["diagnosticProtocol"], problemHash, entry: tree.entry,
+      candidateFiles: tree.files, selectionPolicy,
+      ...(context && { problemPath: relative(dataRoot, problem).split(sep).join("/"), fixedFiles }),
+    });
     const cache = cacheEnabled ? await MsProfCache.open(cacheScope, args.cacheDir, log, args.cacheMaxEntries) : null;
     metadata["cacheEnabled"] = cache !== null;
     let metrics: Record<string, Record<string, unknown>> | null = null;
     let profileDir = "";
-    let metricsRecords: Record<string, unknown>[] | null = null;
-
-    const cached = cache === null ? null
-      : await cache.get(kernelBytes, cacheScope, log);
+    const restoredDir = join(profilingDir, "cache-hit-profile");
+    const cached = cache === null ? null : await cache.restore(restoredDir);
     metadata["cacheHit"] = cached !== null;
     if (cached !== null) {
       // Restore cached profiles into the artifact tree so profileDir remains relative and portable.
-      metrics = cached.metrics as Record<string, Record<string, unknown>>;
-      metricsRecords = cached.metricsRecords;
-      const replay = validateReplayProtocol(cached.metadata["replay"], seed, warmup, inputUnmodified);
+      metrics = cached.metrics;
+      profileDir = restoredDir;
+      const replay = validateReplayProtocol(cached.replay, seed, warmup, inputUnmodified);
       metadata["replay"] = replay;
       await writeFile(join(profilingDir, "replay.json"), JSON.stringify(replay, null, 2), "utf8");
-      if (cached.profileDir !== "" && existsSync(cached.profileDir)) {
-        const copied = join(profilingDir, "cache-hit-profile");
-        await cp(cached.profileDir, copied, { recursive: true });
-        profileDir = copied;
-      }
       log(`cache hit; metrics rebuilt from MSProfCache`);
     } else {
       const python = (execution ? options.python : process.env["KERNEL_PROFILER_PYTHON"] ?? options.python) ?? "python";
@@ -462,9 +437,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       await writeFile(join(logsDir, `round${String(args.round).padStart(3, "0")}_msprof_metrics.json`),
         JSON.stringify({ metrics, metadata: originalMetadata, profile_dir: profileDir }, null, 2), "utf8");
       await writeFile(join(profilingDir, "metrics-dataframe.csv"),
-        metricsToCsv(metricsRecords === null
-          ? Object.entries(metrics).map(([blockId, entry]) => ({ block_id: blockId, ...entry }) as MetricRow)
-          : metricsRecords as MetricRow[]), "utf8");
+        metricsToCsv(Object.entries(metrics).map(([blockId, entry]) => ({ block_id: blockId, ...entry }))), "utf8");
       await writeFile(join(profilingDir, "original-result.json"),
         JSON.stringify({ metrics, metadata: originalMetadata, profile_dir: profileDir }, null, 2), "utf8");
       metadata["originalMetadata"] = originalMetadata;
@@ -476,12 +449,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       }];
       result["status"] = "completed";
       result["error"] = "";
-      if (cache !== null)
-        await cache.put(kernelBytes, cacheScope, profileDir,
-          metrics,
-          { ...(metadata as Record<string, unknown>), round_num: args.round,
-            device: visibleDevices, problem_file: resolve(args.problem) },
-          metricsRecords);
+      if (cache !== null && cached === null)
+        await cache.put(profileDir, { metrics, replay: metadata["replay"] as Record<string, unknown> });
     }
   } catch (error) {
     if (error instanceof KernelExecError) throw error;
@@ -556,4 +525,11 @@ async function appendFileSafe(path: string, text: string): Promise<void> {
   } catch {
     // Failure to persist console.log output must not interrupt capture.
   }
+}
+
+export async function profileSingleKernel(args: Omit<KernelProfileArgs, "candidateRoot" | "candidateFiles">,
+  options: KernelExecOptions = {}): Promise<KernelProfileResult> {
+  const kernel = resolve(args.kernel);
+  const sha256 = createHash("sha256").update(await readFile(kernel)).digest("hex");
+  return kernelProfile({ ...args, candidateRoot: dirname(kernel), candidateFiles: [{ path: basename(kernel), sha256 }] }, options);
 }

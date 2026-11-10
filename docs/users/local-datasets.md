@@ -65,7 +65,7 @@ A benchmark with one file selection can also accept a single file in its expecte
 | AgentX | `benchmark.config.localPath`: `traces.jsonl` or its parent directory; data must match the chosen `variant` |
 | OfficeQA Pro V2 | `benchmark.config.localPath`: root containing `officeqa_pro_v2.csv` and the complete corpus. `parsed-json` reads `parsed_corpus/jsons/*.json`; `pdf` reads `pdfs/*.pdf`. Official question/document counts remain enforced |
 | DROP | `benchmark.config.localPath`: the published `.zip`, or the extracted parent containing `drop_dataset/drop_dataset_train.json` and `drop_dataset/drop_dataset_dev.json` |
-| Kernel | Existing `benchmark.config.manifest` and `kernelRoot` select local task/candidate files; see [Kernel](benchmarks/kernel-npu.md) |
+| Kernel | The `benchmark.config.manifest` file lists tasks, references and candidate files; see [Kernel](benchmarks/kernel-npu.md) |
 
 AgentX records a local dataset revision as `local:<content digest>` rather than a fabricated Hub commit. Tokenizer, harness and model configuration remain separate.
 

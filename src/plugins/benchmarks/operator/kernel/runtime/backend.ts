@@ -1,12 +1,12 @@
 import type { EnvironmentSession } from "../../../../../core/contracts/environment.js";
 import type { HardwareKind } from "../../../../../core/contracts/hardware.js";
 import type { KernelProfileArgs } from "./profile.js";
+import type { KernelRequest } from "./request.js";
 import { NpuKernelBackend } from "./npu.js";
 
 export type KernelExecutionOptions = {
   python: string;
   device: number;
-  kernelRoot?: string;
   outputLimitBytes?: number;
   cleanupGraceMs?: number;
   cleanupTimeoutMs?: number;
@@ -17,7 +17,7 @@ export type KernelExecutionOptions = {
 export interface KernelBackend {
   environment(): Record<string, string>;
   runtimeFiles(): { path: string; origin: string }[];
-  execute(request: Record<string, unknown>, session: EnvironmentSession, signal: AbortSignal): Promise<unknown>;
+  execute(request: KernelRequest, session: EnvironmentSession, signal: AbortSignal): Promise<unknown>;
 }
 
 export function assertKernelHardware(hardware: HardwareKind): void {

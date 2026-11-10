@@ -78,5 +78,6 @@ test("audits preparation steps only for mutable contracts and includes every exe
   expect(() => auditKernelTimingSample(entry, prepared.csv, trace, { inputUnmodified: true })).toThrow();
   const omitted = prepared.csv.replace("0,7,work,210,70\n", "");
   expect(() => auditKernelTimingSample({ ...entry, csvSha256: hash(omitted) }, omitted, trace, mutable)).toThrow();
-  expect(() => auditKernelTimingSample(sample, fixture.csv, fixture.trace, mutable)).not.toThrow();
+  expect(() => auditKernelTimingSample(sample, fixture.csv, fixture.trace, mutable)).toThrow(/prepare-then-run/);
+  expect(() => parseKernelTimingEvidence(evidence(), mutable)).toThrow(/prepare-then-run/);
 });

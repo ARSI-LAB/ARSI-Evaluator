@@ -28,7 +28,7 @@ test("NPU backend keeps device environment, packaged files and worker protocol",
   const session: EnvironmentSession = { id: "fixture", workdir: root, agentOutputDir: root, verifierOutputDir: root, metadata: null,
     start, upload: async () => {}, download: async () => {}, exportState: async () => { throw new Error("unexpected export"); },
     restoreState: async () => {}, dispose: async () => {} };
-  const request = { candidateSha256: "a".repeat(64), referenceKind: "pytorch" };
+  const request = { candidateRoot: "data/candidate", hashes: { "data/candidate/kernel.py": "a".repeat(64) }, candidateSha256: "a".repeat(64), referenceKind: "pytorch" };
   try {
     await writeFile(join(root, "kernel-result.json"), JSON.stringify(response));
     expect(await backend.execute(request, session, AbortSignal.timeout(5000))).toEqual(response);

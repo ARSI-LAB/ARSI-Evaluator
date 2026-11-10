@@ -48,7 +48,7 @@ def verify_hashes(hashes):
             raise RuntimeError(f"Locked source changed: {path}")
 
 
-def load_task_module(path, root, name):
+def load_task_module(path, root):
     """Preserve task package structure and sibling imports without renaming declared dependencies."""
     path, root = Path(path).resolve(), Path(root).resolve()
     relative = path.relative_to(root)
@@ -181,14 +181,11 @@ def evaluate(request, profile_root=Path(".")):
     # The environment binds visible devices; --device / KERNEL_NPU_DEVICE selects a logical device within that set.
     device = npu_device_id()
     torch.npu.set_device(device)
-    locked_timer = Path("runtime/timing.py")
-    timer = load_module(locked_timer if locked_timer.exists() else Path(__file__).resolve().parent / "timing.py",
-                        "kernel_locked_bench_kernel_util")
-    if not timer.IS_NPU:
-        raise RuntimeError("kernel benchmark did not select NPU")
-    problem = load_task_module(request["problem"], request["dataRoot"], "problem")
+    timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
+    problem = load_task_module(request["problem"], request["dataRoot"])
+    candidate_root = request["candidateRoot"]
     try:
-        candidate = load_task_module(request["candidate"], request.get("candidateRoot", request["dataRoot"]), "kernel").kernel_function
+        candidate = load_task_module(request["candidate"], candidate_root).kernel_function
         if not callable(candidate):
             raise TypeError("kernel_function must be callable")
     except Exception as exc:
@@ -307,10 +304,8 @@ def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
             raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
         device = npu_device_id()
         torch.npu.set_device(device)
-        problem, candidate = None, None
-        problem = load_task_module(problem_path, str(Path(problem_path).resolve().parent), "problem")
-        kernel_mod = load_module(kernel_path, "kernel_atom_kernel")
-        candidate = kernel_mod.kernel_function
+        problem = load_task_module(problem_path, Path(problem_path).resolve().parent)
+        candidate = load_task_module(kernel_path, Path(kernel_path).resolve().parent).kernel_function
         if not callable(candidate):
             raise CandidateError("kernel_function must be callable")
         with torch.inference_mode():
