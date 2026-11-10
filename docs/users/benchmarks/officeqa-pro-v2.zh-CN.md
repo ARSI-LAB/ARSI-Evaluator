@@ -103,4 +103,4 @@ ember-evaluator report /absolute/path/to/run-directory
 EVALUATOR_OFFICEQA_DOCKER_TESTS=1 pnpm test --run tests/integration/officeqa-docker.test.ts
 ```
 
-PowerShell 使用 `$env:EVALUATOR_OFFICEQA_DOCKER_TESTS = "1"` 后执行测试命令。受控测试通过不代表已验证真实题库下载、真实模型效果或真实 Ray 集群；这些需要对应环境另行验收。
+PowerShell 使用 `$env:EVALUATOR_OFFICEQA_DOCKER_TESTS = "1"` 后执行测试命令。

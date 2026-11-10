@@ -16,7 +16,7 @@ pnpm test --run tests/integration/simpleagent.test.ts --maxWorkers=1
 
 测试在 suite setup 按运行时锁安装打包后的 Pi 及依赖，后续用例复用内容摘要对应的本地缓存，在真实子进程中运行 runner。首次准备需要可用的 npm 缓存或依赖下载条件，setup 有独立的安装预算；源码目录位于 WSL 的 Windows 挂载盘时，运行时依赖仍从宿主缓存加载。
 
-模型请求发往测试启动的本地模拟服务，覆盖输出截断、上下文压缩、usage 缺失、取消、轨迹写入失败和扩展加载。用例原有的执行/取消限时与行为断言保持生效，不能将 suite setup 的安装耗时当作模型处理耗时。这项测试不代表真实模型成绩，也不通过新增 SDK 的高层入口；SDK API 回归见 [sdk.test.ts](../../tests/integration/sdk.test.ts)。
+模型请求发往测试启动的本地模拟服务，覆盖输出截断、上下文压缩、usage 缺失、取消、轨迹写入失败和扩展加载。用例原有的执行/取消限时与行为断言保持生效，不能将 suite setup 的安装耗时当作模型处理耗时。这项测试不通过 SDK 的高层入口；SDK API 回归见 [sdk.test.ts](../../tests/integration/sdk.test.ts)。
 
 Pi 就绪探针使用 ESM 模块解析查找依赖，支持依赖位于包内或上层 `node_modules`，并检查固定版本。嵌套布局、hoisted 布局和版本不匹配回归见 [pi-runtime-probe.test.ts](../../tests/integration/pi-runtime-probe.test.ts)。
 
@@ -41,8 +41,8 @@ docker compose -f scripts/ray-smoke/compose.yaml -f scripts/ray-smoke/jobs.yaml 
 
 ## AgentX 桥接与指标检查
 
-开发验证可设置 `AGENTX_TEST_PYTHON` 指向已经安装 Harness 和桥接扩展的隔离 Python，执行 `pnpm test --run tests/integration/agentx-bridge.test.ts`；该检查使用本地受控 SSE 和 Prometheus 服务，覆盖 Counter 重置，不代表真实模型性能。默认测试中的 `agentx-telemetry.test.ts` 验证配置、报告、设备查询、过期快照及退出行为，不使用 NPU。
+开发验证可设置 `AGENTX_TEST_PYTHON` 指向已经安装 Harness 和桥接扩展的隔离 Python，执行 `pnpm test --run tests/integration/agentx-bridge.test.ts`；该检查使用本地受控 SSE 和 Prometheus 服务，覆盖 Counter 重置。默认测试中的 `agentx-telemetry.test.ts` 验证配置、报告、设备查询、过期快照及退出行为，不使用 NPU。
 
 ## 检查结果的记录方式
 
-受控 SSE、Prometheus 或 fixture 测试只证明相应协议和失败路径；真实模型吞吐、NPU 指标和大规模冷缓存容量需要分别运行并记录环境、配置及结果。正式实验放在 `docs/experiments/`，临时日志和探针放在 `.scratch/`，不要追加到用户指南。
+正式实验放在 `docs/experiments/`，临时日志和探针放在 `.scratch/`，不要追加到用户指南。

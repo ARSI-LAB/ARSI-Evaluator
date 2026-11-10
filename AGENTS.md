@@ -49,7 +49,7 @@ tests/
 ├── unit/                   # 配置、算法、契约等单元测试
 ├── integration/            # 组件协作、CLI、持久化与运行时集成测试
 └── fixtures/               # 测试数据、受控插件和可复用环境夹具
-playbook/                   # 按 Benchmark 子目录分类的渐进式实验 YAML；临时测试放 .scratch
+playbook/                   # 仅放真实 Benchmark 的实验 YAML；测试夹具放 tests/fixtures
 scripts/                    # 构建、运行时打包等仓库维护脚本
 docs/                       # 用户指南、设计、任务与经验记录，分工见 docs/AGENTS.md
 └── imgs/                   # 文档引用的图片素材
