@@ -7,6 +7,8 @@ import { rebuildReport } from "../application/report/index.js";
 import { formatError, redactDiagnostic, summarizeDiagnostic } from "../core/errors/diagnostics.js";
 import type { ProgressEvent } from "../core/progress/progress.js";
 import { openPluginRegistry, type PluginRegistry } from "../application/plugins/open-registry.js";
+import { cliPatchPath, loadCliExtensions, type CliExtensions } from "../application/plugins/cli-extensions.js";
+import type { PluginCliResult } from "../core/contracts/plugin-extension.js";
 import { classifyError, normalizeFailure } from "../core/errors/classify.js";
 import type { Phase } from "../core/contracts/result.js";
 import { CliLiveProgress, type ProgressMode } from "./live-progress.js";
@@ -56,10 +58,13 @@ export async function runCli(
   execution?: LoadedExecution,
   observers?: { onProgress?: ProgressListener },
 ): Promise<number> {
+  let extensions: CliExtensions;
+  try { extensions = await loadCliExtensions(cliPatchPath(argv)); }
+  catch (error) { io.error(formatError(error)); return 2; }
   let mode: ProgressMode = "auto";
   const args = [...argv];
   const index = args.indexOf("--progress");
-  if (index >= 0) {
+  if (index >= 0 && !extensions.commands.some(command => command.name === args[0])) {
     const value = args[index + 1];
     if (!["run", "retry", "warmup"].includes(args[0] ?? "") || index < 1 || !["auto", "tty", "plain"].includes(value ?? "") || args.lastIndexOf("--progress") !== index) {
       io.error("Invalid --progress option; expected auto, tty or plain on run/retry/warmup"); return 2;
@@ -72,7 +77,7 @@ export async function runCli(
   const wrapped: CliIO = { out: text => live ? live.write(() => io.out(text)) : io.out(text),
     error: text => live ? live.write(() => io.error(text)) : io.error(text) };
   try {
-    return await runCliCommand(args, wrapped, signal, execution, event => {
+    return await runCliCommand(args, extensions, wrapped, signal, execution, event => {
       live?.observe(event);
       observers?.onProgress?.(event);
     });
@@ -80,7 +85,7 @@ export async function runCli(
 }
 
 async function runCliCommand(
-  argv: string[], io: CliIO, signal: AbortSignal,
+  argv: string[], extensions: CliExtensions, io: CliIO, signal: AbortSignal,
   execution: LoadedExecution | undefined,
   onProgress: ProgressListener,
 ): Promise<number> {
@@ -168,7 +173,7 @@ async function runCliCommand(
   };
   let command: Command;
   try {
-    command = parseArgs(argv);
+    command = parseArgs(argv, extensions);
   } catch (error) {
     if (error instanceof CommandUsageError) { failure(error); io.error(error.helpText); return 2; }
     failure(error);
@@ -179,6 +184,32 @@ async function runCliCommand(
   if (command.kind === "help") {
     io.out(command.text);
     return command.exitCode ?? 0;
+  }
+  if (command.kind === "plugin") {
+    const label = command.plugin.name;
+    // Plugin operations are infrastructure failures, so they must not use the task-oriented error taxonomy
+    const report = (stage: string, error: unknown) => {
+      const text = formatError(error, secrets);
+      io.error(redactDiagnostic(`[${label}] ERROR during ${stage}:\n${text}`, secrets));
+      hint(text);
+    };
+    let result: PluginCliResult;
+    try {
+      result = await command.plugin.run(command.argv, io, signal);
+    } catch (error) {
+      report(`loading the ${label} plugin`, error);
+      return signal.aborted ? 130 : 1;
+    }
+    if (result.ok) return result.status;
+    if (result.usage) {
+      phase = "arguments";
+      detail = `Parsing ${label} arguments`;
+      failure(result.error);
+      io.error(`Use ember-evaluator ${label} <command> --help for usage and parameter details.`);
+      return 2;
+    }
+    report(`running the ${label} plugin`, result.error);
+    return signal.aborted ? 130 : 1;
   }
   if (command.kind === "cleanup-images") {
     try {

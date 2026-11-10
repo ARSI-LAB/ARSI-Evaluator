@@ -6,7 +6,7 @@ import { cleanupImages } from "../../../../dist/application/cleanup.js";
 import { createJobsProgressPublisher } from "../../../../dist/infrastructure/ray/jobs-progress.js";
 import { loadSavedConfig } from "../../../../dist/application/config.js";
 import { openPluginRegistry } from "../../../../dist/application/plugins/open-registry.js";
-import { assertWorkerVersions, localizePortableSelection } from "../../../../dist/infrastructure/ray/protocol.js";
+import { assertWorkerVersions, localizePortableSelection, validatePortablePluginActivations } from "../../../../dist/infrastructure/ray/protocol.js";
 import { PACKAGE_RUNTIME_ID } from "../../../../dist/core/results/runtime-identity.js";
 import { resolvePluginPatchPath } from "../../../../dist/infrastructure/ray/node-config.js";
 
@@ -66,7 +66,9 @@ try {
     selected.apiKeyEnv = variable;
     delete selected.apiKey;
   }
-  registry = await openPluginRegistry(pluginPatchPath);
+  const plugins = validatePortablePluginActivations(input.plugins);
+  registry = await openPluginRegistry(pluginPatchPath, { plugins: plugins.map(plugin => plugin.id) });
+  await registry.loadRecordedPlugins(input.pluginVersions);
   assertWorkerVersions(input.pluginVersions, registry.pluginVersions,
     input.pluginVersions[PACKAGE_RUNTIME_ID], registry.pluginVersions[PACKAGE_RUNTIME_ID]);
   const lookup = (role, name) => registry.ctx.evaluator.configTransport(role, name);
@@ -124,7 +126,7 @@ try {
   const loaded = await loadSavedConfig(configPath, process.env, { registry, allowMissingAuth: warmup });
   progress = await createJobsProgressPublisher(id, credentials);
   let warmupSummary;
-  const execution = { config: loaded, registry, ...(input.requestedRunId === undefined ? {} : { runId: input.requestedRunId }) };
+  const execution = { config: loaded, registry, plugins, ...(input.requestedRunId === undefined ? {} : { runId: input.requestedRunId }) };
   const options = { configPath, signal: controller.signal, execution,
     ...(pluginPatchPath === undefined ? {} : { patchPath: pluginPatchPath }),
     onProgress: event => progress?.observe(event) };

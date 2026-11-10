@@ -14,7 +14,8 @@ import type { Verifier } from "../../core/contracts/verifier.js";
 import { parseConfigProfile, type ConfigProfile } from "../../config/profile-schema.js";
 import type { PluginConfigTransport } from "../../core/contracts/config-transport.js";
 
-import type { PluginRole, RoleImplementations, PluginConfigValidator, PluginFactory, FactoryContext, PreparedPlugin } from "../../core/contracts/plugin.js";
+import type { PluginRole, RoleImplementations, PluginConfigValidator, PluginFactory, FactoryContext, PreparedPlugin, PluginFactoryContext } from "../../core/contracts/plugin.js";
+import type { StoreDecoratorFactory } from "../../core/contracts/plugin-extension.js";
 
 type Registration<R extends PluginRole = PluginRole> = {
   role: R;
@@ -32,10 +33,30 @@ declare module "@deepseek-ai/cordis" {
 
 export class EvaluatorRegistry extends Service {
   protected readonly registrations = new Map<string, Registration>();
+  private readonly storeDecorators = new Map<string, { validate: PluginConfigValidator<unknown>; factory: StoreDecoratorFactory<unknown> }>();
   private readonly profileRegistrations = new Map<string, ConfigProfile>();
 
   constructor(ctx: Context) {
     super(ctx, "evaluator");
+  }
+
+  registerStoreDecorator<T>(name: string, validate: PluginConfigValidator<T>, factory: StoreDecoratorFactory<T>): () => Promise<void> {
+    if (!name.trim()) throw new TypeError("Store decorator name must not be empty");
+    return this.ctx.effect(() => {
+      if (this.storeDecorators.has(name)) throw new TypeError(`Duplicate store decorator: ${name}`);
+      const entry = { validate, factory: factory as StoreDecoratorFactory<unknown> };
+      this.storeDecorators.set(name, entry);
+      return () => { if (this.storeDecorators.get(name) === entry) this.storeDecorators.delete(name); };
+    }, `evaluator.registerStoreDecorator(${JSON.stringify(name)})`);
+  }
+
+  storeDecoratorNames(): string[] { return [...this.storeDecorators.keys()]; }
+
+  prepareStoreDecorator(name: string, config: unknown) {
+    const entry = this.storeDecorators.get(name);
+    if (!entry) throw new TypeError(`Unknown store decorator: ${name}`);
+    const validated = entry.validate(config);
+    return (runtime: PluginFactoryContext) => entry.factory(validated, runtime);
   }
 
   registerProfile(value: ConfigProfile): () => Promise<void> {

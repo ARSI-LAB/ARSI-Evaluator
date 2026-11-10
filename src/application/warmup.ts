@@ -18,6 +18,7 @@ import type { ProgressListener } from "../core/progress/progress.js";
 import { openPluginRegistry, type PluginRegistry } from "./plugins/open-registry.js";
 import { resolveSolverProvenance } from "../core/results/solver-provenance.js";
 import { assertJsonValue } from "../core/validation/input.js";
+import { parsePluginActivations } from "../core/plugins/activation.js";
 
 export type WarmupSummary = {
   status: "ready" | "error";
@@ -116,6 +117,7 @@ export async function executeWarmup(options: { configPath: string; networkConfig
   const controller = new AbortController();
   const signal = AbortSignal.any([options.signal, controller.signal]);
   let registry: PluginRegistry | undefined;
+  let pluginSelections = parsePluginActivations(options.overrides?.plugins);
   const secrets = [options.overrides?.apiKey ?? "", ...Object.entries(process.env)
     .filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : [])];
   const progress: ProgressListener = event => {
@@ -126,7 +128,8 @@ export async function executeWarmup(options: { configPath: string; networkConfig
   try {
     signal.throwIfAborted();
     progress({ phase: "config", message: `Loading warmup configuration ${file}` });
-    registry = options.execution?.registry ?? await openPluginRegistry(options.patchPath);
+    registry = options.execution?.registry ?? await openPluginRegistry(options.patchPath,
+      { plugins: pluginSelections.map(plugin => plugin.id) });
     const config = options.execution?.config ?? await loadConfig(file, options.overrides ?? {}, process.env, { registry, allowMissingAuth: true,
       ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(options.patchPath ? { patchPath: options.patchPath } : {}) });
@@ -149,7 +152,8 @@ export async function executeWarmup(options: { configPath: string; networkConfig
         log: message => progress({ phase: "deployment", message }) });
     }
     progress({ phase: "bootstrap", message: "Initializing plugins for image warmup" });
-    const components = await createRunComponents(registry, config, dirname(file));
+    const components = await createRunComponents(registry, config, dirname(file), undefined, undefined,
+      { plugins: pluginSelections, signal });
     const release = components.scheduler.executionLocation === "remote" ? undefined : await components.environment.acquireImageLease?.(signal);
     let result: WarmupSummary;
     try { result = await warmupSelectedTasks(components, config, signal, progress, secrets); }

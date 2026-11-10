@@ -8,8 +8,14 @@ import type { Metrics } from "../../core/contracts/metrics.js";
 import type { RunComponents } from "../../core/contracts/components.js";
 import type { PluginRegistry } from "./open-registry.js";
 import type { PluginFactoryContext } from "../../core/contracts/plugin.js";
+import type { PluginActivation } from "../../core/contracts/plugin-extension.js";
 import { fingerprintImageConfig } from "../../core/policies/image-config.js";
 import type { ConfigTransportLookup } from "../../core/contracts/config-transport.js";
+
+export type RunComponentOptions = {
+  plugins?: PluginActivation[];
+  signal?: AbortSignal;
+};
 
 export function createPluginRuntime(config: LoadedConfig, experimentDir: string, pluginPatchPath?: string, onWarning?: (message: string) => void, configTransport?: ConfigTransportLookup, network = new NetworkRuntime(config.network)) {
   assertServiceBindings(config);
@@ -64,7 +70,11 @@ export async function createRunComponents(
   experimentDir: string,
   onWarning?: (message: string) => void,
   imageConfigFingerprint?: string,
+  options: RunComponentOptions = {},
 ): Promise<RunComponents> {
+  const plugins = options.plugins ?? [];
+  await registry.loadPlugins(plugins.map(plugin => plugin.id));
+  const createDecorators = registry.prepareStoreDecorators(plugins);
   const reportingSelections = [
     ...config.experiment.metrics.map(selection => ({ role: "metrics" as const, name: selection.name })),
     { role: "reporter" as const, name: config.experiment.reporter.name },
@@ -85,6 +95,7 @@ export async function createRunComponents(
   const createScheduler = ctx.evaluator.prepare("scheduler", config.experiment.scheduler);
 
   const runtime = { ...createPluginRuntime(config, experimentDir, patch.patchPath ?? undefined, onWarning, (role, name) => ctx.evaluator.configTransport(role, name)),
+    ...(options.signal ? { signal: options.signal } : {}),
     ...(imageConfigFingerprint ? { imageConfigFingerprint } : {}) };
   registry.ctx.effect(() => () => runtime.network.dispose(), "Network client lifecycle");
   const benchmark = await instantiateBenchmark(registry, config, runtime);
@@ -94,7 +105,8 @@ export async function createRunComponents(
   const metrics: Metrics[] = [];
   for (const createMetric of createMetrics) metrics.push(await createMetric(reportingRuntime));
   const reporter = await createReporter(reportingRuntime);
-  const store = await createStore(runtime);
+  let store = await createStore(runtime);
+  for (const createDecorator of createDecorators) store = await (await createDecorator(runtime))(store);
   const scheduler = await createScheduler(runtime);
 
   return {
@@ -111,6 +123,7 @@ export async function createRunComponents(
       ...(patch.patchPath === null ? {} : { patchPath: patch.patchPath }),
       entries: structuredClone(entries),
       reportingProviders,
+      ...(plugins.length === 0 ? {} : { plugins: structuredClone(plugins) }),
     },
   };
 }

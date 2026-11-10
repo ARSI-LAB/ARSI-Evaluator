@@ -46,6 +46,8 @@ export type PluginFactoryContext = {
   verifierService?: string;
   /** Nonfatal runtime diagnostics; never include credentials or private task data. */
   onWarning?: (message: string) => void;
+  /** Aborts long-running decorated store operations when the run is cancelled. */
+  signal?: AbortSignal;
   /** All declared services. A solver applies `solverService` from this map. */
   services: Record<string, ServiceBinding>;
   solverService: string;

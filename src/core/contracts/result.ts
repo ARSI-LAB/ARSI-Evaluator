@@ -170,6 +170,8 @@ export type RunManifest = {
     coordinatorPatchPath?: string;
     entries: RunPluginEntry[];
     reportingProviders?: Record<string, string>;
+    /** Activated extensions and credential-free options, restored for resume/retry. */
+    plugins?: import("./plugin-extension.js").PluginActivation[];
   };
   startedAt: string;
   finishedAt: string | null;

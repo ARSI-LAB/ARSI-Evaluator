@@ -11,6 +11,7 @@ import { DEFAULT_METRICS } from "../../config/defaults.js";
 import { expectRecord, parseSelection } from "../../core/validation/input.js";
 import { bundledPluginPatchPath } from "../../infrastructure/provenance/package.js";
 import { loadPluginModule } from "../plugins/load-module.js";
+import { loadInstalledPlugin, readPluginCatalog } from "../plugins/catalog.js";
 import { apply as registry } from "../plugins/registry.js";
 import * as metricsPlugin from "../../plugins/metrics/index.js";
 import * as reportersPlugin from "../../plugins/reporters/index.js";
@@ -69,11 +70,18 @@ async function loadReporting(manifest: RunManifest, runDir: string) {
     }
     for (const id of providers) {
       const entry = manifest.pluginRuntime?.entries.find(entry => entry.id === id);
-      if (!entry) throw new Error(`Missing reporting plugin entry: ${id}`);
-      const plugin = await loadPluginModule(entry, entry.bundledVersion === undefined ? patchPath : bundledPluginPatchPath());
-      if ((entry.bundledVersion ?? manifest.pluginVersions[entry.id]) !== plugin.version)
-        throw new Error(`Plugin version differs from saved run: ${entry.id}`);
-      await ctx.plugin(plugin.plugin as Plugin);
+      if (entry) {
+        const plugin = await loadPluginModule(entry, entry.bundledVersion === undefined ? patchPath : bundledPluginPatchPath());
+        if ((entry.bundledVersion ?? manifest.pluginVersions[entry.id]) !== plugin.version)
+          throw new Error(`Plugin version differs from saved run: ${entry.id}`);
+        await ctx.plugin(plugin.plugin as Plugin);
+      } else {
+        // Installed plugins that the saved run recorded only by version.
+        const installed = readPluginCatalog().find(plugin => plugin.id === id);
+        if (!installed) throw new Error(`Missing installed reporting plugin: ${id}`);
+        if (manifest.pluginVersions[id] !== installed.version) throw new Error(`Plugin version differs from saved run: ${id}`);
+        await ctx.plugin(await loadInstalledPlugin(installed) as Plugin);
+      }
     }
     const createMetrics = selections.map(selection => ctx.evaluator.prepare("metrics", selection));
     const createReporter = ctx.evaluator.prepare("reporter", reporter);

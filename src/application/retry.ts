@@ -1,4 +1,5 @@
 import { expectRecord } from "../core/validation/input.js";
+import { restorePluginActivations } from "../core/plugins/activation.js";
 import { openPluginRegistry } from "./plugins/open-registry.js";
 import { fingerprintConfig, fingerprintResumeConfig } from "../core/results/run-manifest.js";
 import { redactDiagnostic } from "../core/errors/diagnostics.js";
@@ -33,7 +34,7 @@ export async function retryRun(options: { networkConfigPath?: string; run: strin
   if (gateway) {
     await requireCredentialReferences(gateway.gatewayConfig);
     const config = await loadSavedConfig(gateway.gatewayConfig, process.env, { network: await loadNetworkConfig(options.networkConfigPath), configDirectory: gateway.configDirectory, ...(gateway.patchPath ? { patchPath: gateway.patchPath } : {}) });
-    const registry = await openPluginRegistry(gateway.patchPath);
+    const registry = await openPluginRegistry(gateway.patchPath, { plugins: gateway.plugins.map(plugin => plugin.id) });
     try {
       if (!config.deployment) throw new Error("Saved run has no Ray Jobs deployment");
       const { RayJobsDeployment } = await import("./ray/deployment.js");
@@ -56,7 +57,8 @@ export async function retryRun(options: { networkConfigPath?: string; run: strin
     network: await loadNetworkConfig(options.networkConfigPath), validatePlugins: true, ...(patchPath ? { patchPath } : {}), configDirectory,
   });
   if (fingerprintResumeConfig(config.persisted) !== manifest.configFingerprint) throw new Error("Retry configuration differs from locked run");
-  const registry = await openPluginRegistry(patchPath);
+  const plugins = restorePluginActivations(manifest.pluginRuntime?.plugins, undefined);
+  const registry = await openPluginRegistry(patchPath, { plugins: plugins.map(plugin => plugin.id) });
   try {
     if (fingerprintConfig(registry.pluginVersions) !== fingerprintConfig(manifest.pluginVersions)) throw new Error("Retry plugin/execution versions differ from locked run");
   } finally { await registry.dispose(); }
@@ -64,7 +66,7 @@ export async function retryRun(options: { networkConfigPath?: string; run: strin
     ...(options.requestId ? { requestId: options.requestId } : {}), ...(options.reason ? { reason: redactDiagnostic(options.reason, Object.values(config.auths).map(auth => auth.value)) } : {}) }, { signal });
   log(`Request ${submitted.request.requestId}: ${submitted.request.status}; ${directory}`);
   if (submitted.active || submitted.request.status !== "pending") return 0;
-  const components = await bootstrap(config, configDirectory, patchPath);
+  const components = await bootstrap(config, configDirectory, patchPath, undefined, undefined, { plugins, signal });
   try {
     // The engine owns the exclusive RunStore lock; a second CLI cannot write results.
     await components.store.open(directory);

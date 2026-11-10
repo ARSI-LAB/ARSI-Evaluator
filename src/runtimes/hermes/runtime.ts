@@ -47,8 +47,11 @@ export async function hermesRuntimeInstallation(signal: AbortSignal, network?: i
   // self-contained and the .hermes/bin launcher (which bakes the store Python path) stays valid.
   // Pin the index so the pm-runtime sync + plugin workspace re-lock resolve from the mirror (R8),
   // and neutralize the exclude-newer quarantine + re-lock before the first `hermes` probe (R9).
+  const pythonIndex = network?.settings.sources.python.index ?? "https://pypi.org/simple";
   const provisionEnv = {
     HOME: "{root}",
+    PIP_INDEX_URL: pythonIndex,
+    UV_INDEX_URL: pythonIndex,
   };
   const relockMirror = [
     `set -e`,

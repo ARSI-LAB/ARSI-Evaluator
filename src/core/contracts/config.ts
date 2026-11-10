@@ -1,11 +1,13 @@
 import type { HardwareKind } from "./hardware.js";
 import type { JsonValue, PhaseTimeoutOverrides } from "./task.js";
+import type { PluginActivation } from "./plugin-extension.js";
 
 export type CliOverrides = {
   model?: string;
   endpoint?: string;
   apiKey?: string;
   apiKeyEnv?: string;
+  plugins?: PluginActivation[];
 };
 
 export type ModelConfig = {

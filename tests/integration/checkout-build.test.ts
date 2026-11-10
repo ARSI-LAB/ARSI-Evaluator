@@ -50,6 +50,7 @@ if (process.argv[2] === "build") {
   await writeFile("dist/core/errors/diagnostics.js", "export {};\\n");
   await writeFile("dist/core/progress/live-progress.js", "export {};\\n");
   await writeFile("dist/cli.js", 'export async function runCli() { console.log("fixture-run-ok"); return 0; }\\n');
+  await writeFile("dist/runtimes/pi/runner.js", "export {};\\n");
   // Leave both real launchers time to enter the rebuild before packaging.
   let first = true;
   try { const file = await open("first-build", "wx"); await file.close(); } catch (error) { if (error.code !== "EEXIST") throw error; first = false; }

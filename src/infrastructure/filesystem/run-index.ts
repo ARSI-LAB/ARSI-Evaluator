@@ -2,6 +2,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { atomic } from "./atomic-json.js";
+import { parsePluginActivations } from "../../core/plugins/activation.js";
+import type { PluginActivation } from "../../core/contracts/plugin-extension.js";
 
 const indexRoot = () => process.env.EVALUATOR_RUN_INDEX_DIR ?? join(homedir(), ".ember", "runs");
 export const safeId = (value: string) => {
@@ -18,15 +20,15 @@ export async function locateRun(value: string): Promise<string> {
   if (!item || typeof item !== "object" || !("runId" in item) || item.runId !== value || !("directory" in item) || typeof item.directory !== "string") throw new Error("Invalid run index");
   return item.directory;
 }
-export async function registerGatewayRun(runId: string, configPath: string, jobId: string, configDirectory: string, patchPath?: string): Promise<void> {
+export async function registerGatewayRun(runId: string, configPath: string, jobId: string, configDirectory: string, patchPath?: string, plugins: PluginActivation[] = []): Promise<void> {
   await mkdir(indexRoot(), { recursive: true });
-  await atomic(join(indexRoot(), `${safeId(runId)}.json`), { runId, gatewayConfig: resolve(configPath), jobId, configDirectory, ...(patchPath ? { patchPath } : {}) });
+  await atomic(join(indexRoot(), `${safeId(runId)}.json`), { runId, gatewayConfig: resolve(configPath), jobId, configDirectory, plugins, ...(patchPath ? { patchPath } : {}) });
 }
-export async function gatewayRun(value: string): Promise<{ gatewayConfig: string; jobId: string; configDirectory: string; patchPath?: string } | null> {
+export async function gatewayRun(value: string): Promise<{ gatewayConfig: string; jobId: string; configDirectory: string; patchPath?: string; plugins: PluginActivation[] } | null> {
   if (value.includes("/") || value.includes("\\")) return null;
   try {
     const item: unknown = JSON.parse(await readFile(join(indexRoot(), `${safeId(value)}.json`), "utf8"));
-    if (item && typeof item === "object" && "gatewayConfig" in item && typeof item.gatewayConfig === "string" && "jobId" in item && typeof item.jobId === "string") return { gatewayConfig: item.gatewayConfig, jobId: item.jobId, configDirectory: "configDirectory" in item && typeof item.configDirectory === "string" ? item.configDirectory : resolve(item.gatewayConfig, ".."), ...("patchPath" in item && typeof item.patchPath === "string" ? { patchPath: item.patchPath } : {}) };
+    if (item && typeof item === "object" && "gatewayConfig" in item && typeof item.gatewayConfig === "string" && "jobId" in item && typeof item.jobId === "string") return { gatewayConfig: item.gatewayConfig, jobId: item.jobId, plugins: parsePluginActivations("plugins" in item ? item.plugins : undefined), configDirectory: "configDirectory" in item && typeof item.configDirectory === "string" ? item.configDirectory : resolve(item.gatewayConfig, ".."), ...("patchPath" in item && typeof item.patchPath === "string" ? { patchPath: item.patchPath } : {}) };
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   return null;
 }

@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-path = Path(__file__).resolve().parents[2] / "src/plugins/benchmarks/operator/kernel/runtime/timing_evidence.py"
+root = Path(__file__).resolve().parents[2]
+path = root / "src/plugins/benchmarks/operator/kernel/runtime/timing_evidence.py"
 spec = importlib.util.spec_from_file_location("timing_evidence", path)
 timing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timing)
@@ -13,7 +14,7 @@ HEADER = "Step Id,Device_id,Stream ID,Name,Start Time(us),Duration(us)\n"
 class TimingEvidenceTest(unittest.TestCase):
     def fixture(self):
         import json
-        return json.loads((path.parents[3] / "tests/fixtures/kernel-timing-flow.json").read_text())
+        return json.loads((root / "tests/fixtures/kernel-timing-flow.json").read_text())
 
     def collect(self, csv=None, trace=None):
         fixture = self.fixture()
@@ -100,7 +101,7 @@ class TimerCaptureTest(unittest.TestCase):
                     self.assertIn(1, profile.kwargs['activities'])
                     self.assertIn(0, profile.kwargs['activities'])
                     import json
-                    fixture = json.loads((path.parents[3] / 'tests/fixtures/kernel-timing-flow.json').read_text())
+                    fixture = json.loads((root / 'tests/fixtures/kernel-timing-flow.json').read_text())
                     (directory / 'kernel_details.csv').write_text(fixture['csv'])
                     (directory / 'trace_view.json').write_text(fixture['trace'])
                 return write_trace

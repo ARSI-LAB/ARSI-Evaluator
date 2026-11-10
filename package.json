@@ -25,9 +25,9 @@
   "scripts": {
     "prepare": "pnpm run build",
     "build": "node scripts/build-network-bootstrap.mjs && node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/build-plugins.mjs && node scripts/package-runtime.mjs",
+    "dev": "node scripts/dev.mjs",
     "ray:ensure": "pnpm install --frozen-lockfile && pnpm build && node scripts/ray-smoke/ensure.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "check:dependencies": "node scripts/check-dependencies.mjs",
     "test": "vitest",
     "network:bundle": "node scripts/build-network-bootstrap.mjs"
   },

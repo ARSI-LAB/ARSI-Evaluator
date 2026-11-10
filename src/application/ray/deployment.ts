@@ -10,7 +10,8 @@ import { type JobsConfig } from "../../config/jobs.js";
 import { ensureManagedLocalCluster, resolveManagedLocalBundlePath } from "./managed-local.js";
 import { buildResumeSeed, downloadRunResults, localizeRunPluginRuntime } from "./jobs-results.js";
 import { expectRecord, expectNonEmptyString, parseSelection } from "../../core/validation/input.js";
-import { projectPortableSelection } from "../../infrastructure/ray/protocol.js";
+import { projectPortableSelection, validatePortablePluginActivations } from "../../infrastructure/ray/protocol.js";
+import type { PluginActivation } from "../../core/contracts/plugin-extension.js";
 import type { ConfigTransportLookup } from "../../core/contracts/config-transport.js";
 import { resolveResumeRun } from "../../core/recovery/resume.js";
 import { ResumeError } from "../../core/recovery/resume-error.js";
@@ -19,7 +20,7 @@ import type { ProgressListener } from "../../core/progress/progress.js";
 import type { WarmupSummary } from "../warmup.js";
 import { parseWarmupSummary } from "./warmup-result.js";
 
-export type JobsSubmitOptions = { signal: AbortSignal; resume?: string | null; log(text: string): void; onProgress?: ProgressListener };
+export type JobsSubmitOptions = { plugins?: PluginActivation[]; signal: AbortSignal; resume?: string | null; log(text: string): void; onProgress?: ProgressListener };
 
 export type JobsExperimentResult = {
   exitCode: number;
@@ -246,7 +247,8 @@ export class RayJobsDeployment {
     }
     const retryConfig = join(this.receiptsDirectory(outputRoot), `${id}-retry.yaml`);
     await writeFile(retryConfig, JSON.stringify(saved), { mode: 0o600, flag: "wx" });
-    await registerGatewayRun(requestedRunId, retryConfig, id, this.runtime.configDirectory, this.runtime.pluginPatchPath);
+    const plugins = validatePortablePluginActivations(options.plugins);
+    await registerGatewayRun(requestedRunId, retryConfig, id, this.runtime.configDirectory, this.runtime.pluginPatchPath, plugins);
     options.log(seed ? `Resuming run ${seed.runId}; cluster evaluation job submitted` : "Cluster evaluation job submitted");
     await client.call(
       `/jobs/${id}/submit`,
@@ -254,6 +256,7 @@ export class RayJobsDeployment {
         config: portable,
         requestedRunId,
         pluginVersions,
+        plugins,
         serviceAuth: Object.fromEntries(Object.entries(this.runtime.services).map(([name, binding]) => [name, binding.auth.value])),
         ...(seed ? { seed: seed.seed, resumeRunId: seed.runId } : {}),
       },

@@ -2,21 +2,9 @@
 
 > [English](./plugins.en.md) | 中文
 
-本文记录组件契约、内置注册、外部插件构建与 Ray 配置传输。第一次新增时，先看[新增 Solver](add-solver.md)、[新增内置基础插件](add-built-in-plugin.md)或[新增外部插件](add-external-plugin.md)的最小示例。
+本文介绍八类组件接口、可运行的指标插件、显式 patch 与 Ray 节点部署。示例中的源码命令和 `experiments/` 目录均以 Evaluator 仓库根目录为基准。
 
 [返回项目主页](../../README.zh-CN.md) · [用户手册](../users/README.zh-CN.md)
-
-## 源码与注册位置
-
-仓库内组件在各角色的 index.ts 注册，Metrics 和 Reporter 分别使用 metrics/index.ts 和 reporters/index.ts；Benchmark 再分 agent-harness、inference-engine、operator 三个注册入口。application/plugins/open-registry.ts 创建 Cordis 注册表并注册插件，load-module.ts 定位和导入插件模块、读取版本，create-components.ts 使用已有注册表创建组件，bootstrap.ts 提供自行创建和释放注册表的公开入口；config/plugin-patch.ts 只读取 patch、校验条目和计算摘要，不执行插件模块。外部插件仍从 ember-evaluator 包根导入公共接口，不依赖这些内部目录。完整调用关系和资源所有权见[源码架构与执行流程](architecture.md)，新增 Benchmark 的具体位置和流程限制见[Benchmark 开发指南](benchmarks.md#新需求的修改入口)。
-
-运行 `pnpm check:dependencies` 检查导入、目录依赖和可执行模块循环。允许关系和未覆盖范围见[依赖规则](architecture.md#允许的源码依赖)。仓库插件清单用于构建，外部组件在运行时通过显式 patch 加载。
-
-### 发布进程入口
-
-`pnpm build` 生成包根与 CLI 入口，并保留 `dist/adapters/ray/{node-worker,jobs-entry,jobs-retry-entry,jobs-gateway}.js`、Ray 的 `python/requirements.txt`、`dist/adapters/harness/pi/` 独立运行包及 `dist/adapters/harness/agentx/assets/ascend_metrics.py`。现有部署路径仍可用，仓库内部引用改用新目录。生成的入口和资源均参与包摘要计算。
-
-将实际打包产物及运行依赖安装到 checkout 外的目录后，从仓库执行 `node scripts/verify-distribution.mjs <安装后的包目录>`。目标目录不能带 src 或 scripts。检查覆盖 CLI、包名导入的 SDK 执行/报告、Pi 协议、worker 任务/镜像维护/版本拒绝、Jobs 输入处理与 gateway、AgentX Python 启动。可通过 OPENSSL_BIN 和 PYTHON_BIN 指定工具；缺失工具会明确记为跳过。该受控检查不替代真实 Docker、Ray、NPU 和模型验收。
 
 ## 插件种类
 
@@ -38,7 +26,7 @@ Benchmark 的 `resolveSource`、`enumerate` 第三参数及 `prepare`、`planRun
 
 Cordis 负责加载插件模块，模块通过 `ctx.evaluator.register()` 注册组件。一个模块可以注册多种组件，实验配置再按 `name` 选择使用哪一个。
 
-记录型 Benchmark 的定义放在 `src/plugins/benchmarks/agent-harness/definitions/`：各题库文件负责题目转换和选择评分入口，`records.ts` 负责记录校验与任务构造，`prompts.ts` 保存题目提示词。评分实现放在同目录的 `scoring/` 中，按答案匹配、生成式选择题、概率评分、模型裁判和代码执行划分；DROP 这类复杂算法可单独保留。新增题库时优先使用已有评分机制，不要求每个题库都新增一个 `*-score.ts`。评分属于 Benchmark 的业务规则，不因文件名含 score 就改成独立 Verifier 插件。
+记录型 Benchmark 的定义放在 `src/plugins/benchmarks/definitions/`：各题库文件负责题目转换和选择评分入口，`records.ts` 负责记录校验与任务构造，`prompts.ts` 保存题目提示词。评分实现放在同目录的 `scoring/` 中，按答案匹配、生成式选择题、概率评分、模型裁判和代码执行划分；DROP 这类复杂算法可单独保留。新增题库时优先使用已有评分机制，不要求每个题库都新增一个 `*-score.ts`。评分属于 Benchmark 的业务规则，不因文件名含 score 就改成独立 Verifier 插件。
 
 
 | 种类            | 职责与接口                                                                | 内置实现                                                                   |
@@ -71,88 +59,156 @@ Benchmark 实现 `planRun()` 时，Scheduler 需要实现 `prepareTasks(jobs, pl
 
 Store 或 Scheduler 生成的 `AttemptRecord` 必须包含 `evaluationKind`、`executionStatus`、`scoreStatus` 和 `cleanupStatus`；当前类型不再接受 `status`、`timeoutKind`。指标插件直接读取这些字段；需要报告中的状态文字时可从包根导入 `attemptStatus()`、`attemptTimeoutKind()`，不要把显示值再写入记录。历史结果仅在本地 Store 的读取入口转换，新的提交和远端消息必须使用当前结构，字段组合规则见[结果与错误说明](../users/reference/errors.zh-CN.md)。
 
-## 为已有角色新增内置实现
-
-本节适用于给八种已有角色增加实现，例如在 Metrics 下增加一个指标。要新增与这八种角色并列的基础插件，见[内置基础插件开发](built-in-role-development.md)。
-
-1. 按[插件种类](#插件种类)选角色和契约。在 `src/plugins/<角色目录>/` 新增实现。新增 Benchmark 时，按[开发指南](benchmarks.md#新需求的修改入口)选择类别和注册入口。
-2. 在角色的 `index.ts` 导入实现，在 `apply(ctx)` 中加入 `ctx.evaluator.register(role, name, validate, factory)`。同一角色内使用唯一的 `name`。`validate` 检查 `config` 并返回工厂需要的值，`factory` 创建实例。工厂解析相对路径时用 `runtime.resolvePath()`，持有进程或连接时接入对应的释放流程。
-3. 在实验 YAML 中用注册名选择组件。字段位置见[在实验中选择组件](external-plugins.md#4-在实验中选择组件)。要让某个 Benchmark 默认使用新组件，在该 Benchmark 的 [Profile](benchmarks.md#发布默认-profile) 中设置选择项。`src/plugins/index.ts` 已调用各角色的 `apply(ctx)`，新增已有角色的实现只需要在对应角色注册。
-4. 运行 `pnpm check:dependencies`、`pnpm typecheck` 和 `pnpm build`，用 `node dist/cli.js inspect <实验.yaml>` 校验名称和参数。再运行一份受控实验验证组件实际行为。组件涉及外部进程或连接时，覆盖失败、取消和释放。
-
 ## 编写插件
 
+Solver 的 `runtimeInstallation()` 返回 `RuntimeInstallation` 时，可以设置 `cacheName`，例如 `agentx-1.0.7-py3.12`。本机托管目录为 `<缓存根目录>/<cacheName>/<12 位内容哈希>`；未设置时名称为 `runtime`。名称为 1～48 个小写 ASCII 字母、数字、点或连字符，首尾必须是字母或数字，不接受 Windows 设备保留名称。名称仅用于本机缓存目录，不参与内容摘要；完整摘要仍根据 `id`、平台、文件及命令计算，Docker 镜像身份不受名称影响。安装直接在最终目录执行，因此命令可以保存 `{root}` 的绝对路径。缓存位置及清理方法见[安装指南](../users/installation.zh-CN.md#本机运行时缓存与-windows-路径长度)。
+
 编写或修改 Benchmark 插件时，接口、代码职责、生命周期及受控示例见 [Benchmark 开发指南](benchmarks.md)。数据集的官方要求、镜像、平台、资源、超时配置和真实运行验收见 [Benchmark 评测要求与验收指南](benchmark-evaluation-requirements.md)。
+
+下面以“已完成任务数”指标为例，新建 `experiments/plugins/completed-count.mjs`：
+
+```js
+export const inject = ["evaluator"];
+
+export function apply(ctx) {
+  ctx.evaluator.register(
+    "metrics",
+    "completed-count",
+    (config) => {
+      if (
+        config === null || typeof config !== "object" ||
+        Array.isArray(config) || Object.keys(config).length > 0
+      ) {
+        throw new TypeError("completed-count 不接受配置参数");
+      }
+      return {};
+    },
+    () => ({
+      name: "completed-count",
+      async compute(snapshot) {
+        return {
+          completed: snapshot.records.filter(
+            (record) => record.executionStatus === "completed",
+          ).length,
+        };
+      },
+    }),
+  );
+}
+```
 
 `register(role, name, validate, factory)` 的四个参数分别是组件种类、注册名、配置校验函数和实例工厂。工厂可以接收 `(config, runtime)`，其中 runtime 提供模型配置、运行时认证和 `resolvePath()` 等上下文；认证只用于调用模型，不写入日志或结果。
 
 执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，bootstrap 和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
 
-使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
+使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。发布产物只加载已编译的 JavaScript；从源码启动的 `pnpm dev` 会按清单回退到对应的 `.ts` 文件。
 
-## 仓库内插件与 `ember-plugin.json`
 
-`plugins/<id>/` 下的插件要想进入构建产物，必须提供 `plugins/<id>/ember-plugin.json`。`pnpm build` 扫描该目录后依次校验清单、按清单构建（`tsc` 类型检查，可选再执行插件自带的打包脚本），再把声明的文件复制到 `dist/plugins/<id>/`。没有清单的目录不编译、不复制，只能在源码中直接 import。
+## 仓库插件构建与扩展
 
-构建方式有两种：
-
-- **只做类型检查 + `tsc` 输出**：只声明 `build.tsconfig`，适用于代码直接编译为 ESM 的插件。
-- **自定义打包脚本**：声明 `build.script`，由插件自己的脚本产出 `dist/`，适用于需要 esbuild 打包、生成资源哈希或复制静态资源的插件（如 aisbench、docops）。两种方式可以叠加，先执行 `tsc` 校验，再执行脚本。
-
-构建把仓库插件的可执行入口汇总到 `dist/bundled-plugins.patch.yaml`，CLI、SDK 和 Ray 在初始化注册表时都会加载。插件声明了 `patch` 时，保留其中的模块 ID，并把原 patch 一并安装到 `dist/plugins/<id>/`。只声明 `entry` 时，使用清单的 `id` 注册模块。以 [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json) 为例：
+`pnpm build` 扫描 `plugins/*/ember-plugin.json`，依次校验清单、按清单构建，并把声明的文件安装到 `dist/plugins/<id>/`；构建同时生成 `dist/bundled-plugins.patch.yaml` 和索引 `dist/plugins/index.json`。没有清单的目录不编译、不复制，只能在源码中直接 import。
 
 ```json
 {
-  "id": "aisbench",
-  "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
+  "id": "example",
   "entry": "./dist/index.js",
-  "bundled": true,
-  "patch": "cordis.patch.yaml",
-  "build": { "tsconfig": "tsconfig.json", "script": "scripts/build.mjs", "install": ["dist"] }
+  "cli": "./dist/cli-register.js",
+  "flags": [
+    { "command": "run", "flag": "--example [url]", "description": "Enable example", "config": "url" }
+  ],
+  "build": {
+    "tsconfig": "./tsconfig.json",
+    "install": ["dist", { "from": "assets", "to": "dist/assets" }]
+  }
 }
 ```
 
-随包插件可直接在实验配置中使用。
-
-```bash
-ember-evaluator run experiment.yaml
-```
-
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `id` | 是 | 必须与目录名一致，同时决定 `dist/plugins/<id>/` 的位置 |
-| `description` | 否 | 插件说明 |
-| `version` | 否 | 省略时继承根 `package.json` 的版本，避免两处维护 |
-| `entry` | 否 | 编译后的 JS 入口，未声明 `patch` 时用于默认加载 |
-| `bundled` | 否 | 随包发布的描述字段，默认注册由已安装的入口决定 |
-| `patch` | 否 | 指向插件目录下的 `cordis.patch.yaml`；构建时复制到 `dist/plugins/<id>/`，并把其中 `./dist/` 前缀改写为 `./` |
-| `build.tsconfig` | 有 `build` 且无 `build.script` 时必填 | 插件自己的 tsconfig，用于类型检查（`noEmit`）或输出到 `dist` |
-| `build.script` | 有 `build` 且无 `build.tsconfig` 时必填 | 插件自带的 Node 打包脚本，以插件目录为工作目录执行，负责产出 `dist/` |
-| `build.install` | 有 `build` 时必填 | 要放进运行时的路径；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置 |
+ID 必须与目录名一致。version 默认继承宿主包版本。entry 是 Cordis 入口，cli 是可选的 CLI 注册模块。build.tsconfig 和 build.script 都可省略：只安装已编译的 JavaScript 时给出 build.install 即可，声明 tsconfig 时构建会执行 tsc。build.install 必填；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置。安装后清单的相对路径仍然有效，越界路径和符号链接会被拒绝。
 
 构建产物：
 
 ```text
 dist/plugins/
-├── aisbench/
+├── <id>/
 │   ├── ember-plugin.json  # 原样复制，便于运行时追溯来源
-│   ├── cordis.patch.yaml  # 由清单的 patch 复制，./dist/ 前缀已改写为 ./
-│   ├── index.js
-│   ├── profiles/...
-│   └── runtime/...
-└── docops/
-    ├── ember-plugin.json
-    ├── cordis.patch.yaml
-    └── index.js
+│   ├── cordis.patch.yaml  # 仅在清单声明 patch 时存在
+│   └── index.js
 ```
 
-清单中的 `entry` 是相对插件目录的编译产物路径（如 `./dist/index.js`），安装后位于 `dist/plugins/<id>/` 下。
+清单中的 entry 是相对插件目录的编译产物路径（如 `./dist/index.js`），安装后位于 `dist/plugins/<id>/` 下。从 TypeScript 源码直接启动（`pnpm dev`）时，若声明的产物不存在，入口回退到对应的 `.ts` 文件；发布产物只加载已编译的 JavaScript。
+
+只给已有命令加参数时，可声明 `flags` 而不写 CLI 模块：宿主按清单注册参数，command 目前仅支持 `run`；flag 支持 `--name`、`--name <value>`、`--name [value]`；config 指定写入插件配置的键，声明 config 时 flag 必须能取值。`flags` 与 `cli` 可以同时使用，冲突检查覆盖两者。需要自己的子命令或动态逻辑时，再提供 `cli` 模块。
+
+需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行，由脚本自行产出 `dist`；同时声明 `build.tsconfig` 时先执行 `tsc`，再执行脚本。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录，并把其中 `./dist/` 前缀改写为 `./`。
+
+CLI 模块导出 `registerCli(cli: PluginCliRegistrar)`，公共类型从 `ember-evaluator` 导入：
+
+```ts
+export function registerCli(cli: PluginCliRegistrar): void {
+  cli.addCommand({ name: "example", description: "Example tools", async run(argv, io, signal) {
+    const { run } = await import("./command.js");
+    return run(argv, io, signal);
+  } });
+  cli.extendCommand("run", {
+    flags: "--example [url]", description: "Enable example",
+    configure(value, activation) { activation.enable(typeof value === "string" ? { url: value } : {}); },
+  });
+}
+```
+
+宿主先发现安装索引和显式 --patch，加载注册声明，再严格解析完整参数。命令、参数及别名冲突时直接报错，不覆盖内置功能。注册阶段不能启动进程、访问网络或打开数据库。patch 插件可在 Cordis 入口同时导出 registerCli，无需 manifest；随包插件和 patch 插件不能使用相同 ID。
+
+运行扩展通过 `ctx.evaluator.registerStoreDecorator(name, validate, factory)` 注册，factory 返回接收底层 Store 的包装函数。宿主记录所属插件，注册名不必等于模块 ID，只为显式启用的插件创建包装。validate 在组件工厂之前执行；使用 Cordis effect 释放资源、runtime.signal 取消网络操作，并保留底层 Store 的可选能力和真实返回值。
+
+SDK 使用 `overrides.plugins: [{ id, config }]` 启用扩展。配置只包含可持久化 JSON，凭证使用环境变量引用。manifest.json 中的 pluginRuntime.plugins 保存启用项和配置，resume/retry 自动恢复；显式传入不同配置拒绝续跑。
+
+tracer 的 `--tracer [url]` 和 `tracer serve/stop/status/logs` 均由 plugins/tracer 注册。SDK 可通过 tokenEnv 指定认证环境变量，不接受 token 明文。默认数据目录为工作目录下的 .cache/tracer。Ray Jobs 把可移植扩展配置传给协调端；worker 只加载预装模块进行注册和版本检查，不创建协调端 Store 包装。tracer 采集协调端已导入的远端证据，不代表 worker 轨迹实时流。
+
+构建摘要包含带 manifest 的插件源码及资源，排除 dist、依赖和缓存。默认测试集自动发现这些插件下的 tests/**/*.test.ts。新增插件不需要修改 src、根 TypeScript include 或测试列表。
+
 
 ## 用 `--patch` 引用外部插件
 
-`--patch` 在默认组件之外追加插件。相同模块 ID 和入口摘要只注册一次，相同 ID 的不同模块会报错。
+在独立目录新建 `cordis.patch.yaml`：
 
-使用 `--patch` 指定外部模块，文件方式的最小示例见[新增外部插件](add-external-plugin.md)。独立项目编译、包名加载、结果检查与续跑见[接入外部插件](external-plugins.md)。
+```yaml
+- insert:
+    - id: custom-metrics                    # 插件模块的唯一标识，用于来源与版本记录
+      name: ./completed-count.mjs            # 模块路径，相对本 patch 文件所在目录
+      # name 也可填已安装的 npm 包名；npm 包从 patch 文件目录解析。
+      # 当前 patch 仅支持 insert，条目只接受 id 和 name。
+```
+
+目录结构如下：
+
+```text
+experiments/
+├── gsm8k.yaml
+└── plugins/
+    ├── cordis.patch.yaml
+    └── completed-count.mjs
+```
+
+随后将 `gsm8k.yaml` 的 `metrics` 改为：
+
+```yaml
+metrics:                       # 显式列表会替换默认指标，需保留的内置指标也要列出
+  - name: success-rate
+  - name: duration
+  - name: usage
+  - name: completed-count      # register() 声明的组件名，不是 patch 的 id 或模块路径
+    # config: {}               # 组件参数写在这里；本示例插件不接受非空参数
+```
+
+运行时显式指定 patch；省略 `--patch` 时只加载内置组件：
+
+```bash
+ember-evaluator run experiments/gsm8k.yaml --patch <path>/plugins/cordis.patch.yaml
+```
+
+`--dry-run` 也接受相同的 `--patch <path>` 参数。patch 路径相对当前工作目录解析；patch 内的本地模块和 npm 依赖相对 patch 文件目录解析。实验配置中的 `cacheDir`、输出目录等仍相对实验 YAML 所在目录解析。
+
+更多安装与构建说明见 [DocOps package README](../../plugins/docops/README.md)。
 
 Ray 节点不会接收协调端的本机 patch 路径或源码。使用外部插件时，先将 patch 和模块安装到每个执行节点；在各节点 EVALUATOR_NODE_CONFIG 指向的 JSON 中设置 pluginPatchPath，该相对路径以节点配置文件所在目录为基准。所有节点的 patch 内容必须一致，worker 会在执行前校验 patch 与插件版本摘要。
 

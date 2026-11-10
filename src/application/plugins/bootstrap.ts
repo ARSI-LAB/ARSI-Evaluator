@@ -1,6 +1,6 @@
 import type { LoadedConfig } from "../../config/loaded.js";
 import type { RunComponents } from "../../core/contracts/components.js";
-import { createRunComponents } from "./create-components.js";
+import { createRunComponents, type RunComponentOptions } from "./create-components.js";
 import { openPluginRegistry } from "./open-registry.js";
 
 export type BootstrappedComponents = RunComponents & { dispose(): Promise<void> };
@@ -12,10 +12,12 @@ export async function bootstrap(
   patchPath?: string,
   onWarning?: (message: string) => void,
   imageConfigFingerprint?: string,
+  options: RunComponentOptions = {},
 ): Promise<BootstrappedComponents> {
-  const registry = await openPluginRegistry(patchPath);
+  const registry = await openPluginRegistry(patchPath,
+    options.plugins === undefined ? {} : { plugins: options.plugins.map(plugin => plugin.id) });
   try {
-    const components = await createRunComponents(registry, config, experimentDir, onWarning, imageConfigFingerprint);
+    const components = await createRunComponents(registry, config, experimentDir, onWarning, imageConfigFingerprint, options);
     return { ...components, dispose: () => registry.dispose() };
   } catch (error) {
     await registry.dispose();

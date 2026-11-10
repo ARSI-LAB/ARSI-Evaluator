@@ -1,4 +1,5 @@
 import { validateNetworkSnapshot } from "../../config/network-schema.js";
+import { parsePluginActivations } from "../../core/plugins/activation.js";
 import type { NetworkSnapshot } from "../../core/contracts/network.js";
 import { join, posix, win32 } from "node:path";
 import { parseHardware } from "../../config/hardware.js";
@@ -97,6 +98,13 @@ function portable(value: unknown, path: string, containerPaths: readonly (readon
     portable(entry, `${path}.${key}`, containerPaths, [...location, key], depth + 1);
   }
 }
+/** Extensions run on the coordinator; options must not carry client-local paths or credentials. */
+export function validatePortablePluginActivations(value: unknown) {
+  const plugins = parsePluginActivations(value);
+  for (const plugin of plugins) portable(plugin.config, `plugins.${plugin.id}`);
+  return plugins;
+}
+
 export function validatePortableSelection(value: unknown, role: string, lookup?: ConfigTransportLookup): Selection {
   const fields = ["name", "config"];
   if (role === "solver" || (role === "verifier" && Object.hasOwn(object(value), "service"))) fields.push("service");

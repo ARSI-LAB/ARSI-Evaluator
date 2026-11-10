@@ -49,6 +49,7 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
   if (remote.preparation && remote.preparation.nodeId !== nodeId)
     throw new Error("Ray worker differs from prepared node placement");
   const key = { runId: remote.job.runId, taskId: remote.job.taskId, attemptId: remote.job.attemptId };
+  await registry.loadRecordedPlugins(remote.pluginVersions);
   const packageDigest = await loadPackageDigest();
   const versions = registry.pluginVersions;
   assertWorkerVersions(remote.pluginVersions, versions, remote.packageDigest, packageDigest);

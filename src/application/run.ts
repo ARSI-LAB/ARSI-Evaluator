@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { parsePluginActivations, restorePluginActivations } from "../core/plugins/activation.js";
 import { networkSecrets } from "../config/network-schema.js";
 import { dirname, join, resolve } from "node:path";
 import { createRunComponents, createBenchmark, createPluginRuntime } from "./plugins/create-components.js";
@@ -7,7 +9,8 @@ import { solverBinding } from "../core/policies/service-bindings.js";
 import { type CliOverrides } from "../core/contracts/config.js";
 import { type LoadedConfig } from "../config/loaded.js";
 import type { RunComponents } from "../core/contracts/components.js";
-import type { ResultSnapshot } from "../core/contracts/result.js";
+import type { ResultSnapshot, RunManifest } from "../core/contracts/result.js";
+import type { PluginActivation } from "../core/contracts/plugin-extension.js";
 import { redactDiagnostic } from "../core/errors/diagnostics.js";
 import { runEngine } from "./run-engine.js";
 import { normalizeFailure } from "../core/errors/classify.js";
@@ -45,7 +48,7 @@ export type ExecutionOutcome = {
   secrets: string[];
 };
 
-export type LoadedExecution = { config: LoadedConfig; registry: PluginRegistry; runId?: string };
+export type LoadedExecution = { config: LoadedConfig; registry: PluginRegistry; runId?: string; plugins?: PluginActivation[] };
 
 type ExecutionOptions = EvaluatorRunOptions & {
   taskIds?: string[];
@@ -106,6 +109,7 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
   };
   const file = resolve(options.configPath);
   const patchPath = options.patchPath === undefined ? undefined : resolve(options.patchPath);
+  let pluginSelections: PluginActivation[] = [];
   const resume = options.resume === undefined || options.resume === false ? undefined : options.resume === true ? null : options.resume;
   let registry: PluginRegistry | undefined = options.execution?.registry;
   let config: LoadedConfig | undefined;
@@ -120,8 +124,10 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
   };
   try {
     signal.throwIfAborted();
+    pluginSelections = parsePluginActivations(overrides.plugins ?? options.execution?.plugins);
     progress({ phase: "config", message: `Loading and validating ${file}` });
-    registry = options.execution?.registry ?? await openPluginRegistry(patchPath);
+    registry = options.execution?.registry ?? await openPluginRegistry(patchPath,
+      { plugins: pluginSelections.map(plugin => plugin.id) });
     config = options.execution?.config ?? await loadConfig(file, overrides, env, { registry,
       ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(patchPath === undefined ? {} : { patchPath }) });
@@ -133,6 +139,20 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
       delete run.offset;
       config.experiment.run = { ...run, maxTasks: null, taskIds: [...options.taskIds] };
     }
+    if (resume !== undefined) {
+      try {
+        const resumeDirectory = await resolveResumeRun(config.experiment.output.directory, resume);
+        if (resumeDirectory) {
+          const saved = JSON.parse(await readFile(join(resumeDirectory, "manifest.json"), "utf8")) as RunManifest;
+          pluginSelections = restorePluginActivations(saved.pluginRuntime?.plugins, overrides.plugins ?? options.execution?.plugins);
+        }
+      } catch (error) {
+        // Ray may follow a still-running job that has not downloaded its manifest yet.
+        if (!config.deployment || !(error instanceof ResumeError) || error.code !== "CONFIG_INVALID") throw error;
+      }
+    }
+    await registry.loadPlugins(pluginSelections.map(plugin => plugin.id));
+    registry.prepareStoreDecorators(pluginSelections);
     const experiment = config.experiment;
     progress({ phase: "bootstrap", message: `Initializing plugins: benchmark=${experiment.benchmark.name}, environment=${experiment.environment.name}, solver=${experiment.solver.name}, scheduler=${experiment.scheduler.name}; service=${experiment.solver.service}; model=${solverBinding(config).model.name}; endpoint=${solverBinding(config).model.endpoint ?? "provider default"}` });
     if (config.deployment) {
@@ -145,7 +165,7 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
         createPluginRuntime(config, dirname(file), patchPath), (role, name) => evaluator.configTransport(role, name));
       assertJsonValue(experiment);
       progress({ phase: "deployment", message: "Submitting and following the cluster evaluation job" });
-      const jobs = await deployment.runExperiment(experiment, registry.pluginVersions, { signal, onProgress: progress,
+      const jobs = await deployment.runExperiment(experiment, registry.pluginVersions, { signal, onProgress: progress, plugins: pluginSelections,
         ...(resume === undefined ? {} : { resume }), log(text) {
           const message = redactDiagnostic(text, secrets);
           if (options.onDeploymentLog) observe(() => options.onDeploymentLog?.(message));
@@ -161,7 +181,7 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
         diagnose(new Error(jobs.collectionError ?? jobs.reportError ?? "Ray Jobs result collection failed"));
       }
     } else {
-      components = await createRunComponents(registry, config, dirname(file));
+      components = await createRunComponents(registry, config, dirname(file), undefined, undefined, { plugins: pluginSelections, signal });
       if (resume !== undefined) progress({ phase: "resume", message: "Locating previous run" });
       const resumeDirectory = resume === undefined ? undefined : await resolveResumeRun(experiment.output.directory, resume);
       const snapshot = await runEngine({ components, config, signal, onProgress: progress,
