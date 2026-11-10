@@ -1,0 +1,47 @@
+name: "Documentation"
+description: "Suggest a documentation correction, clarification, or new guide"
+title: "[Docs] "
+labels: ["category:docs"]
+body:
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Documentation Type
+      options:
+        - Bug / Correction
+        - Clarification
+        - Missing Documentation
+        - New Example / Tutorial
+        - Translation / Localization
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Affected Page / File
+      description: "Link to the page or repository path, if known."
+      placeholder: "e.g. docs/users/benchmarks/terminalbench.md"
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: Documentation Problem
+      description: "What is inaccurate, missing, confusing, or outdated?"
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-change
+    attributes:
+      label: Suggested Change
+      description: "Describe the desired correction, explanation, or example."
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References / Additional Context
+      description: "Related code, issues, PRs, screenshots, or official sources."
+    validations:
+      required: false

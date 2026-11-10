@@ -1,0 +1,57 @@
+name: "Feature Request"
+description: "Request a general feature or an improvement to existing functionality"
+title: "[Feature] "
+labels: ["category:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for a concrete product or developer feature.
+        For a new benchmark, choose **Benchmark Integration**.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: "Select the area most closely related to the request."
+      options:
+        - Benchmark / Dataset
+        - Evaluation Engine / Scheduling
+        - Solver / Agent Harness
+        - Verifier / Scoring
+        - Runtime / Docker / Ray
+        - CLI / SDK
+        - Reporting / Metrics
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Use Case
+      description: "What are you trying to accomplish, and what prevents it today?"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: "Describe the expected behavior and user-facing interface, if known."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / Workarounds
+      description: "Optional: other approaches or current workarounds."
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] The new behavior is available through the intended interface
+        - [ ] Regression tests cover the behavior
+        - [ ] Usage documentation is updated as needed
+    validations:
+      required: true
