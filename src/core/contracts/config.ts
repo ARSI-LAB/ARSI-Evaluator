@@ -49,6 +49,8 @@ export type EffectiveConfig = {
     offset?: number;
     taskIds: string[] | null;
     timeoutSeconds: number;
+    /** Overrides whether quality tasks run verification after an Agent solve timeout. */
+    scoreAfterSolveTimeout?: boolean;
     sampling?: { strategy: "random"; seed: number };
     /** Absent means "abort": failed/invalid tasks stop the run; valid Agent deadlines can refill the slot. */
     onError?: "abort" | "continue";

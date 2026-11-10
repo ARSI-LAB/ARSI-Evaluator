@@ -200,7 +200,7 @@ Early preparation is outside task execution. No default round cap. [Configuratio
 | Outcome | Handling |
 | --- | --- |
 | Normal solve/verify, official zero | Valid zero |
-| Recognized quality agent timeout | `agent_timeout`,valid zero; no normal verification, retain evidence where possible |
+| Recognized quality agent timeout | Verify surviving work by default within the remaining task budget and retain the verdict and solve timeout. Record `agent_timeout` and a valid zero if the task deadline has expired or grading after timeout is disabled |
 | Preparation/startup/verification timeout | Failure, not ordinary wrong-answer zero |
 | User cancellation | Cancelled, not zero |
 | Performance timeout | Infrastructure failure, not quality timeout zero |

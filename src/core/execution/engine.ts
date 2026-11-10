@@ -376,6 +376,7 @@ export async function executeEngine({
         timeoutSeconds: config.experiment.run.timeoutSeconds,
         ...(config.experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: config.experiment.run.solveTimeoutSeconds }),
         ...(config.experiment.run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: config.experiment.run.verifyTimeoutSeconds }),
+        ...(config.experiment.run.scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout: config.experiment.run.scoreAfterSolveTimeout }),
         includeTaskAnswer: config.experiment.run.includeTaskAnswer === true, sensitiveValues, onProgress: taskProgress,
       });
       // Abort before returning to a scheduler that may immediately refill a slot.

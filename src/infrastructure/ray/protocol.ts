@@ -15,6 +15,7 @@ import { fingerprintImageConfig } from "../../core/policies/image-config.js";
 
 export type RemoteConfig = Pick<EffectiveConfig, "hardware" | "benchmark" | "environment" | "solver" | "verifier"> & PhaseTimeoutOverrides & {
   timeoutSeconds: number;
+  scoreAfterSolveTimeout?: boolean;
   includeTaskAnswer?: boolean;
   network?: NetworkSnapshot;
 };
@@ -188,7 +189,8 @@ export function validateRemoteJob(value: unknown, lookup?: ConfigTransportLookup
   assertSourceLock(record.source);
   portable(record.source, "source");
   const configFields = ["benchmark", "environment", "solver", "timeoutSeconds"];
-  for (const key of ["solveTimeoutSeconds", "verifyTimeoutSeconds"]) if (Object.hasOwn(object(record.safeConfig), key)) configFields.push(key);
+  for (const key of ["solveTimeoutSeconds", "verifyTimeoutSeconds", "scoreAfterSolveTimeout"])
+    if (Object.hasOwn(object(record.safeConfig), key)) configFields.push(key);
   if (Object.hasOwn(object(record.safeConfig), "includeTaskAnswer")) configFields.push("includeTaskAnswer");
   if (Object.hasOwn(object(record.safeConfig), "verifier")) configFields.push("verifier");
   if (Object.hasOwn(object(record.safeConfig), "network")) configFields.push("network");
@@ -200,6 +202,8 @@ export function validateRemoteJob(value: unknown, lookup?: ConfigTransportLookup
     const value = config[key];
     if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) throw new TypeError(`Invalid Ray ${key}`);
   }
+  if (Object.hasOwn(config, "scoreAfterSolveTimeout") && typeof config.scoreAfterSolveTimeout !== "boolean")
+    throw new TypeError("run.scoreAfterSolveTimeout must be a boolean");
   if (Object.hasOwn(config, "includeTaskAnswer") && config.includeTaskAnswer !== true)
     throw new TypeError("run.includeTaskAnswer must be true when present");
   if (config.verifier !== undefined) validatePortableSelection(config.verifier, "verifier", lookup);
@@ -277,6 +281,7 @@ export function projectRemoteJob(input: {
       timeoutSeconds: input.config.run.timeoutSeconds,
       ...(input.config.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: input.config.run.solveTimeoutSeconds }),
       ...(input.config.run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: input.config.run.verifyTimeoutSeconds }),
+      ...(input.config.run.scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout: input.config.run.scoreAfterSolveTimeout }),
       ...(input.config.run.includeTaskAnswer === true ? { includeTaskAnswer: true } : {}),
     },
     pluginVersions: input.run.pluginVersions,

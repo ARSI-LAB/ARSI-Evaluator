@@ -35,8 +35,6 @@ export type SourceLock = {
 export type PreparedTask = {
   /** Ordered phases sharing one solve environment; private plans never reach the Solver. */
   steps?: PreparedStep[];
-  /** Native graders may score surviving work even when a Solver phase failed. */
-  scoreAfterSolveFailure?: boolean;
   input: PublicTask;
   verification: JsonValue;
   /** Node-local dependency receipt; never included in PublicTask. */

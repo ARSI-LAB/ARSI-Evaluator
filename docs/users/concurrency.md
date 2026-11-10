@@ -34,7 +34,9 @@ Network retries occur within requests/downloads/pulls and are bounded. Exhaustio
 
 ### Timeouts and Scores
 
-For quality benchmarks, agent phase deadlines or `run.timeoutSeconds` exhausted during solving yield `executionStatus: agent_timeout`, `scoreStatus: valid`. This is a valid zero included in the denominator, with no automatic rerun or `run.onError: abort`. After cleanup/persistence, dispatch continues. Resume skips these tasks. Without verification, `verdict` remains null; report zero comes from timeout policy.
+For quality benchmarks, an Agent solve timeout stops solving and grades the work already produced if the task still has time. Successful verification saves the actual verdict and the solve timeout diagnostic. Failure to prepare the work for grading or to run the verifier makes the attempt invalid.
+
+Set `run.scoreAfterSolveTimeout: false` to skip the verifier after a solve timeout and count the whole task as a valid zero. Exhausting `run.timeoutSeconds` while solving also skips the verifier for that step. A valid timeout zero is recorded as `executionStatus: agent_timeout`, `scoreStatus: valid` and `verdict: null`. Dispatch continues after cleanup and persistence, and resume skips the task. [Run configuration](config.md#whole-task-and-phase-timeouts)
 
 AgentX timeout is an incomplete measurement, without accuracy or zero score. Ordinary deadlines are ineligible for network retries.
 

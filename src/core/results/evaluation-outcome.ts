@@ -16,10 +16,12 @@ export function timeoutCancellation(
 }
 
 export function applyAttemptFailure(record: AttemptRecord): void {
-  const primary = record.errors[0];
-  if (!primary) return;
-  if (primary.code === "RUN_CANCELLED") record.executionStatus = "cancelled";
-  else if (primary.code === "SOLVER_AGENT_TIMEOUT" && record.evaluationKind === "quality") record.executionStatus = "agent_timeout";
+  // Earlier solve errors can be recorded before attempting verification.
+  const failure = record.errors.at(-1);
+  if (!failure) return;
+  if (failure.code === "RUN_CANCELLED") record.executionStatus = "cancelled";
+  else if (failure.phase === "solve" && failure.code === "SOLVER_AGENT_TIMEOUT" &&
+    record.evaluationKind === "quality") record.executionStatus = "agent_timeout";
   else record.executionStatus = "failed";
 }
 
@@ -45,7 +47,11 @@ export function attemptStatus(record: AttemptRecord): "completed" | "timeout" | 
 }
 export function attemptTimeoutKind(record: AttemptRecord): "agent" | "infrastructure" | null {
   if (isAgentTimeout(record)) return "agent";
-  return record.executionStatus === "failed" && record.errors.some(error => error.code.endsWith("_TIMEOUT")) ? "infrastructure" : null;
+  if (record.executionStatus === "failed" && record.errors.some(error =>
+    error.code.endsWith("_TIMEOUT") && (error.code !== "SOLVER_AGENT_TIMEOUT" || record.evaluationKind === "performance"))) {
+    return "infrastructure";
+  }
+  return null;
 }
 
 export function evaluationScore(record: AttemptRecord): number | undefined {
@@ -60,7 +66,7 @@ export function hasUnconfirmedCleanup(record: AttemptRecord): boolean {
 }
 
 /** A legal verdict survives later housekeeping failures; physical capacity remains blocked. */
-export function finalizeAttemptOutcome(record: AttemptRecord, retainMeasuredScore = false): void {
+export function finalizeAttemptOutcome(record: AttemptRecord): void {
   record.cleanupStatus = hasUnconfirmedCleanup(record) ? "unconfirmed" : "cleaned";
   if (record.evaluationKind === "performance") {
     record.scoreStatus = "not-applicable";
@@ -70,14 +76,14 @@ export function finalizeAttemptOutcome(record: AttemptRecord, retainMeasuredScor
     } else record.executionStatus = record.executionStatus === "cancelled" ? "cancelled" : "failed";
     return;
   }
-  if (retainMeasuredScore && record.solve !== null && record.verdict?.score !== undefined && record.executionStatus !== "cancelled") {
-    record.executionStatus = "completed";
-    record.scoreStatus = "valid";
-  } else if (isAgentTimeout(record)) {
-    record.executionStatus = "agent_timeout";
+  if (isAgentTimeout(record)) {
+    // Step errors have already been saved in execution order. Put the timeout first in the attempt summary.
+    const timeoutIndex = record.errors.findLastIndex(error => error.phase === "solve" && error.code === "SOLVER_AGENT_TIMEOUT");
+    if (timeoutIndex > 0) record.errors.unshift(...record.errors.splice(timeoutIndex, 1));
     record.scoreStatus = "valid";
   } else if (record.solve !== null && record.verdict !== null &&
-    record.errors.every(error => error.phase === "cleanup" || error.phase === "collect")) {
+    record.errors.every(error => error.phase === "cleanup" || error.phase === "collect" ||
+      error.phase === "solve" && error.code === "SOLVER_AGENT_TIMEOUT")) {
     record.executionStatus = "completed";
     record.scoreStatus = "valid";
   } else {

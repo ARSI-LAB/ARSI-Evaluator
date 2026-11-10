@@ -5,6 +5,7 @@ import { afterEach, expect, test } from "vitest";
 import { runTask, type RunTaskOptions } from "../../src/core/execution/run-task.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import type { ProcessHandle } from "../../src/core/contracts/environment.js";
+import { attemptTimeoutKind } from "../../src/core/results/evaluation-outcome.js";
 import { harness, source } from "../fixtures/engine/fakes.js";
 import { storeRun } from "../fixtures/results/store-fixture.js";
 
@@ -106,7 +107,7 @@ test("a solver failure still executes collect once and exports partial evidence"
     .toEqual(["hook", "export", "solve.cleanup", "commit"]);
 });
 
-test.each(["hook", "transition", "quiesce"] as const)("a timeout preserves its score and exports only after quiescence when %s fails", async failure => {
+test.each(["hook", "transition", "quiesce"] as const)("a timeout followed by %s failure keeps the attempt unscored", async failure => {
   const value = await setup(false, failure === "hook" ? 4 : 0);
   const prepare = value.components.environment.prepare.bind(value.components.environment);
   value.components.environment.prepare = async (...args) => {
@@ -120,7 +121,8 @@ test.each(["hook", "transition", "quiesce"] as const)("a timeout preserves its s
     throw new Error("unreachable");
   };
   const record = await value.run({ solveTimeoutSeconds: 0.05 });
-  expect(record).toMatchObject({ executionStatus: "agent_timeout", scoreStatus: "valid", verdict: null, cleanupStatus: "cleaned" });
+  expect(record).toMatchObject({ executionStatus: "failed", scoreStatus: "invalid", verdict: null, cleanupStatus: "cleaned" });
+  expect(attemptTimeoutKind(record)).toBeNull();
   expect(record.errors[0]?.code).toBe("SOLVER_AGENT_TIMEOUT");
   expect(record.errors.some(error => error.phase === "collect")).toBe(true);
   expect(value.events).not.toContain("verify");
@@ -130,7 +132,7 @@ test.each(["hook", "transition", "quiesce"] as const)("a timeout preserves its s
     expect(record.collection.artifacts).toBe("missing");
   } else {
     expect(value.events.filter(event => ["transition", "hook", "quiesce", "export"].includes(event)))
-      .toEqual(failure === "hook" ? ["transition", "hook", "quiesce", "export"] : ["transition", "quiesce", "export"]);
+      .toEqual(failure === "hook" ? ["transition", "hook", "quiesce", "export"] : ["transition", "transition", "quiesce", "export"]);
     expect(record.collection.artifacts).toBe("complete");
   }
 });

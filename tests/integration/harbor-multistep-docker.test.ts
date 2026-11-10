@@ -32,7 +32,7 @@ test.skipIf(process.env.EVALUATOR_HARBOR_DOCKER_TESTS !== "1")("native shared st
       "steps/second/tests/test.sh": 'set -eu\ntest "$(id -un)" = root\ntest "$(cat /workspace/state.txt)" = second\ntest "$(cat /tests/shared-secret)" = private-answer\nprintf 1 > /logs/verifier/reward.txt\n',
     });
     value.components.benchmark = new HarborBenchmark(parseHarborConfig({ source: { kind: "local", path: join(root, "dataset") },
-      defaults: { agentUser: "dev", verifierUser: "root", scoreAfterSolveFailure: true } }));
+      defaults: { agentUser: "dev", verifierUser: "root" } }));
     value.components.environment = new DockerEnvironment({ modelEndpoint: endpoint });
     value.components.solver.solve = async (input, session, context) => {
       const code = `const f=require('node:fs'); if(process.getuid()===0)throw Error('root solver'); if(f.existsSync('/tests/shared-secret')||f.existsSync('/logs/verifier/reward.txt'))throw Error('private material leaked');

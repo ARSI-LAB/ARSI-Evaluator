@@ -107,15 +107,18 @@ run:
   timeoutSeconds: 7200        # Whole-task cap in seconds
   solveTimeoutSeconds: 3600   # Optional solve-phase cap
   verifyTimeoutSeconds: 600   # Optional verification-phase cap
+  # scoreAfterSolveTimeout: false   # Count a solve timeout as a valid zero
 ```
 
 `run.timeoutSeconds` is the whole-attempt cap, defaulting to 7200 seconds (two hours). Explicit profile/YAML values take precedence; existing explicit example values are not rewritten.
 
 Solving/scoring use explicit `run.solveTimeoutSeconds`/`run.verifyTimeoutSeconds`, then task `agent.timeout_sec`/`verifier.timeout_sec`. If both corresponding values are absent, only the whole-task cap applies. New fields are optional positive integers; omission retains task declarations. `0`, `null`, and negatives do not disable limits.
 
-Whole-task/phase clocks run simultaneously; the first expiration stops execution. Phase timing begins on phase entry; a longer phase does not extend the whole-task cap. Early preparation and cleanup have separate budgets below.
+A phase timer starts when its phase begins and stops that phase when it expires. The whole-task timer remains active throughout the attempt and ends the evaluation when it expires. Early preparation and cleanup use separate budgets.
 
-Old `benchmark.config.defaults.verifyTimeoutSeconds` is removed; use `run.verifyTimeoutSeconds`, without automatic migration/compatibility. Update Ray coordinator, workers, and Jobs packages together to preserve phase settings.
+`run.scoreAfterSolveTimeout` controls how the run handles solve timeouts in quality evaluations. Omit it or set it to `true` to grade surviving work within the remaining task budget. Set it to `false` to skip the verifier and count the task as a valid zero. If solving exhausts the whole-task deadline, the timed-out step has no time left to start its verifier.
+
+Use `run.verifyTimeoutSeconds` in place of the removed `benchmark.config.defaults.verifyTimeoutSeconds`. Update Ray coordinator, workers, and Jobs packages together when using new run fields.
 
 Configure download sources, proxies and image acquisition with a separate [network YAML](network.md), selected by `--network`.
 

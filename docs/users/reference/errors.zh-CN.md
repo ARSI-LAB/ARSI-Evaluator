@@ -28,7 +28,7 @@
 
 当前 attempt 不再保存 `status`、`timeoutKind`；CLI 和报告的状态文字从上述字段派生。旧结果只在本地读取入口转换，原文件不回写；新提交和远端上传拒绝旧字段。
 
-- **Agent 解题超时**：有效评测，计入分母、记 0 分，不重试；收尾完成后补位。未运行 verifier 时 `verdict` 仍为 null，0 分来自超时政策。
+- **Agent 解题超时**：整题还有时间时默认验证已有产物。总时限已耗尽或显式关闭超时后验证时，结果为 `agent_timeout`，计有效 0 分，`verdict` 为 null。[超时与并发](../concurrency.zh-CN.md)
 - **系统故障**：没有可靠的合法评分时记为无效，排除评分分母。可恢复网络故障只在失败的请求、下载或拉取操作内有限重试；耗尽后记录 `NETWORK_FAILURE`，不会自动创建新 Attempt。明确的 Retry-After 可延长对应操作的退避。
 - **环境准备失败**：镜像拉取及非构建操作的运行时安装只在可安全重试的网络操作内恢复；镜像构建失败不触发任务补测，APT 只在当前指令内重试下载。平台、权限、编译、普通阶段超时等不补测。`run.onError` 决定普通任务故障是否继续；批次准备屏障未通过时不会执行 Agent。
 - **认证、额度、存储或协议全局故障**：停止本次运行，即使 `run.onError: continue` 也不能继续盲目请求或派发。
@@ -66,7 +66,7 @@ CLI 退出码继续使用 `0`（运行完成，允许答错及有效 Agent 超�
 | `ENV_CPU_BUDGET_FAILED` | 无法应用任务 CPU 预算 | 无效，不重试 |
 | `ENV_PREPARED_IMAGE_LOST` | 准备回执对应镜像丢失或改变 | 停止派发 |
 | `ENV_PREPARATION_FAILED` / `ENV_PREPARATION_TIMEOUT` | 其他准备失败 / 超时 | 无效，不重试 |
-| `SOLVER_AGENT_TIMEOUT` | Agent 解题预算耗尽 | 有效 0 分，不重试 |
+| `SOLVER_AGENT_TIMEOUT` | Agent 解题预算耗尽 | 整题还有时间时默认验证已有产物 |
 | `SOLVER_PROCESS_CRASHED` | Agent 进程异常退出 | 无效，不重试；不能只凭 137 断定 OOM |
 | `SOLVER_PROTOCOL_INVALID` | Agent 事件流、状态或输出协议非法 | 无效，不重试 |
 | `SOLVER_RESULT_INCOMPLETE` | Agent 未完整结束当前轮次 | 无效，只有明确网络故障才补测 |

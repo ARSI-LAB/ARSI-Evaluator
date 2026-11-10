@@ -3,6 +3,7 @@ import { readCollectOutput } from "../artifacts/collect-output.js";
 import type { Benchmark } from "../contracts/benchmark.js";
 import type { AttemptPaths, AttemptRecord, Phase } from "../contracts/result.js";
 import type { PreparedTask } from "../contracts/task.js";
+import { classifyError } from "../errors/classify.js";
 import { redactDiagnostic, redactEvidence } from "../errors/diagnostics.js";
 import { EvaluatorError } from "../errors/evaluator-error.js";
 import { isErrorCode } from "../errors/registry.js";
@@ -37,6 +38,7 @@ type StepContext = {
   failure: RecordAttemptFailure;
   prepareEnvironment: <T>(purpose: "solve" | "verify", task: PreparedTask, work: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   taskSignal: AbortSignal;
+  scoreAfterSolveTimeout: boolean;
   dependenciesReady: boolean;
   secrets: readonly string[] | undefined;
   onProgress: ProgressListener | undefined;
@@ -92,7 +94,7 @@ async function finishSolve(step: AttemptStep, context: StepContext, signal: Abor
 }
 
 export async function runAttemptStep(
-  step: AttemptStep, context: StepContext, multiTask: PreparedTask | undefined,
+  step: AttemptStep, context: StepContext, multiStep: boolean,
 ): Promise<void> {
   const { task } = step;
   const { benchmark, resources, record, stage, failure, prepareEnvironment, paths, taskSignal, dependenciesReady, secrets, onProgress } = context;
@@ -116,9 +118,11 @@ export async function runAttemptStep(
       return solved;
     });
   } catch (error) {
-    if (!task.scoreAfterSolveFailure || taskSignal.aborted) throw error;
-    failure("solve", error, undefined, "", error instanceof PhaseTimeoutError ? "agent" : undefined);
-    // The native grader can still score the workspace after a solve timeout.
+    if (taskSignal.aborted || !context.scoreAfterSolveTimeout || record.evaluationKind !== "quality") throw error;
+    const cancellation = error instanceof PhaseTimeoutError ? "agent" : undefined;
+    if (cancellation === undefined && classifyError(error, { phase: "solve" }).code !== "SOLVER_AGENT_TIMEOUT") throw error;
+    failure("solve", error, undefined, "", cancellation);
+    // Wait until the solver stops writing before grading its workspace.
     record.solve = { finalText: "", usage: { inputTokens: null, outputTokens: null, totalTokens: null }, observations: { incomplete: true } };
     await stage("transfer", () => resources.waitForPending());
   }
@@ -131,7 +135,7 @@ export async function runAttemptStep(
   if (snapshot) await stage("collect", signal => exportStep(step, context, snapshot, "collect", signal));
   const transfer = task.transfer;
   const transferred = transfer ? await stage("transfer", signal => exportStep(step, context, transfer, "transfer", signal)) : null;
-  if (!multiTask && !shared && resources.canQuiesceSolve) await stage("cleanup", signal => resources.releaseSolveEnvironment(signal));
+  if (!multiStep && !shared && resources.canQuiesceSolve) await stage("cleanup", signal => resources.releaseSolveEnvironment(signal));
   const verifyEnv = task.verifyEnv;
   if (verifyEnv) verifier = await prepareEnvironment("verify", task, signal =>
     stage("environment", (active, activity) => resources.openVerification(verifyEnv, active, activity), signal));
@@ -143,26 +147,20 @@ export async function runAttemptStep(
   const privateVerifier = benchmark.verificationRuntime ? await stage("environment",
     (signal, activity) => resources.openPrivateVerifier(task, signal, activity)) : null;
 
-  try {
-    record.verdict = await stage("verify", async signal => {
-      const verdict = await (privateVerifier ? privateVerifier.verify(record.solve!, verifier, signal)
-        : benchmark.verify(task, record.solve!, verifier, signal)).catch(error => {
-        if (error instanceof VerificationError && resources.acceptingResources) {
-          assertJsonValue(error.evidence, "verification failure evidence");
-          record.verdict = { passed: null, details: redactEvidence(error.evidence, secrets) };
-        }
-        throw error;
-      });
-      try { assertVerifyResult(verdict); }
-      catch (cause) { throw new EvaluatorError("VERIFY_RESULT_INVALID", "Benchmark returned a malformed verdict", {}, { cause }); }
-      assertEvaluationVerdict(record.evaluationKind, verdict);
-      return verdict;
+  record.verdict = await stage("verify", async signal => {
+    const verdict = await (privateVerifier ? privateVerifier.verify(record.solve!, verifier, signal)
+      : benchmark.verify(task, record.solve!, verifier, signal)).catch(error => {
+      if (error instanceof VerificationError && resources.acceptingResources) {
+        assertJsonValue(error.evidence, "verification failure evidence");
+        record.verdict = { passed: null, details: redactEvidence(error.evidence, secrets) };
+      }
+      throw error;
     });
-  } catch (error) {
-    if (!multiTask?.scoreAfterSolveFailure || taskSignal.aborted) throw error;
-    failure("verify", error);
-    record.verdict = null;
-  }
+    try { assertVerifyResult(verdict); }
+    catch (cause) { throw new EvaluatorError("VERIFY_RESULT_INVALID", "Benchmark returned a malformed verdict", {}, { cause }); }
+    assertEvaluationVerdict(record.evaluationKind, verdict);
+    return verdict;
+  });
 }
 
 export async function recoverStepEvidence(step: AttemptStep, context: StepContext, cleanupSignal: AbortSignal): Promise<void> {

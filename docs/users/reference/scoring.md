@@ -130,7 +130,7 @@ Partial HealthBench failure retains completed grades and `failedRubric` index/cr
 
 quality-score mean/rawMean use valid measured scores; measured reports coverage. HealthBench clamps overall mean to[0,1] while retaining raw mean. SimpleQA separately aggregates classes, unattempted rate, attempted accuracy, and F1.
 
-success-rate excludes verified passed:null samples from correctness denominators. With no binary judgments it returns applicable:false/empty denominator. Other quality tasks conservatively use selected minus explicitly invalid; pending keeps reports incomplete. Agent timeouts are valid zeros; judge/infrastructure timeouts are not wrong answers.
+success-rate excludes verified `passed: null` samples from correctness denominators. With no binary judgments it returns `applicable: false` and an empty denominator. Other quality tasks use the number selected minus the number explicitly invalid. Pending tasks keep reports incomplete. Successful grading after an Agent solve timeout uses the actual verdict. Records with `agent_timeout` status count as valid zeros. Judge and infrastructure timeouts invalidate the attempt.
 
 Performance has no quality denominator. Completeness, request error rate, and comparability are separate. Engine wall time/warmup/cleanup are outside request timing; see [AgentX](../benchmarks/agentx.md).
 

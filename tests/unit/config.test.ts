@@ -50,6 +50,21 @@ test("whole-task and the two phase ceilings are independently configured and sav
   expect(loaded.persisted).toHaveProperty("run.verifyTimeoutSeconds", 30);
 });
 
+test.each([undefined, true, false])("run.scoreAfterSolveTimeout %j survives config save and reload", async scoreAfterSolveTimeout => {
+  const run = scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout };
+  const loaded = await load(await file({ services, benchmark: "gsm8k", run }));
+  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  for (const config of [loaded, saved]) {
+    expect(config.experiment.run.scoreAfterSolveTimeout).toBe(scoreAfterSolveTimeout);
+    expect(Object.hasOwn(config.experiment.run, "scoreAfterSolveTimeout")).toBe(scoreAfterSolveTimeout !== undefined);
+  }
+});
+
+test.each([0, "false", null])("run.scoreAfterSolveTimeout rejects non-boolean value %j", async value => {
+  await expect(load(await file({ services, benchmark: "gsm8k", run: { scoreAfterSolveTimeout: value } })))
+    .rejects.toThrow("run.scoreAfterSolveTimeout must be a boolean");
+});
+
 test("preparation base and optional round limit survive saving without injecting an omitted round limit", async () => {
   const preparation = { mode: "pipeline", concurrency: 32, environmentTimeoutSeconds: 600, roundTimeoutSeconds: 7200 };
   const loaded = await load(await file({ services, benchmark: "gsm8k", run: { preparation } }));

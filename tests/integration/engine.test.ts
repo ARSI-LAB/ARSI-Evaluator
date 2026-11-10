@@ -313,7 +313,7 @@ test("deadline and user cancellation remain distinct and cleanup gets a fresh si
   expect((await pending).executionStatus).toBe("cancelled"); expect(second.events).toContain("solve.cleanup");
 });
 
-test("task-specific solve timeout records SOLVER_AGENT_TIMEOUT and only collects partial state", async () => {
+test("task-specific solve timeout grades transferred state after the solver stops", async () => {
   const { components, events } = await taskFixture({ wait: true, transfer: true });
   const prepare = components.benchmark.prepare.bind(components.benchmark);
   components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { solve: 0.03 } });
@@ -326,26 +326,24 @@ test("task-specific solve timeout records SOLVER_AGENT_TIMEOUT and only collects
     }
   };
   const result = await runTask(onDemand(job), components, source, new AbortController().signal, { timeoutSeconds: 2, cleanupTimeoutMs: 1000 });
-  expect(result.executionStatus).toBe("agent_timeout");
+  expect(result).toMatchObject({ executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1 } });
   expect(result.errors[0]).toMatchObject({ phase: "solve", code: "SOLVER_AGENT_TIMEOUT", details: { originalName: "PhaseTimeoutError" } });
-  expect(result.verdict).toBeNull();
-  expect(events.indexOf("solve.settled")).toBeLessThan(events.indexOf("export"));
-  expect(events).toContain("export");
-  expect(events).not.toContain("verify.environment");
-  expect(events).not.toContain("restore");
-  expect(events).not.toContain("verify");
+  expect(events.filter(event => ["solve.settled", "export", "verify.environment", "restore", "verify"].includes(event)))
+    .toEqual(["solve.settled", "export", "verify.environment", "restore", "verify"]);
 });
 
-test("task-specific verifier deadline records an invalid infrastructure timeout and cleans the verification session", async () => {
-  const { components, events } = await taskFixture({ transfer: true });
+test.each([false, true])("verifier deadline is invalid and cleans the session after solve timeout=%s", async solveTimedOut => {
+  const { components, events } = await taskFixture({ transfer: true, wait: solveTimedOut });
   const prepare = components.benchmark.prepare.bind(components.benchmark);
-  components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { verify: 0.03 } });
+  components.benchmark.prepare = async (...args) => ({
+    ...await prepare(...args), phaseTimeoutSeconds: { verify: 0.03, ...(solveTimedOut ? { solve: 0.03 } : {}) },
+  });
   components.benchmark.verify = async (_task, _result, _session, signal) => await new Promise((_resolve, reject) => {
     if (signal.aborted) reject(signal.reason);
     else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
   const result = await runTask(onDemand(job), components, source, new AbortController().signal, { timeoutSeconds: 2, cleanupTimeoutMs: 1000 });
-  expect(result.executionStatus).toBe("failed");
+  expect(result).toMatchObject({ executionStatus: "failed", scoreStatus: "invalid", verdict: null });
   expect(attemptTimeoutKind(result)).toBe("infrastructure");
   expect(result.errors).toContainEqual(expect.objectContaining({ phase: "verify", code: "VERIFY_TIMEOUT" }));
   expect(events).toContain("verify.cleanup");

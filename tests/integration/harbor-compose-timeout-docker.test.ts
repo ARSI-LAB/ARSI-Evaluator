@@ -19,7 +19,7 @@ const enabled = process.env.EVALUATOR_COMPOSE_DOCKER_TESTS === "1";
 const image = process.env.EVALUATOR_COMPOSE_TEST_IMAGE ?? "node:24.22.1-bookworm-slim";
 const dockerExecutable = process.env.EVALUATOR_TEST_DOCKER_EXECUTABLE ?? "docker";
 
-test.skipIf(!enabled).each(["timeout", "cancel"] as const)("multi-container %s collects without restarting task startup or sidecars", async mode => {
+test.skipIf(!enabled).each(["timeout", "cancel"] as const)("multi-container %s preserves files without restarting task startup or sidecars", async mode => {
   const root = await mkdtemp(join(process.env.EVALUATOR_COMPOSE_TEST_TMP ?? tmpdir(), "compose-timeout-"));
   const value = harness(root);
   const runId = randomUUID();
@@ -59,15 +59,26 @@ test.skipIf(!enabled).each(["timeout", "cancel"] as const)("multi-container %s c
     await readProcess(handle, context.signal);
     throw new Error("unreachable");
   };
-  value.components.benchmark.verify = async () => { throw new Error("Verification must not run after timeout or cancellation"); };
+  let verified = false;
+  value.components.benchmark.verify = async (_task, _result, session, signal) => {
+    verified = true;
+    if (!session) throw new Error("Missing verification environment");
+    const submission = await readProcess(await session.start({ executable: "node",
+      args: ["-e", "process.stdout.write(require('node:fs').readFileSync('/app/deliverable'))"],
+      cwd: "/app", env: {}, input: null }, signal), signal);
+    expect(submission).toMatchObject({ code: 0, stdout: "partial answer" });
+    return { score: 1, passed: true, details: {} };
+  };
   try {
     await value.components.store.create(value.config.experiment.output.directory, { ...storeRun, runId, source, taskIds: ["a"] }, {});
     const record = await runTask(onDemand({ runId, taskId: "a", attemptId: "first", ref: { id: "a", recordKey: "a" }, configFingerprint: storeRun.configFingerprint }),
       value.components, source, controller.signal, { timeoutSeconds: 180, solveTimeoutSeconds: 5 });
     expect(solveStarted, JSON.stringify(record.errors)).toBe(true);
     expect(record.collection.artifacts, JSON.stringify(record.errors)).toBe("complete");
-    expect(record).toMatchObject({ executionStatus: mode === "timeout" ? "agent_timeout" : "cancelled",
-      scoreStatus: mode === "timeout" ? "valid" : "invalid", verdict: null, collection: { artifacts: "complete" }, cleanupStatus: "cleaned" });
+    expect(verified).toBe(mode === "timeout");
+    expect(record).toMatchObject({ executionStatus: mode === "timeout" ? "completed" : "cancelled",
+      scoreStatus: mode === "timeout" ? "valid" : "invalid", verdict: mode === "timeout" ? { score: 1 } : null,
+      collection: { artifacts: "complete" }, cleanupStatus: "cleaned" });
     expect(record.errors.map(error => error.code)).toEqual(mode === "timeout"
       ? ["SOLVER_AGENT_TIMEOUT"] : ["RUN_CANCELLED", "ARTIFACT_COLLECTION_INCOMPLETE"]);
     const attempt = join(value.config.experiment.output.directory, runId, "tasks", safeTaskKey("a"), "attempts", "first");
@@ -78,7 +89,7 @@ test.skipIf(!enabled).each(["timeout", "cancel"] as const)("multi-container %s c
     expect(await readFile(join(extracted, "payload/0/deliverable"), "utf8")).toBe("partial answer");
     expect(await readFile(join(extracted, "payload/0/startups"), "utf8")).toBe("first\n");
     expect(await readFile(join(extracted, "payload/1"), "utf8")).toBe(await readFile(join(extracted, "payload/0/expected-boot"), "utf8"));
-    if (mode === "timeout") expect(computeSuccessRate(await value.components.store.snapshot())).toMatchObject({ denominator: 1, invalid: 0, passed: 0, rate: 0 });
+    if (mode === "timeout") expect(computeSuccessRate(await value.components.store.snapshot())).toMatchObject({ denominator: 1, invalid: 0, passed: 1, rate: 1 });
     const signal = AbortSignal.timeout(15_000);
     for (const resource of ["ps", "network", "volume"]) {
       const args = resource === "ps" ? ["ps", "--all", "--quiet"] : [resource, "ls", "--quiet"];

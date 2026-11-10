@@ -253,16 +253,16 @@ test("a missing final with explicit truncation restarts the task", async () => {
   expect(count).toBe(2);
 });
 
-test("a process CLI Agent deadline finalizes a valid zero and preserves partial artifacts", async () => {
+test("a process CLI Agent deadline keeps the verifier score and preserves partial artifacts", async () => {
   const value = await jiuwenswarmFixture(count => count === 1 ? "process CLI execution timed out" : undefined);
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records).toHaveLength(1);
-  expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", scoreStatus: "valid" });
+  expect(result.records[0]).toMatchObject({ executionStatus: "completed", scoreStatus: "valid" });
   const attempts = await value.components.store.listAttempts();
   expect(attempts.map(attempt => attempt.ordinal)).toEqual([1]);
-  expect(attempts[0]?.record).toMatchObject({ executionStatus: "agent_timeout", solve: null, verdict: null,
+  expect(attempts[0]?.record).toMatchObject({ executionStatus: "completed", solve: { observations: { incomplete: true } }, verdict: { score: 1 },
     errors: [{ phase: "solve", code: "SOLVER_AGENT_TIMEOUT", message: expect.stringContaining("process CLI execution timed out") }],
     warnings: [{ phase: "collect", code: "ARTIFACT_COLLECTION_INCOMPLETE" }] });
   for (const attempt of attempts) {

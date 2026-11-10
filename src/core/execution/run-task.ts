@@ -24,7 +24,7 @@ import { VerificationError } from "../errors/verification-error.js";
 import { PhaseTimeoutError } from "../policies/phase-timeout.js";
 import type { ProgressListener } from "../progress/progress.js";
 import { LiveOperation } from "../progress/live-progress.js";
-import { finalizeAttemptOutcome, timeoutCancellation, applyAttemptFailure, isAgentTimeout } from "../results/evaluation-outcome.js";
+import { finalizeAttemptOutcome, timeoutCancellation, applyAttemptFailure } from "../results/evaluation-outcome.js";
 import { classifyError, normalizeFailure } from "../errors/classify.js";
 import { EvaluatorError } from "../errors/evaluator-error.js";
 import { readCollectOutput } from "../artifacts/collect-output.js";
@@ -33,6 +33,7 @@ import { createAttemptStep, expectedStepArtifact, recoverStepEvidence, runAttemp
 
 export type RunTaskOptions = PhaseTimeoutOverrides & {
   timeoutSeconds?: number;
+  scoreAfterSolveTimeout?: boolean;
   cleanupTimeoutMs?: number;
   preparationConcurrency?: number;
   environmentTimeoutSeconds?: number;
@@ -188,7 +189,8 @@ export async function runTask(
       .finally(() => { preparationElapsedMs[purpose] += performance.now() - started; });
   };
   const stepContext = { benchmark: components.benchmark, resources, record, paths, stage, failure, prepareEnvironment,
-    taskSignal, dependenciesReady, secrets: options.sensitiveValues, onProgress: options.onProgress };
+    taskSignal, scoreAfterSolveTimeout: options.scoreAfterSolveTimeout !== false, dependenciesReady,
+    secrets: options.sensitiveValues, onProgress: options.onProgress };
   try {
     if (preparation.state === "failed") {
       const error = new Error(preparation.failure.message);
@@ -270,7 +272,7 @@ export async function runTask(
           });
         }
       }
-      try { await runAttemptStep(step, stepContext, multiTask); }
+      try { await runAttemptStep(step, stepContext, multiTask !== undefined); }
       finally { solveStarted ||= step.solveStarted; }
       if (multiTask && activeStep) {
         activeStep.solve = record.solve;
@@ -317,8 +319,6 @@ export async function runTask(
     }
     if (record.steps.length) {
       record.solve = sumStepSolves(record.steps);
-      if (multiTask.scoreAfterSolveFailure && !signal.aborted)
-        record.verdict = components.benchmark.evaluateSteps!(multiTask, record.steps).verdict;
       await combineStepTrajectories(paths.root, record).catch(error => failure("collect", error, "ARTIFACT_COLLECTION_INCOMPLETE"));
     } else delete record.steps;
   }
@@ -344,7 +344,8 @@ export async function runTask(
     record.trajectory = TRAJECTORY_EVIDENCE_PATH;
   }
   if (files.missing.length || (solveStarted && record.collection.trajectory !== "complete")) {
-    if (isAgentTimeout(record) && files.missing.length === 0 && record.collection.trajectory === "partial")
+    if (record.evaluationKind === "quality" && files.missing.length === 0 && record.collection.trajectory === "partial" &&
+      record.errors.some(error => error.code === "SOLVER_AGENT_TIMEOUT"))
       (record.warnings ??= []).push({ phase: "collect", code: "ARTIFACT_COLLECTION_INCOMPLETE", message: "Agent solve deadline ended the trajectory before completion; all required files were collected" });
     else if (record.errors.some(error => error.code === "NETWORK_FAILURE") && files.missing.every(file => [TRAJECTORY_EVIDENCE_PATH, "agent/session.jsonl"].includes(file.path)))
       (record.warnings ??= []).push({ phase: "collect", code: "ARTIFACT_COLLECTION_INCOMPLETE", message: "Network failure ended the solver trajectory before completion" });
@@ -359,7 +360,7 @@ export async function runTask(
   record.finishedAt = new Date().toISOString();
   record.durationMs = performance.now() - started;
   await collectAttemptAccounting(paths.root, record);
-  finalizeAttemptOutcome(record, multiTask?.scoreAfterSolveFailure ?? lastTask?.scoreAfterSolveFailure);
+  finalizeAttemptOutcome(record);
   progress("store", "Saving attempt result");
   await components.store.commit(record, files).catch(cause => {
     throw new EvaluatorError("STORE_WRITE_FAILED", "Cannot persist attempt result", {}, { cause });
