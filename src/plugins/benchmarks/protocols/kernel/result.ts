@@ -3,7 +3,7 @@ import { expectNonEmptyString, expectRecord } from "../../../../config/schema.js
 import { VerificationError } from "../../../../core/errors/verification-error.js";
 import type { JsonValue } from "../../../../core/contracts/task.js";
 import type { VerifyResult } from "../../../../core/contracts/result.js";
-import { parseKernelAssessment, type KernelContract } from "./strict.js";
+import { parseKernelAssessment, type KernelContract, type KernelEffectiveProtocol } from "./strict.js";
 import { isAbsolute, posix } from "node:path";
 
 function finiteJson(value: unknown, label: string): JsonValue {
@@ -31,12 +31,16 @@ function metadataPaths(metadata: Record<string, unknown>): void {
 }
 
 /** Validate the framework boundary; the profiler determines status, field availability and metric values. */
-export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue } {
+export function parseKernelProfiling(value: unknown, candidateFiles?: { path: string; sha256: string }[]): { [key: string]: JsonValue } {
   const p = expectRecord(value, "kernel profiling");
   if (p.schemaVersion !== 1 || (p.status !== "completed" && p.status !== "failed") || typeof p.error !== "string")
     throw new TypeError("Invalid kernel profiling identity");
   if (!Array.isArray(p.kernels) || !Array.isArray(p.artifacts)) throw new TypeError("Missing kernel profiling evidence");
-  metadataPaths(expectRecord(p.metadata, "profiling.metadata"));
+  const metadata = expectRecord(p.metadata, "profiling.metadata");
+  metadataPaths(metadata);
+  if (p.status === "completed" && candidateFiles !== undefined &&
+      JSON.stringify(expectRecord(metadata.sources, "profiling sources").candidateFiles) !== JSON.stringify(candidateFiles))
+    throw new VerificationError("Diagnostic candidate tree source mismatch", {});
   artifactPaths(p.artifacts);
   for (const value of p.kernels) {
     const kernel = expectRecord(value, "profiled kernel");
@@ -52,7 +56,10 @@ export function parseKernelProfiling(value: unknown): { [key: string]: JsonValue
 }
 
 /** Accept only complete, finite positive timings; infrastructure errors do not become candidate zero scores. */
-export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false, contract?: KernelContract, seeds: number[] = []): VerifyResult {
+export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string, profilingRequested = false,
+  strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> },
+  candidateFiles?: { path: string; sha256: string }[]): VerifyResult {
+  const contract = strict?.contract;
   const r = expectRecord(value, "kernel result");
   if (r.schemaVersion !== 1 || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
@@ -60,8 +67,11 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
     referenceMs: null, candidateMs: null, speedup: null,
     ...(profilingRequested ? { profilingRequested: true } : {}) };
-  if (contract !== undefined) {
-    const assessment = parseKernelAssessment(r.assessment, contract, seeds);
+  if (strict) {
+    const assessment = parseKernelAssessment(r.assessment, strict.contract, strict.protocol.seeds);
+    for (const name of ["rtol", "atol", "warmup", "repeat"] as const)
+      if (assessment.effectiveProtocol[name] !== strict.protocol[name])
+        throw new VerificationError(`Effective protocol mismatch: ${name}`, {});
     details.assessment = finiteJson(assessment, "assessment");
     if (r.status === "passed" && (assessment.errorOwnership !== null || assessment.checks.some(c => c.status !== "passed")))
       throw new VerificationError("Strict checks did not pass", details);
@@ -72,7 +82,7 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
       throw new VerificationError("Candidate failure lacks strict evidence", details);
   }
   if (r.profiling !== undefined) {
-    try { details.profiling = parseKernelProfiling(r.profiling); }
+    try { details.profiling = parseKernelProfiling(r.profiling, candidateFiles); }
     catch {
       // Do not copy unvalidated objects or exception messages into reports as unsafe evidence paths.
       details.profiling = { schemaVersion: 1, status: "failed", error: "Profiling result could not be adapted",
@@ -94,8 +104,10 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
       throw new VerificationError(`Invalid kernel measurement: ${name}`, details);
     details[name] = measured;
   }
-  if (r.timingEvidence !== undefined) {
-    const timing = parseKernelTimingEvidence(r.timingEvidence);
+  const timing = r.timingEvidence === undefined ? undefined : parseKernelTimingEvidence(r.timingEvidence, contract);
+  if (contract?.inputUnmodified === false && timing?.reference.stepLayout !== "prepare-then-run")
+    throw new VerificationError("Mutable-input contracts require prepare-then-run timing evidence", details);
+  if (timing !== undefined) {
     if (Math.abs(timing.reference.meanMs - Number(r.referenceMs)) > 1e-12 || Math.abs(timing.candidate.meanMs - Number(r.candidateMs)) > 1e-12)
       throw new VerificationError("Timing evidence mean mismatch", details);
     details.timingEvidence = finiteJson(timing, "timing evidence");
@@ -108,9 +120,9 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
 /** Validate independent capture receipts at the Benchmark boundary before publishing a diagnostic verdict. */
 export function kernelProfileVerdict(value: unknown, candidateSha256: string, referenceKind: string, expected: {
   caseId: string; seed: number; warmup: number; collection: "Default" | "PipeTimeline,Default";
-  problemSha256: string; contractSha256?: string;
+  problemSha256: string; contractSha256?: string; candidateFiles?: { path: string; sha256: string }[];
 }): VerifyResult {
-  const profiling = parseKernelProfiling(expectRecord(value, "kernel result").profiling);
+  const profiling = parseKernelProfiling(expectRecord(value, "kernel result").profiling, expected.candidateFiles);
   const metadata = expectRecord(profiling.metadata, "profile metadata");
   const protocol = { caseId: expected.caseId, seeds: [expected.seed], warmup: expected.warmup,
     collection: expected.collection, scope: "original-first-triton-kernel-or-file-stem",

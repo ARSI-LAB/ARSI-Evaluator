@@ -28,7 +28,7 @@ def _identity(value, large=False):
     raise ValueError('Missing or invalid trace identity')
 
 
-def associate_steps(records, trace, total):
+def associate_steps(records, trace, total, prepared=False):
     events = json.loads(trace, parse_float=Decimal)
     if isinstance(events, dict): events = events.get('traceEvents')
     if not isinstance(events, list) or any(not isinstance(e, dict) for e in events):
@@ -37,7 +37,8 @@ def associate_steps(records, trace, total):
     for e in steps:
         _identity(e.get('pid')); _identity(e.get('tid'))
     ids = [int(e['name'].split('#')[1]) for e in steps]
-    if len(ids) != total or set(ids) != set(range(total)):
+    step_count = 2 * total if prepared else total
+    if len(ids) != step_count or set(ids) != set(range(step_count)):
         raise ValueError('Incomplete or duplicate framework steps')
 
     def contains(container, event, pid=True):
@@ -97,15 +98,20 @@ def associate_steps(records, trace, total):
                               _time(f['ts']) == _time(e['ts']) for f in flow_targets)))}
     if not required_kernels.issubset(kernels_seen):
         raise ValueError('Trace kernel missing from CSV')
-    if {r['step'] for r in rows} != set(range(total)) or len(devices) != 1 or len(trace_devices) != 1:
-        raise ValueError('Incomplete iterations or mixed devices')
+    if len(devices) != 1 or len(trace_devices) != 1:
+        raise ValueError('Mixed or missing devices')
     chronological = sorted(rows, key=lambda r: r['startUs'])
     if any(a['step'] > b['step'] for a, b in zip(chronological, chronological[1:])):
         raise ValueError('Kernel time order disagrees with flow steps')
+    if prepared:
+        # All raw rows have been attributed. Preparation steps can be memcpy-only.
+        rows = [dict(r, step=r['step'] // 2) for r in rows if r['step'] % 2 == 1]
+    if {r['step'] for r in rows} != set(range(total)):
+        raise ValueError('Incomplete iterations')
     return rows
 
 
-def collect_flow_timing(directory, warmup, repeat):
+def collect_flow_timing(directory, warmup, repeat, prepared=False):
     directory = Path(directory)
     csv_file = _one(list(directory.rglob('kernel_details.csv')), 'kernel_details.csv')
     trace_file = _one(list(directory.rglob('trace_view.json')), 'trace_view.json')
@@ -119,9 +125,10 @@ def collect_flow_timing(directory, warmup, repeat):
     if any(None in r or any(r.get(k) is None for k in headers) for r in records):
         raise ValueError('Incomplete CSV record')
     if warmup < 1 or repeat < 1: raise ValueError('Invalid timing protocol')
-    rows = associate_steps(records, trace, warmup + repeat)
+    rows = associate_steps(records, trace, warmup + repeat, prepared)
     mean = math.fsum(r['durationUs'] for r in rows if r['step'] >= warmup) / repeat / 1000
     if not math.isfinite(mean) or mean <= 0: raise ValueError('Invalid mean duration')
     return dict(csvPath=csv_file.relative_to(directory.parent).as_posix(), csvSha256=hashlib.sha256(data).hexdigest(),
                 tracePath=trace_file.relative_to(directory.parent).as_posix(), traceSha256=hashlib.sha256(trace).hexdigest(),
-                warmup=warmup, repeat=repeat, meanMs=mean, rows=rows)
+                warmup=warmup, repeat=repeat, meanMs=mean, rows=rows,
+                **({'stepLayout': 'prepare-then-run'} if prepared else {}))

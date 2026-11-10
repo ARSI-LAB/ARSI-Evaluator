@@ -68,6 +68,27 @@ class ReplayFixture:
 
 
 class ReplayTests(unittest.TestCase):
+    def test_mutable_inputs_are_recreated_before_each_launch_outside_mstx(self):
+        fixture = ReplayFixture()
+        fixture.request['inputUnmodified'] = False
+        fixture.torch.Tensor = type('Tensor', (), {})
+        fixture.problem.get_inputs = lambda: [[7]]
+        def mutate(value):
+            fixture.events.append(('candidate', value[0]))
+            value[0] += 1
+        fixture.candidate.kernel_function = mutate
+        clone_tree = module.clone_tree
+        def restore(values, torch):
+            fixture.events.append('restore')
+            return clone_tree(values, torch)
+        with patch.object(module, 'clone_tree', side_effect=restore):
+            result = fixture.run()
+        self.assertEqual([event for event in fixture.events if isinstance(event, tuple) and event[0] == 'candidate'],
+                         [('candidate', 7)] * 4)
+        self.assertEqual(fixture.events[-6:], ['restore', 'sync', ('start', 'rsi_operator_profile', None),
+                                              ('candidate', 7), 'sync', ('end', 0)])
+        self.assertIs(result['inputUnmodified'], False)
+
     def test_frozen_seed_warmup_and_reference_rng_order_reach_candidate(self):
         fixture = ReplayFixture()
         result = fixture.run()

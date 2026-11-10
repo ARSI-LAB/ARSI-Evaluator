@@ -77,11 +77,22 @@ class TimingEvidenceTest(unittest.TestCase):
 
 class TimerCaptureTest(unittest.TestCase):
     def test_timer_collects_framework_steps_and_excludes_only_warmup(self):
+        self.run_capture(prepared=False)
+
+    def test_prepared_capture_separates_restore_from_kernel_even_if_they_have_the_same_name(self):
+        self.run_capture(prepared=True)
+
+    def run_capture(self, prepared):
         import sys, types
         from unittest.mock import patch
-        calls, steps, synchronizations = [], [], []
+        calls, steps, synchronizations, preparations = [], [], [], []
+        pending_copies = []
+        def synchronize():
+            synchronizations.append(True)
+            for value in pending_copies: value.append(7)
+            pending_copies.clear()
         torch = types.SimpleNamespace(npu=types.SimpleNamespace(is_available=lambda: True,
-            set_device=lambda _: None, synchronize=lambda: synchronizations.append(True)),
+            set_device=lambda _: None, synchronize=synchronize),
             cuda=types.SimpleNamespace(is_available=lambda: False))
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp) / "profile-reference"
@@ -95,14 +106,15 @@ class TimerCaptureTest(unittest.TestCase):
                     self.kwargs['on_trace_ready'](self)
             def trace_handler(dir_name):
                 def write_trace(profile):
-                    self.assertEqual(profile.kwargs['schedule'], dict(wait=0, warmup=0, active=3, repeat=1))
+                    self.assertEqual(profile.kwargs['schedule'], dict(wait=0, warmup=0, active=4 if prepared else 3, repeat=1))
                     # torch_npu requires CPU activity to emit framework Step Id associations.
                     self.assertIn(1, profile.kwargs['activities'])
                     self.assertIn(0, profile.kwargs['activities'])
                     import json
-                    fixture = json.loads((path.parents[3] / 'tests/fixtures/kernel-timing-flow.json').read_text())
+                    name = 'kernel-timing-prepared.json' if prepared else 'kernel-timing-flow.json'
+                    fixture = json.loads((path.parents[3] / 'tests/fixtures' / name).read_text())
                     (directory / 'kernel_details.csv').write_text(fixture['csv'])
-                    (directory / 'trace_view.json').write_text(fixture['trace'])
+                    (directory / 'trace_view.json').write_text(json.dumps(fixture['trace']) if prepared else fixture['trace'])
                 return write_trace
             profiler = types.SimpleNamespace(_ExperimentalConfig=lambda **_: None,
                 AiCMetrics=types.SimpleNamespace(PipeUtilization=0), ProfilerLevel=types.SimpleNamespace(Level1=1),
@@ -113,13 +125,27 @@ class TimerCaptureTest(unittest.TestCase):
                 timer = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(timer)
                 audit = {}
-                result = timer._bench_npu_profiler(lambda: calls.append(True), warmup=1, active=2,
-                    prof_dir=str(directory), keep_res=True, audit=audit)
-            self.assertEqual(len(calls), 4)
-            self.assertEqual(steps, [0, 1, 2])
+                options = dict(warmup=1, active=1 if prepared else 2, prof_dir=str(directory), keep_res=True, audit=audit)
+                if prepared:
+                    def prepare():
+                        preparations.append(len(steps))
+                        value = []
+                        pending_copies.append(value)
+                        return value
+                    def mutate(value):
+                        self.assertEqual(value, [7], 'Device copy must complete before the invocation')
+                        calls.append((len(steps), value.pop()))
+                    result = timer.bench_prepared_kernel_ms(mutate, prepare, **options)
+                    self.assertEqual(preparations, [0, 0, 2])
+                    self.assertEqual(calls, [(0, 7), (1, 7), (3, 7)])
+                    self.assertEqual(audit['stepLayout'], 'prepare-then-run')
+                else:
+                    result = timer.bench_kernel_ms(lambda: calls.append(True), **options)
+                    self.assertEqual(len(calls), 4)
+            self.assertEqual(steps, list(range(4 if prepared else 3)))
             self.assertGreaterEqual(len(synchronizations), 4)
-            self.assertEqual(result, 0.03)
-            self.assertEqual(audit['meanMs'], 0.03)
-            self.assertEqual([r['step'] for r in audit['rows']], [0, 1, 1, 2])
+            self.assertEqual(result, 0.004 if prepared else 0.03)
+            self.assertEqual(audit['meanMs'], result)
+            self.assertEqual([r['step'] for r in audit['rows']], [0, 1] if prepared else [0, 1, 1, 2])
 
 if __name__ == "__main__": unittest.main()

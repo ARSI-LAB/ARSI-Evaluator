@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, relative, isAbsolute, posix, sep } from "node:path";
 import type { Benchmark } from "../../../../core/contracts/benchmark.js";
 import type { SourceLock, TaskRef, PreparedTask } from "../../../../core/contracts/task.js";
@@ -8,9 +8,9 @@ import type { SolveResult, VerifyResult, EvaluationKind } from "../../../../core
 import { expectRecord, expectNonEmptyString, expectPositiveInteger, rejectUnknown, type EffectiveConfig } from "../../../../config/schema.js";
 import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { assertKernelHardware, createKernelBackend, type KernelBackend } from "../../../../adapters/kernel/backend.js";
-import { MAX_KERNEL_TIMER_MS, validateKernelExecOptions } from "../../../../adapters/kernel/cli.js";
-import { VerificationError } from "../../../../core/errors/verification-error.js";
-import { parseKernelContract, kernelContractDigest, parseKernelAssessment } from "./strict.js";
+import { parseKernelSeeds } from "../../../../adapters/kernel/seeds.js";
+import { MAX_KERNEL_TIMER_MS } from "../../../../adapters/kernel/cli.js";
+import { parseKernelContract, kernelContractDigest } from "./strict.js";
 import { kernelVerdict, kernelProfileVerdict } from "./result.js";
 
 export function relativeFile(value: unknown, label: string): string {
@@ -18,6 +18,12 @@ export function relativeFile(value: unknown, label: string): string {
   if (isAbsolute(path) || path.includes("\\") || path.includes("\0") || path.split("/").some(p => p === ".." || p === "." || !p) || posix.normalize(path) !== path)
     throw new TypeError(`${label} must be a relative file without traversal`);
   return path;
+}
+
+function positiveTimer(value: unknown, name: string, millisecondsPerUnit = 1): number {
+  const duration = expectPositiveInteger(value, name);
+  if (duration * millisecondsPerUnit > MAX_KERNEL_TIMER_MS) throw new TypeError(`${name} exceeds the Node timer range`);
+  return duration;
 }
 
 export function parseKernelConfig(value: unknown) {
@@ -32,51 +38,45 @@ export function parseKernelConfig(value: unknown) {
     throw new TypeError("profiling.retryDelayMs must be a non-negative integer");
   const operation = c.operation ?? "evaluate";
   if (operation !== "evaluate" && operation !== "profile") throw new TypeError("kernel.operation must be evaluate or profile");
+  const independentProfile = operation === "profile";
   const collection = p.collection === undefined ? "PipeTimeline,Default" : p.collection;
   if (collection !== "Default" && collection !== "PipeTimeline,Default")
     throw new TypeError("profiling.collection must be Default or PipeTimeline,Default");
   const profiling = {
-    enabled: p.enabled === true,
+    enabled: p.enabled ?? independentProfile,
     collection,
     warmup: expectPositiveInteger(p.warmup ?? 25, "profiling.warmup"),
-    attemptTimeoutSeconds: expectPositiveInteger(p.attemptTimeoutSeconds ?? 300, "profiling.attemptTimeoutSeconds"),
+    attemptTimeoutSeconds: positiveTimer(p.attemptTimeoutSeconds ?? 300, "profiling.attemptTimeoutSeconds", 1000),
     maxAttempts: expectPositiveInteger(p.maxAttempts ?? 2, "profiling.maxAttempts"),
     ...(p.retryDelayMs === undefined ? {} : { retryDelayMs: p.retryDelayMs as number }),
     roundNum: p.roundNum === undefined ? 1 : p.roundNum as number,
-    cacheEnabled: p.cacheEnabled !== false,
+    cacheEnabled: p.cacheEnabled ?? !independentProfile,
     ...(p.cacheMaxEntries === undefined ? {} : { cacheMaxEntries: expectPositiveInteger(p.cacheMaxEntries, "profiling.cacheMaxEntries") }),
     ...(p.msprofBin === undefined ? {} : { msprofBin: expectNonEmptyString(p.msprofBin, "profiling.msprofBin") }),
     ...(p.deviceName === undefined ? {} : { deviceName: expectNonEmptyString(p.deviceName, "profiling.deviceName") }),
     ...(p.cacheDir === undefined ? {} : { cacheDir: expectNonEmptyString(p.cacheDir, "profiling.cacheDir") }),
   } as const;
-  const timeoutSeconds = expectPositiveInteger(c.timeoutSeconds ??
-    (profiling.enabled ? profiling.maxAttempts * profiling.attemptTimeoutSeconds + 300 : 300), "timeoutSeconds");
+  const timeoutSeconds = positiveTimer(c.timeoutSeconds ??
+    (profiling.enabled ? profiling.maxAttempts * profiling.attemptTimeoutSeconds + 300 : 300), "timeoutSeconds", 1000);
   const processOptions = {
     ...(c.outputLimitBytes === undefined ? {} : { outputLimitBytes: expectPositiveInteger(c.outputLimitBytes, "outputLimitBytes") }),
-    cleanupGraceMs: expectPositiveInteger(c.cleanupGraceMs ?? 100, "cleanupGraceMs"),
-    cleanupTimeoutMs: expectPositiveInteger(c.cleanupTimeoutMs ?? 3000, "cleanupTimeoutMs"),
+    cleanupGraceMs: positiveTimer(c.cleanupGraceMs ?? 100, "cleanupGraceMs"),
+    cleanupTimeoutMs: positiveTimer(c.cleanupTimeoutMs ?? 3000, "cleanupTimeoutMs"),
   };
-  validateKernelExecOptions(processOptions);
-  if (timeoutSeconds * 1000 > MAX_KERNEL_TIMER_MS) throw new TypeError("timeoutSeconds exceeds the Node timer range");
-  if (profiling.attemptTimeoutSeconds * 1000 > MAX_KERNEL_TIMER_MS)
-    throw new TypeError("profiling.attemptTimeoutSeconds exceeds the Node timer range");
   const nonnegative = (value: unknown, name: string) => {
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new TypeError(`${name} must be finite and nonnegative`);
     return value;
   };
   const device = nonnegative(c.device ?? 0, "device");
   if (!Number.isSafeInteger(device)) throw new TypeError("device must be an integer");
-  const seeds = c.seeds ?? [0, 1, 2];
-  if (!Array.isArray(seeds) || !seeds.length || seeds.some(s => !Number.isSafeInteger(s) || s < 0 || s > 0xffffffff))
-    throw new TypeError("seeds must contain unsigned 32-bit integers");
-  if (new Set(seeds).size !== seeds.length) throw new TypeError("seeds must be unique");
-  if (operation === "profile") {
+  const seeds = parseKernelSeeds(c.seeds ?? (independentProfile ? [0] : [0, 1, 2]));
+  if (independentProfile) {
     if (seeds.length !== 1) throw new TypeError("Independent profile requires a single seed");
     if (!profiling.enabled) throw new TypeError("Independent profile requires profiling.enabled=true");
     if (profiling.cacheEnabled) throw new TypeError("Independent profile requires cacheEnabled=false; callers own evidence reuse");
   }
   return { operation, manifest: expectNonEmptyString(c.manifest, "manifest"), ...(c.kernelRoot === undefined ? {} : { kernelRoot: expectNonEmptyString(c.kernelRoot, "kernelRoot") }),
-    python: expectNonEmptyString(c.python ?? "python3", "python"), device, seeds: seeds as number[],
+    python: expectNonEmptyString(c.python ?? "python3", "python"), device, seeds,
     rtol: nonnegative(c.rtol ?? 0.001, "rtol"), atol: nonnegative(c.atol ?? 0.001, "atol"),
     warmup: expectPositiveInteger(c.warmup ?? 5, "warmup"), repeat: expectPositiveInteger(c.repeat ?? 20, "repeat"),
     ...processOptions,
@@ -91,7 +91,7 @@ export function parseKernelManifest(value: unknown) {
   const ids = new Set<string>();
   return m.tasks.map((value, index) => {
     const t = expectRecord(value, `tasks[${index}]`);
-    rejectUnknown(t, ["id", "problem", "candidate", "files", "referenceKind", "outputIndices", "contract"], "kernel task");
+    rejectUnknown(t, ["id", "problem", "candidate", "candidateRoot", "files", "referenceKind", "outputIndices", "contract"], "kernel task");
     const id = expectNonEmptyString(t.id, "task.id");
     if (ids.has(id)) throw new TypeError(`Duplicate kernel task: ${id}`);
     ids.add(id);
@@ -101,7 +101,13 @@ export function parseKernelManifest(value: unknown) {
     const indices = t.outputIndices;
     if (indices !== undefined && (!Array.isArray(indices) || !indices.length || indices.some(i => !Number.isSafeInteger(i) || i < 0) || new Set(indices).size !== indices.length))
       throw new TypeError("outputIndices must be unique nonnegative integers");
-    return { id, problem: relativeFile(t.problem, "problem"), candidate: relativeFile(t.candidate, "candidate"),
+    const problem = relativeFile(t.problem, "problem");
+    const candidate = relativeFile(t.candidate, "candidate");
+    const candidateRoot = t.candidateRoot === undefined ? undefined : relativeFile(t.candidateRoot, "candidateRoot");
+    if (candidateRoot !== undefined && (!candidate.startsWith(`${candidateRoot}/`) || problem === candidateRoot || problem.startsWith(`${candidateRoot}/`)))
+      throw new TypeError("candidateRoot must contain the candidate and exclude the reference");
+    return { id, problem, candidate,
+      ...(candidateRoot === undefined ? {} : { candidateRoot }),
       files: files.map(f => relativeFile(f, "files")), referenceKind: t.referenceKind,
       ...(t.contract === undefined ? {} : { contract: parseKernelContract(t.contract) }),
       ...(indices === undefined ? {} : { outputIndices: indices as number[] }) };
@@ -125,12 +131,18 @@ export class KernelBenchmark implements Benchmark {
       throw new TypeError("kernel requires local environment and local scheduler concurrency 1");
     if (config.solver.name !== "kernel-replay") throw new TypeError("kernel requires the locked kernel-replay solver");
     if (config.verifier !== undefined) throw new TypeError("kernel uses its built-in verifier; remove benchmark.verifier");
-    if (this.config.profiling.enabled && config.run.timeoutSeconds <= this.config.timeoutSeconds)
-      throw new TypeError("run.timeoutSeconds must exceed kernel timeoutSeconds when profiling is enabled");
   }
 
-  private async dataFile(path: string): Promise<string> {
+  private async dataFile(path: string, regular = false): Promise<string> {
     const root = await realpath(dirname(this.config.manifest));
+    if (regular) {
+      const parts = path.split("/");
+      for (let index = 0; index < parts.length; index++) {
+        const item = await lstat(join(root, ...parts.slice(0, index + 1)));
+        if (item.isSymbolicLink() || (index === parts.length - 1 ? !item.isFile() : !item.isDirectory()))
+          throw new TypeError(`Candidate source must be a safe regular file: ${path}`);
+      }
+    }
     const file = await realpath(join(root, path));
     const rel = relative(root, file);
     if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error("Kernel data file escapes manifest directory");
@@ -141,12 +153,11 @@ export class KernelBenchmark implements Benchmark {
     signal.throwIfAborted();
     const manifest = await readFile(this.config.manifest);
     const tasks = parseKernelManifest(JSON.parse(manifest.toString("utf8")));
-    if (this.config.operation === "profile" && tasks.length !== 1) throw new TypeError("Independent profile requires a single task");
     const paths = [...new Set(tasks.flatMap(t => [t.problem, t.candidate, ...t.files]))].sort();
     const files = [{ path: "manifest.json", sha256: digest(manifest), origin: this.config.manifest }];
     for (const path of paths) {
       signal.throwIfAborted();
-      const origin = await this.dataFile(path);
+      const origin = await this.dataFile(path, tasks.some(task => task.candidateRoot !== undefined && path.startsWith(`${task.candidateRoot}/`)));
       files.push({ path: `data/${path}`, sha256: digest(await readFile(origin)), origin });
     }
     for (const { path, origin } of this.backend.runtimeFiles()) {
@@ -183,6 +194,7 @@ export class KernelBenchmark implements Benchmark {
     return {
       input: { id: task.id, prompt: "Submit the frozen kernel artifact for independent evaluation.", payload: { candidateSha256: candidate.sha256 } },
       verification: { schemaVersion: 1, caseId: task.id, operation: this.config.operation, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
+        ...(task.candidateRoot === undefined ? {} : { candidateRoot: `data/${task.candidateRoot}` }),
         files: selected.map(f => ({ source: f.origin, target: f.path })),
         problem: `data/${task.problem}`, referenceKind: task.referenceKind, outputIndices: task.outputIndices ?? null,
         seeds: this.config.seeds, rtol: this.config.rtol, atol: this.config.atol, warmup: this.config.warmup, repeat: this.config.repeat,
@@ -209,24 +221,23 @@ export class KernelBenchmark implements Benchmark {
       await session.upload(file.source, file.target, active);
     }
     const value = await this.backend.execute(request, session, active);
-    const record = expectRecord(value, "kernel result");
+    const hashes = expectRecord(request.hashes, "kernel source hashes");
+    const candidateFiles = request.candidateRoot === undefined ? undefined : Object.entries(hashes)
+      .filter(([path]) => path.startsWith(`${String(request.candidateRoot)}/`))
+      .map(([path, hash]) => ({ path: path.slice(String(request.candidateRoot).length + 1), sha256: expectNonEmptyString(hash, "candidate source hash") }))
+      .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     if (this.config.operation === "profile") {
-      const hashes = expectRecord(request.hashes, "kernel source hashes");
       const verdict = kernelProfileVerdict(value, String(request.candidateSha256), String(request.referenceKind), {
         caseId: String(request.caseId), seed: this.config.seeds[0]!, warmup: this.config.profiling.warmup ?? 25,
         collection: this.config.profiling.collection,
         problemSha256: expectNonEmptyString(hashes[String(request.problem)], "problem source hash"),
+        ...(candidateFiles === undefined ? {} : { candidateFiles }),
         ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
       });
       await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
       return verdict;
     }
-    if (request.contract !== undefined) {
-      const assessment = parseKernelAssessment(record.assessment, parseKernelContract(request.contract), this.config.seeds);
-      for (const name of ["rtol", "atol", "warmup", "repeat"] as const)
-        if (assessment.effectiveProtocol[name] !== this.config[name]) throw new VerificationError(`Effective protocol mismatch: ${name}`, {});
-    }
     return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), this.config.profiling.enabled,
-      request.contract === undefined ? undefined : parseKernelContract(request.contract), this.config.seeds);
+      request.contract === undefined ? undefined : { contract: parseKernelContract(request.contract), protocol: this.config }, candidateFiles);
   }
 }

@@ -8,7 +8,7 @@ import { startLocalProcess } from "../../src/plugins/environments/process.js";
 import { parseKernelConfig } from "../../src/plugins/benchmarks/protocols/kernel/index.js";
 import { MsProfCache } from "../../src/plugins/benchmarks/protocols/kernel/msprof-cache.js";
 import { parseArgs } from "../../src/cli.js";
-import { kernelBench, validateKernelExecOptions } from "../../src/adapters/kernel/cli.js";
+import { kernelBench, kernelPrecision, validateKernelExecOptions } from "../../src/adapters/kernel/cli.js";
 import type { EnvironmentSession } from "../../src/core/contracts/environment.js";
 
 test("kernel configuration accepts large seed sets and explicit resource limits", () => {
@@ -96,4 +96,15 @@ test("kernel CLI exposes workload and process controls", () => {
     .toMatchObject({ kind: "kernel-bench", warmup: 11, repeat: 123, timeoutMs: 7000, outputLimitBytes: 2000000 });
   expect(parseArgs(["kernel", "profile", ...base, "--max-attempts", "7", "--attempt-timeout-seconds", "600", "--cache-max-entries", "1000", "--cleanup-grace-ms", "40", "--cleanup-timeout-ms", "8000", "--retry-delay-ms", "0"]))
     .toMatchObject({ kind: "kernel-profile", maxAttempts: 7, attemptTimeoutSeconds: 600, cacheMaxEntries: 1000, cleanupGraceMs: 40, cleanupTimeoutMs: 8000, retryDelayMs: 0 });
+});
+
+test("precision rejects an empty or invalid seed protocol before starting a worker", async () => {
+  const args = { problem: "p.py", kernel: "k.py", out: "out.json" };
+  for (const seeds of [[], [1, 1], [-1], [0x100000000], [1.5], [NaN]]) {
+    await expect(kernelPrecision({ ...args, seeds }, { python: "missing-interpreter" })).rejects.toThrow(/seeds/);
+  }
+  for (const seeds of ["", "0 invalid", "-1", "1 1", "4294967296"]) {
+    expect(() => parseArgs(["kernel", "precision", "--problem", "p.py", "--kernel", "k.py",
+      "--out", "out.json", "--seeds", seeds])).toThrow(/seeds/);
+  }
 });

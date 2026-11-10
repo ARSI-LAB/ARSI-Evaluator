@@ -55,7 +55,7 @@ def device_synchronize():
 
 # ============ NPU profiler timing ============
 def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                        triton_only=False, audit=None):
+                        triton_only=False, audit=None, prepare=None):
     """
     Capture kernel_details.csv with torch_npu.profiler.
     Return the mean kernel execution time in milliseconds.
@@ -65,9 +65,16 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     triton_only=False: sum all operators inside the wrapper.
             Use this scope for eager/inductor baseline logging.
     """
-    # warmup
+    if prepare is not None and audit is None:
+        raise ValueError("Prepared inputs require profiler-flow timing evidence")
     for _ in range(warmup):
-        fn()
+        if prepare is None:
+            fn()
+        else:
+            inputs = prepare()
+            device_synchronize()
+            fn(inputs)
+            device_synchronize()
     device_synchronize()
 
     # Profiler configuration.
@@ -93,7 +100,8 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     activities = [torch_npu.profiler.ProfilerActivity.NPU]
     if audit is not None:
         # Capture every step, then explicitly exclude our warmup steps during reduction.
-        options['schedule'] = torch_npu.profiler.schedule(wait=0, warmup=0, active=total, repeat=1)
+        steps = total if prepare is None else 2 * total
+        options['schedule'] = torch_npu.profiler.schedule(wait=0, warmup=0, active=steps, repeat=1)
         # CPU records provide ProfilerStep ranges; only device kernel durations enter the mean.
         activities.append(torch_npu.profiler.ProfilerActivity.CPU)
     with torch_npu.profiler.profile(
@@ -108,7 +116,14 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
         **options,
     ) as prof:
         for _ in builtins.range(total):
-            fn()
+            if prepare is None:
+                fn()
+            else:
+                # Finish all restore work in the even step. The odd step owns only the invocation.
+                inputs = prepare()
+                device_synchronize()
+                prof.step()
+                fn(inputs)
             device_synchronize()
             if audit is not None:
                 prof.step()
@@ -116,7 +131,7 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     # Strict callers require explicit flow association; no equal-row-count fallback.
     if audit is not None:
         from timing_evidence import collect_flow_timing
-        audit.update(collect_flow_timing(prof_dir, warmup, active))
+        audit.update(collect_flow_timing(prof_dir, warmup, active, prepared=prepare is not None))
         time_cost_ms = audit['meanMs']
     elif triton_only:
         time_cost_ms = _collect_npu_prof_triton_only(prof_dir, warmup, active)
@@ -222,19 +237,24 @@ def _collect_npu_prof_triton_only(base_dir, num_warmup, num_active):
 
 
 def bench_kernel(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
-                 triton_only=False, audit=None):
+                 triton_only=False, audit=None, *, prepare=None):
     """NPU profiler duration in ms; triton_only excludes framework kernels."""
     if not torch.npu.is_available():
         raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
     torch.npu.set_device(_logical_npu_device_id())
     return _bench_npu_profiler(fn, warmup=warmup, active=active,
                                prof_dir=prof_dir, keep_res=keep_res,
-                               triton_only=triton_only, audit=audit)
+                               triton_only=triton_only, audit=audit, prepare=prepare)
 
 
 def bench_kernel_ms(fn, **kwargs):
     """Return the shared benchmark result in milliseconds."""
     return bench_kernel(fn, **kwargs)
+
+
+def bench_prepared_kernel_ms(fn, prepare, **kwargs):
+    """Call fn(prepare()) with a fresh input tree, measuring only fn's device kernels."""
+    return bench_kernel(fn, prepare=prepare, **kwargs)
 
 
 def bench_kernel_us(fn, **kwargs):

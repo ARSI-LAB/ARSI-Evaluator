@@ -1,5 +1,6 @@
 import { Command as Commander, CommanderError, Option } from "commander";
 import { resolve } from "node:path";
+import { parseKernelSeeds } from "./adapters/kernel/seeds.js";
 import type { Command } from "./cli.js";
 import type { CliOverrides } from "./config/schema.js";
 
@@ -129,7 +130,7 @@ export function parseCommand(argv: string[]): Command {
         profileOptions[key] = value;
       }
       result = name === "profile" ? { kind: "kernel-profile", ...base, ...processOptions, ...profileOptions, round: integer(opts.round, 0, "--round"), seed: integer(opts.seed, 0, "--seed"), warmup: integer(opts.warmup, 25, "--warmup") }
-        : name === "precision" ? { kind: "kernel-precision", ...base, ...processOptions, seeds: (opts.seeds ?? "0 1").split(/\s+/).map(Number).filter(seed => Number.isSafeInteger(seed) && seed >= 0) }
+        : name === "precision" ? { kind: "kernel-precision", ...base, ...processOptions, seeds: parseKernelSeeds((opts.seeds ?? "0 1").trim().split(/\s+/).filter(Boolean).map(Number)) }
         : { kind: "kernel-bench", ...base, ...processOptions, warmup: integer(opts.warmup, 25, "--warmup"), repeat: integer(opts.repeat, 100, "--repeat") };
     });
   }

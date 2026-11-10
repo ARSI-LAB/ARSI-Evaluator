@@ -61,6 +61,16 @@ const validProfiling = {
   artifacts: ["profiling/raw-metrics.json", "profiling/metrics-dataframe.csv"],
 };
 
+test("manifest candidateRoot preserves explicit import roots and rejects unsafe layouts", () => {
+  const task = { id: "tree", problem: "problem.py", candidate: "candidate/kernels/kernel.py",
+    candidateRoot: "candidate", files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py"], referenceKind: "pytorch" };
+  expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]).toMatchObject(task);
+  for (const candidateRoot of ["../candidate", "/candidate", "candidate/", ".", "candidate\\kernels"])
+    expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [{ ...task, candidateRoot }] })).toThrow(/relative/);
+  for (const patch of [{ candidate: "outside.py" }, { problem: "candidate/reference.py" }, { candidateRoot: "candidate/kernels/kernel.py" }])
+    expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [{ ...task, ...patch }] })).toThrow(/candidateRoot/);
+});
+
 test("parseKernelProfiling rejects traversal and absolute artifact paths", () => {
   expect(parseKernelProfiling(validProfiling)).toBeTruthy();
   for (const bad of [["../out.json", "x"], ["/abs/path.json", "x"], ["a\\b.json", "x"]]) {
@@ -108,6 +118,17 @@ test("kernelVerdict adapts unparseable profiling instead of failing the run", ()
   const profiling = (verdict.details as Record<string, unknown>).profiling as Record<string, unknown>;
   expect(profiling.status).toBe("failed");
   expect(profiling.metadata).toMatchObject({ adapterError: true });
+});
+
+test("evaluation profiling cannot publish a completed receipt without its declared candidate tree", () => {
+  const candidateFiles = [{ path: "kernel.py", sha256: sha }, { path: "helper.py", sha256: "b".repeat(64) }];
+  const value = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch", timingScope: "all-device-kernels",
+    status: "passed", error: "", referenceMs: 1, candidateMs: 1, speedup: 1, profiling: validProfiling };
+  expect(kernelVerdict(value, sha, "pytorch", true, undefined, candidateFiles)).toMatchObject({ passed: true,
+    details: { profiling: { status: "failed" } } });
+  const profiling = { ...validProfiling, metadata: { sources: { candidateFiles } } };
+  expect(kernelVerdict({ ...value, profiling }, sha, "pytorch", true, undefined, candidateFiles)).toMatchObject({
+    details: { profiling: { status: "completed" } } });
 });
 
 test("roofline picks the busiest pipe with underutilized priority", () => {

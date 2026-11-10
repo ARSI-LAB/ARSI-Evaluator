@@ -64,3 +64,19 @@ test("flow audit rejects an unrepresented device target even without task type m
   const partial = {...sample,csvSha256:hash(csv),traceSha256:hash(trace),meanMs:0.015,rows:sample.rows.filter(r=>r.name!=='transpose')};
   expect(() => auditKernelTimingSample(partial,csv,trace)).toThrow();
 });
+
+test("audits preparation steps only for mutable contracts and includes every execution kernel", () => {
+  const prepared = JSON.parse(readFileSync(new URL("../fixtures/kernel-timing-prepared.json", import.meta.url), "utf8"));
+  const trace = JSON.stringify(prepared.trace);
+  const row = { device: "0", stream: "7", name: "work" };
+  const entry = { ...sample, stepLayout: "prepare-then-run" as const, repeat: 1, meanMs: 0.004,
+    csvSha256: hash(prepared.csv), traceSha256: hash(trace),
+    rows: [{ step: 0, ...row, startUs: 110, durationUs: 10 }, { step: 1, ...row, startUs: 310, durationUs: 4 }] };
+  const mutable = { inputUnmodified: false };
+  expect(() => auditKernelTimingSample(entry, prepared.csv, trace, mutable)).not.toThrow();
+  expect(() => auditKernelTimingSample(entry, prepared.csv, trace)).toThrow();
+  expect(() => auditKernelTimingSample(entry, prepared.csv, trace, { inputUnmodified: true })).toThrow();
+  const omitted = prepared.csv.replace("0,7,work,210,70\n", "");
+  expect(() => auditKernelTimingSample({ ...entry, csvSha256: hash(omitted) }, omitted, trace, mutable)).toThrow();
+  expect(() => auditKernelTimingSample(sample, fixture.csv, fixture.trace, mutable)).not.toThrow();
+});

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from copy import deepcopy
 import hashlib
 import importlib.util
 import json
@@ -40,7 +41,10 @@ def load_module(path, name):
 def verify_hashes(hashes):
     """Reject file changes between source locking and environment copying."""
     for path, expected in hashes.items():
-        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
+        source = Path(path).absolute()
+        if not source.is_file() or any(item.is_symlink() for item in (source, *source.parents)):
+            raise RuntimeError(f"Locked source must be a safe regular file: {path}")
+        if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
             raise RuntimeError(f"Locked source changed: {path}")
 
 
@@ -48,7 +52,7 @@ def load_task_module(path, root, name):
     """Preserve task package structure and sibling imports without renaming declared dependencies."""
     path, root = Path(path).resolve(), Path(root).resolve()
     relative = path.relative_to(root)
-    namespace = "_kernel_task"
+    namespace = "_kernel_task_" + hashlib.sha256(str(root).encode()).hexdigest()[:16]
     if namespace not in sys.modules:
         package = ModuleType(namespace)
         package.__path__ = [str(root)]
@@ -58,7 +62,7 @@ def load_task_module(path, root, name):
     sys.path.insert(0, str(path.parent))
     parent = ".".join([namespace, *relative.parts[:-1]])
     importlib.import_module(parent)
-    return load_module(path, f"{parent}.{name}")
+    return load_module(path, f"{parent}.{path.stem}")
 
 
 def select_outputs(value, indices):
@@ -71,18 +75,37 @@ def select_outputs(value, indices):
 
 
 def clone_tree(value, torch):
-    """Preserve input strides so cloning noncontiguous inputs does not change the task."""
-    if isinstance(value, torch.Tensor):
-        return torch.empty_strided(value.shape, value.stride(), device=value.device, dtype=value.dtype).copy_(value)
-    if isinstance(value, tuple):
-        return tuple(clone_tree(v, torch) for v in value)
-    if isinstance(value, list):
-        return [clone_tree(v, torch) for v in value]
-    if isinstance(value, dict):
-        return {k: clone_tree(v, torch) for k, v in value.items()}
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    raise TypeError(f"Unsupported value type: {type(value).__name__}")
+    """Copy tensor storage once per tree and retain each view into that storage."""
+    memo, storage_copies = {}, {}
+
+    def clone(item):
+        if isinstance(item, torch.Tensor):
+            if id(item) in memo:
+                return memo[id(item)]
+            # Detach permits snapshots of non-leaf tensors. PyTorch's deepcopy uses the
+            # shared memo for storage as well as objects, including mixed-dtype views.
+            result = deepcopy(item.detach(), memo)
+            if (result.shape != item.shape or result.stride() != item.stride()
+                    or result.storage_offset() != item.storage_offset()
+                    or result.dtype != item.dtype or result.device != item.device):
+                raise RuntimeError(f"Tensor clone did not preserve view metadata on {item.device}")
+            source = item.untyped_storage().data_ptr()
+            target = result.untyped_storage().data_ptr()
+            if source and (target == source or storage_copies.setdefault((item.device, source), target) != target):
+                raise RuntimeError(f"Tensor clone did not preserve shared storage independently on {item.device}")
+            memo[id(item)] = result
+            return result
+        if isinstance(item, tuple):
+            return tuple(clone(v) for v in item)
+        if isinstance(item, list):
+            return [clone(v) for v in item]
+        if isinstance(item, dict):
+            return {k: clone(v) for k, v in item.items()}
+        if item is None or isinstance(item, (bool, int, float, str)):
+            return item
+        raise TypeError(f"Unsupported value type: {type(item).__name__}")
+
+    return clone(value)
 
 
 def compare_tree(expected, actual, torch, rtol, atol):
@@ -165,7 +188,7 @@ def evaluate(request, profile_root=Path(".")):
         raise RuntimeError("kernel benchmark did not select NPU")
     problem = load_task_module(request["problem"], request["dataRoot"], "problem")
     try:
-        candidate = load_task_module(request["candidate"], request["dataRoot"], "kernel").kernel_function
+        candidate = load_task_module(request["candidate"], request.get("candidateRoot", request["dataRoot"]), "kernel").kernel_function
         if not callable(candidate):
             raise TypeError("kernel_function must be callable")
     except Exception as exc:
@@ -268,6 +291,10 @@ def _dtype_of(value):
 
 def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
     """Check two runs per seed against the reference and detect input mutation."""
+    if (not isinstance(seeds, list) or not seeds
+            or any(type(seed) is not int or not 0 <= seed <= 0xffffffff for seed in seeds)
+            or len(set(seeds)) != len(seeds)):
+        raise ValueError("seeds must contain unique unsigned 32-bit integers")
     import random
 
     import torch

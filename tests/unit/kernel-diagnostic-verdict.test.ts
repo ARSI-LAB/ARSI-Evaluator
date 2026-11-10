@@ -54,3 +54,18 @@ test("unavailable capture retains a diagnostic verdict without a candidate score
   });
   expect(kernelProfileVerdict(f.value, f.candidate, "pytorch", f.expected)).not.toHaveProperty("score");
 });
+
+test("explicit candidate roots require exact full-tree profiling evidence", () => {
+  const f = fixture();
+  const candidateFiles = [{ path: "kernels/kernel.py", sha256: f.candidate }, { path: "kernels/tiling.py", sha256: "c".repeat(64) }];
+  const expected = { ...f.expected, candidateFiles };
+  expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toThrow(/source/);
+  const sources = f.metadata.sources as Record<string, unknown>;
+  sources.candidateFiles = candidateFiles;
+  expect(kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toMatchObject({ details: { status: "completed" } });
+  for (const files of [candidateFiles.slice(0, 1), [...candidateFiles].reverse(),
+    candidateFiles.map(file => ({ ...file, sha256: "d".repeat(64) })), [...candidateFiles, candidateFiles[0]]]) {
+    sources.candidateFiles = files;
+    expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toThrow(/source/);
+  }
+});

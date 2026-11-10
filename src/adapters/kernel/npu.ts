@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { EnvironmentSession } from "../../core/contracts/environment.js";
 import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
-import { expectRecord } from "../../config/schema.js";
+import { expectNonEmptyString, expectRecord } from "../../config/schema.js";
 import { VerificationError } from "../../core/errors/verification-error.js";
 import { readProcess } from "../verifiers/process.js";
 import { KernelExecError } from "./cli.js";
+import { kernelProcessEnvironment } from "./environment.js";
 import { kernelProfile } from "./profile.js";
 
 /** NPU-only execution. Benchmark owns task identity and verdict validation. */
@@ -36,7 +37,8 @@ export class NpuKernelBackend implements KernelBackend {
     }
     const handle = await session.start({ executable: this.config.python,
       args: ["runtime/precision.py", "--output", join(session.verifierOutputDir, "kernel-result.json")], cwd: session.workdir,
-      env: {}, input: Buffer.from(JSON.stringify(request)), outputBufferBytes: null }, signal);
+      inheritEnv: false, env: kernelProcessEnvironment(join(session.workdir, "runtime"), { env: this.environment() }),
+      input: Buffer.from(JSON.stringify(request)), outputBufferBytes: null }, signal);
     const process = await readProcess(handle, signal, this.config.outputLimitBytes ?? null, this.config.cleanupGraceMs);
     if (process.code !== 0) throw new VerificationError("Kernel worker did not return a result", { exitCode: process.code, stderr: process.stderr });
     let value: unknown;
@@ -59,30 +61,34 @@ export class NpuKernelBackend implements KernelBackend {
     };
     try {
       const stem = "kernel-profile";
+      const inputUnmodified = request.contract === undefined ? true : expectRecord(request.contract, "kernel contract").inputUnmodified;
+      if (typeof inputUnmodified !== "boolean") throw new TypeError("contract.inputUnmodified must be a boolean");
+      const { enabled: _enabled, roundNum, ...capture } = this.config.profiling;
+      const candidateRoot = request.candidateRoot === undefined ? undefined : expectNonEmptyString(request.candidateRoot, "candidateRoot");
+      const hashes = expectRecord(request.hashes, "kernel source hashes");
       await kernelProfile({
+        ...capture,
         problem: join(session.workdir, String(request.problem)),
         kernel: join(session.workdir, String(request.candidate)),
-        out: join(session.verifierOutputDir, `${stem}.json`), round: this.config.profiling.roundNum,
-        ...(this.config.profiling.collection === undefined ? {} : { collection: this.config.profiling.collection }),
-        seed: (request.seeds as number[])[0]!,
-        ...(this.config.profiling.warmup === undefined ? {} : { warmup: this.config.profiling.warmup }), caseId: String(request.caseId),
+        ...(candidateRoot === undefined ? {} : { candidateRoot: join(session.workdir, candidateRoot),
+          candidateFiles: Object.entries(hashes).filter(([path]) => path.startsWith(`${candidateRoot}/`))
+            .map(([path, hash]) => ({ path: path.slice(candidateRoot.length + 1), sha256: expectNonEmptyString(hash, "candidate source hash") })) }),
+        out: join(session.verifierOutputDir, `${stem}.json`),
+        round: roundNum,
+        caseId: String(request.caseId),
+        seed: (request.seeds as number[])[0]!, inputUnmodified,
         ...(request.contractSha256 === undefined ? {} : { contractSha256: String(request.contractSha256) }),
-        ...(this.config.profiling.maxAttempts === undefined ? {} : { maxAttempts: this.config.profiling.maxAttempts }),
-        ...(this.config.profiling.attemptTimeoutSeconds === undefined ? {} : { attemptTimeoutSeconds: this.config.profiling.attemptTimeoutSeconds }),
-        ...(this.config.profiling.retryDelayMs === undefined ? {} : { retryDelayMs: this.config.profiling.retryDelayMs }),
-        ...(this.config.profiling.cacheEnabled === undefined ? {} : { cacheEnabled: this.config.profiling.cacheEnabled }),
-        ...(this.config.profiling.cacheDir === undefined ? {} : { cacheDir: this.config.profiling.cacheDir }),
-        ...(this.config.profiling.cacheMaxEntries === undefined ? {} : { cacheMaxEntries: this.config.profiling.cacheMaxEntries }),
-        ...(this.config.profiling.msprofBin === undefined ? {} : { msprofBin: this.config.profiling.msprofBin }),
-        ...(this.config.profiling.deviceName === undefined ? {} : { deviceName: this.config.profiling.deviceName }),
       }, { python: this.config.python, signal,
         ...(this.config.outputLimitBytes === undefined ? {} : { outputLimitBytes: this.config.outputLimitBytes }),
         ...(this.config.cleanupGraceMs === undefined ? {} : { cleanupGraceMs: this.config.cleanupGraceMs }),
         ...(this.config.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: this.config.cleanupTimeoutMs }),
         env: this.environment() },
-        { session, atomDirectory: join(session.workdir, "runtime") });
-      const raw = JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8"));
-      value.profiling = prefixProfilingPaths(raw, `${stem}_profiling_root`);
+        { session, atomDirectory: join(session.workdir, "runtime"),
+          ...(candidateRoot === undefined ? {} : { sourceContext: { dataRoot: join(session.workdir, expectNonEmptyString(request.dataRoot, "kernel dataRoot")),
+            hashes: Object.fromEntries(Object.entries(hashes).map(([path, hash]) => [join(session.workdir, path), expectNonEmptyString(hash, "locked source hash")])) } }) });
+      const raw = expectRecord(JSON.parse(await readFile(join(session.verifierOutputDir, `${stem}.raw.json`), "utf8")), "kernel profile");
+      const metadata = expectRecord(raw.metadata, "kernel profile metadata");
+      value.profiling = prefixProfilingPaths(raw, expectNonEmptyString(metadata.artifactRoot, "profile artifact root"));
     } catch (error) {
       if (error instanceof KernelExecError) throw new VerificationError(error.message, { cleanup: "unconfirmed", protocol: "kernel-v1" });
       signal.throwIfAborted();

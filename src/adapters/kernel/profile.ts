@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { appendFile, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { appendFile, cp, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { parseMsprofMetricsTable, rowsToMetrics, metricsToCsv, type MetricRow } from "../../plugins/benchmarks/protocols/kernel/msprof-csv.js";
-import { analyzeL2Cache, analyzeTraceEvents, extractTritonKernelName } from "../../plugins/benchmarks/protocols/kernel/msprof-analysis.js";
+import { analyzeL2Cache, analyzeTraceEvents, extractTritonKernelName, findTritonKernelName } from "../../plugins/benchmarks/protocols/kernel/msprof-analysis.js";
 import { analyzeRoofline } from "../../plugins/benchmarks/protocols/kernel/roofline.js";
 import { MsProfCache } from "../../plugins/benchmarks/protocols/kernel/msprof-cache.js";
 import { KernelExecError, MAX_KERNEL_TIMER_MS, resolveAtomDir, validateKernelExecOptions, type KernelExecOptions } from "./cli.js";
@@ -13,9 +13,15 @@ import { KernelExecError, MAX_KERNEL_TIMER_MS, resolveAtomDir, validateKernelExe
 import type { CommandSpec, EnvironmentSession } from "../../core/contracts/environment.js";
 import { startLocalProcess } from "../../plugins/environments/process.js";
 import { readProcess } from "../verifiers/process.js";
+import { kernelProcessEnvironment } from "./environment.js";
 
 /** The SDK session owns all profiler children; standalone CLI calls own a process group. */
-export type KernelProfileExecution = { session: Pick<EnvironmentSession, "start" | "workdir">; atomDirectory: string };
+export type KernelProfileExecution = {
+  session: Pick<EnvironmentSession, "start" | "workdir">;
+  atomDirectory: string;
+  /** SDK-only source context, including reference dependencies and locked runtime files. */
+  sourceContext?: { dataRoot: string; hashes: Record<string, string> };
+};
 async function runProfileProcess(command: CommandSpec, signal: AbortSignal, options: KernelExecOptions, consolePath: string, execution?: KernelProfileExecution): Promise<void> {
   const handle = execution ? await execution.session.start({ ...command, cwd: execution.session.workdir }, signal)
     : await startLocalProcess(command, signal);
@@ -48,8 +54,59 @@ const OUTPUT_POLICY = "kernel-original-f542-v1";
 const DEFAULT_MSPROF_BIN = "/usr/local/Ascend/ascend-toolkit/latest/bin/msprof";
 
 export interface KernelProfileArgs { problem: string; kernel: string; out: string; round: number;
+  candidateRoot?: string; candidateFiles?: { path: string; sha256: string }[];
+  inputUnmodified?: boolean;
   seed?: number; warmup?: number; caseId?: string; contractSha256?: string; collection?: "Default" | "PipeTimeline,Default";
   msprofBin?: string; deviceName?: string; maxAttempts?: number; attemptTimeoutSeconds?: number; retryDelayMs?: number; cacheEnabled?: boolean; cacheDir?: string; cacheMaxEntries?: number }
+
+async function stageCandidateTree(args: KernelProfileArgs, artifactsDir: string): Promise<{
+  root: string; sourceRoot: string; entry: string; files: { path: string; sha256: string }[]; hashes: Record<string, string>; bytes: Buffer;
+} | null> {
+  if (args.candidateRoot === undefined && args.candidateFiles === undefined) return null;
+  if (args.candidateRoot === undefined || !isAbsolute(args.candidateRoot) || !Array.isArray(args.candidateFiles) || !args.candidateFiles.length)
+    throw new TypeError("candidateRoot requires an absolute directory and a nonempty candidateFiles inventory");
+  const root = resolve(args.candidateRoot);
+  const entry = relative(root, resolve(args.kernel)).split(sep).join("/");
+  const files: { path: string; sha256: string }[] = [];
+  const seen = new Set<string>();
+  for (const file of args.candidateFiles) {
+    if (file === null || typeof file !== "object" || typeof file.path !== "string" || isAbsolute(file.path) ||
+        file.path.includes("\\") || /[\u0000-\u001f]/u.test(file.path) || file.path.split("/").some(part => !part || part === "." || part === "..") ||
+        posix.normalize(file.path) !== file.path || seen.has(file.path) || !/^[0-9a-f]{64}$/.test(file.sha256))
+      throw new TypeError("candidateFiles must contain unique safe relative files with SHA-256 hashes");
+    seen.add(file.path);
+    files.push({ path: file.path, sha256: file.sha256 });
+  }
+  if (!seen.has(entry)) throw new TypeError("candidateFiles must include the candidate entry within candidateRoot");
+  files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  const stagedRoot = resolve(artifactsDir, "candidate");
+  const hashes: Record<string, string> = {};
+  let bytes: Buffer | undefined;
+  // Reject links in the caller tree, including directories; realpath alone would hide them.
+  for (const path of [root, ...files.map(file => join(root, file.path))]) {
+    let current = path;
+    for (;;) {
+      const info = await lstat(current);
+      if (info.isSymbolicLink() || (current === path && path !== root ? !info.isFile() : !info.isDirectory()))
+        throw new TypeError(`Candidate source must be a safe regular file: ${path}`);
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+  for (const file of files) {
+    const content = await readFile(join(root, file.path));
+    if (createHash("sha256").update(content).digest("hex") !== file.sha256)
+      throw new Error(`Locked candidate source changed: ${file.path}`);
+    const staged = join(stagedRoot, file.path);
+    await mkdir(dirname(staged), { recursive: true });
+    await writeFile(staged, content);
+    hashes[staged] = file.sha256;
+    if (file.path === entry) bytes = content;
+  }
+  if (bytes === undefined) throw new TypeError("Missing candidate entry bytes");
+  return { root: stagedRoot, sourceRoot: root, entry, files, hashes, bytes };
+}
 
 /** Preserve the requested delay while respecting Node's signed 32-bit timer range. */
 export async function waitForProfileRetry(attempt: number, retryDelayMs: number | undefined, signal?: AbortSignal): Promise<void> {
@@ -110,11 +167,12 @@ async function listArtifacts(root: string, directory: string): Promise<string[]>
   return out.sort();
 }
 
-function validateReplayProtocol(value: unknown, seed: number, warmup: number): Record<string, unknown> {
+function validateReplayProtocol(value: unknown, seed: number, warmup: number, inputUnmodified: boolean): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new ProfileStepError("Replay effective input protocol mismatch", false);
   const replay = value as Record<string, unknown>;
-  if (replay.seed !== seed || replay.warmup !== warmup)
+  const reusedInputs = replay.inputUnmodified === undefined ? true : replay.inputUnmodified;
+  if (replay.seed !== seed || replay.warmup !== warmup || reusedInputs !== inputUnmodified)
     throw new ProfileStepError("Replay effective input protocol mismatch", false);
   const captured = replay["capture"];
   if (captured === null || typeof captured !== "object" || Array.isArray(captured))
@@ -138,6 +196,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     options = { ...options, signal: AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(options.timeoutMs)]) };
   options.signal?.throwIfAborted();
   const seed = args.seed ?? 0;
+  const inputUnmodified = args.inputUnmodified === undefined ? true : args.inputUnmodified;
+  if (typeof inputUnmodified !== "boolean") throw new TypeError("inputUnmodified must be a boolean");
   const warmup = args.warmup ?? 25;
   const collection = args.collection === undefined ? "PipeTimeline,Default" : args.collection;
   if (collection !== "Default" && collection !== "PipeTimeline,Default")
@@ -179,19 +239,53 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     catch { /* Log write failures must not interrupt capture. */ }
   };
 
-  const kernelBytes = await readFile(args.kernel);
-  // Stage the candidate with a .py suffix inside dataRoot: materialized content has no extension,
-  // so spec_from_file_location cannot identify it. The staged path also satisfies the protocol
-  // subtree check; retain the original path and hash in metadata for provenance.
-  const stagedKernelPath = resolve(join(artifactsDir, "candidate_staged.py"));
-  await writeFile(stagedKernelPath, kernelBytes);
+  const tree = await stageCandidateTree(args, artifactsDir);
+  const kernelBytes = tree?.bytes ?? await readFile(args.kernel);
+  const context = execution?.sourceContext;
+  const fixedFiles: { path: string; sha256: string }[] = [];
+  if (context) {
+    if (!isAbsolute(context.dataRoot)) throw new TypeError("Profile source dataRoot must be absolute");
+    for (const [path, expected] of Object.entries(context.hashes)) {
+      if (!isAbsolute(path) || !/^[a-f0-9]{64}$/.test(expected) || !(await lstat(path)).isFile() || await realpath(path) !== path)
+        throw new TypeError(`Profile source must be a safe locked regular file: ${path}`);
+      if (sha256File(path) !== expected) throw new Error(`Locked profile source changed: ${path}`);
+      const dataPath = relative(context.dataRoot, path);
+      const inData = dataPath !== ".." && !dataPath.startsWith(`..${sep}`) && !isAbsolute(dataPath);
+      const normalized = (inData ? dataPath : relative(execution.session.workdir, path)).split(sep).join("/");
+      if (normalized === ".." || normalized.startsWith("../") || isAbsolute(normalized))
+        throw new TypeError(`Profile source is outside dataRoot and workdir: ${path}`);
+      fixedFiles.push({ path: `${inData ? "data" : "work"}/${normalized}`, sha256: expected });
+    }
+    fixedFiles.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    if (context.hashes[resolve(args.problem)] !== sha256File(args.problem))
+      throw new Error("Locked profile problem source changed or missing");
+  }
+  const selectionPolicy = "entry-first-then-declared-python/v1";
+  let kernelName = tree === null ? extractTritonKernelName(args.kernel, kernelBytes.toString("utf8")) : findTritonKernelName(kernelBytes.toString("utf8"));
+  let selectedSource = tree?.entry;
+  if (tree !== null && kernelName === undefined) {
+    for (const file of tree.files) {
+      if (file.path === tree.entry || !file.path.endsWith(".py")) continue;
+      kernelName = findTritonKernelName(await readFile(join(tree.root, file.path), "utf8"));
+      if (kernelName !== undefined) { selectedSource = file.path; break; }
+    }
+  }
+  kernelName ??= extractTritonKernelName(args.kernel, kernelBytes.toString("utf8"));
+  // Legacy materialized files may have no extension, so give those entries a Python suffix.
+  // Explicit candidate trees retain their declared paths and independent import root.
+  const stagedKernelPath = tree === null ? resolve(join(artifactsDir, "candidate_staged.py")) : join(tree.root, tree.entry);
+  if (tree === null) await writeFile(stagedKernelPath, kernelBytes);
+  const candidateHash = createHash("sha256").update(kernelBytes).digest("hex");
+  const problemHash = sha256File(args.problem);
   const request: Record<string, unknown> = {
     problem: args.problem,
     candidate: args.kernel,
-    dataRoot: dirname(resolve(args.problem)),
-    hashes: { [args.problem]: sha256File(args.problem), [args.kernel]: sha256File(args.kernel) },
-    seeds: [seed], warmup,
-    candidateSha256: sha256File(args.kernel), referenceKind: "problem-model",
+    dataRoot: context?.dataRoot ?? dirname(resolve(args.problem)),
+    ...(tree === null ? {} : { candidateRoot: tree.sourceRoot }),
+    hashes: { [args.problem]: problemHash, [args.kernel]: candidateHash,
+      ...context?.hashes, ...Object.fromEntries(tree?.files.map(file => [join(tree.sourceRoot, file.path), file.sha256]) ?? []) },
+    seeds: [seed], warmup, inputUnmodified,
+    candidateSha256: candidateHash, referenceKind: "problem-model",
     profiling: { enabled: true, collection, roundNum: args.round, cacheEnabled },
   };
   await writeFile(requestPath, JSON.stringify(request, null, 2), "utf8");
@@ -199,10 +293,10 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   const result: Record<string, unknown> = {
     schemaVersion: 1, status: "failed", error: "", kernels: [],
     metadata: {
-      outputPolicy: OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT,
+      outputPolicy: OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT, artifactRoot: basename(root),
       scope: "original-first-triton-kernel-or-file-stem",
       collection, seed, roundNum: args.round, attempts: 0, cleanup: "confirmed",
-      diagnosticProtocol: { caseId: args.caseId ?? "standalone", seeds: [seed], warmup, collection,
+      diagnosticProtocol: { caseId: args.caseId ?? "standalone", seeds: [seed], warmup, collection, inputUnmodified,
         scope: "original-first-triton-kernel-or-file-stem", capture: "after-warmup-mstx-range", selectionPolicy: "last" },
       trace: { status: "unavailable", reason: collection === "Default" ? "not-requested-by-default-protocol" : "collection-not-completed" },
       hardwareDerived: { ubRatio: "unavailable", coreUtilization: "unavailable", reason: "No explicit hardware denominators provided" },
@@ -217,33 +311,38 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     // Preserve the _prepare_wrapper request shape: absolute paths and hashes keyed by absolute path.
     const replayRequest = {
       problem: resolve(args.problem), candidate: stagedKernelPath,
-      dataRoot: dirname(resolve(args.problem)),
+      dataRoot: context?.dataRoot ?? dirname(resolve(args.problem)),
+      ...(tree === null ? {} : { candidateRoot: tree.root }),
       hashes: { [resolve(args.problem)]: (request.hashes as Record<string, string>)[args.problem],
-        [stagedKernelPath]: (request.hashes as Record<string, string>)[args.kernel] },
-      seeds: [seed], warmup,
+        [stagedKernelPath]: candidateHash, ...context?.hashes, ...tree?.hashes },
+      seeds: [seed], warmup, inputUnmodified,
     };
     const replayRequestPath = join(profilingDir, "request.json");
     await writeFile(replayRequestPath, JSON.stringify(replayRequest, null, 2), "utf8");
     metadata["sources"] = {
       candidate: { path: resolve(args.kernel), sha256: (request.hashes as Record<string, string>)[args.kernel] },
+      ...(tree === null ? {} : { candidateFiles: tree.files }),
+      ...(context === undefined ? {} : { fixedFiles }),
       problem: { path: replayRequest.problem, sha256: (request.hashes as Record<string, string>)[args.problem] },
       ...(args.contractSha256 === undefined ? {} : { contractSha256: args.contractSha256 }),
     };
 
     // Include visible devices and the target device in cache identity; timing evidence is device-specific.
-    const visibleDevices = options.env?.ASCEND_RT_VISIBLE_DEVICES ?? process.env["ASCEND_RT_VISIBLE_DEVICES"];
+    const workerEnv = kernelProcessEnvironment(atomDir, options);
+    const visibleDevices = workerEnv.ASCEND_RT_VISIBLE_DEVICES ?? workerEnv.ASCEND_VISIBLE_DEVICES;
+    const logicalDevice = workerEnv.KERNEL_NPU_DEVICE;
     const deviceScope = visibleDevices === undefined
-      ? (options.device === undefined ? undefined : `device-${options.device}`)
-      : `${visibleDevices}${options.device === undefined ? "" : `:device-${options.device}`}`;
+      ? (logicalDevice === undefined ? undefined : `device-${logicalDevice}`)
+      : `${visibleDevices}${logicalDevice === undefined ? "" : `:device-${logicalDevice}`}`;
     // Only evidence from the same post-warmup capture protocol can satisfy a cache hit.
+    if (tree !== null) metadata["kernelSelection"] = { policy: selectionPolicy, sourcePath: selectedSource, kernelName };
     const cacheScope = deviceScope === undefined ? undefined
-      : `${deviceScope}:protocol=${JSON.stringify(metadata["diagnosticProtocol"])}:problem=${(request.hashes as Record<string, string>)[args.problem]}`;
+      : `${deviceScope}:isolated-attempts/v1:protocol=${JSON.stringify(metadata["diagnosticProtocol"])}:problem=${(request.hashes as Record<string, string>)[args.problem]}${tree === null ? "" : `:candidateTree=${JSON.stringify({ entry: tree.entry, files: tree.files, selectionPolicy })}`}${context === undefined ? "" : `:sourceContext=${JSON.stringify({ problem: relative(context.dataRoot, resolve(args.problem)).split(sep).join("/"), fixedFiles })}`}`;
     const cache = cacheEnabled ? await MsProfCache.open(cacheScope, args.cacheDir, log, args.cacheMaxEntries) : null;
     metadata["cacheEnabled"] = cache !== null;
     let metrics: Record<string, Record<string, unknown>> | null = null;
     let profileDir = "";
     let metricsRecords: Record<string, unknown>[] | null = null;
-    const kernelName = extractTritonKernelName(args.kernel, kernelBytes.toString("utf8"));
 
     const cached = cache === null ? null
       : await cache.get(kernelBytes, cacheScope, log);
@@ -252,7 +351,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       // Restore cached profiles into the artifact tree so profileDir remains relative and portable.
       metrics = cached.metrics as Record<string, Record<string, unknown>>;
       metricsRecords = cached.metricsRecords;
-      const replay = validateReplayProtocol(cached.metadata["replay"], seed, warmup);
+      const replay = validateReplayProtocol(cached.metadata["replay"], seed, warmup, inputUnmodified);
       metadata["replay"] = replay;
       await writeFile(join(profilingDir, "replay.json"), JSON.stringify(replay, null, 2), "utf8");
       if (cached.profileDir !== "" && existsSync(cached.profileDir)) {
@@ -264,33 +363,26 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     } else {
       const python = (execution ? options.python : process.env["KERNEL_PROFILER_PYTHON"] ?? options.python) ?? "python";
       const msprofBin = resolveMsprofBin(args.msprofBin);
-      const outDirName = `msprof_round_${args.round}`;
-      const outputDir = join(artifactsDir, outDirName);
-      // The replay worker writes structured results to result.json instead of protocol stdout.
-      // Prefer its actual evaluation error over downstream CSV-missing symptoms when capture fails.
-      const replayResultPath = join(artifactsDir, "replay-result.json");
       const attemptTimeout = attemptTimeoutSeconds * 1000;
       let lastError: Error | null = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         metadata["attempts"] = attempt;
         log(`msprof profiling attempt ${attempt}/${maxAttempts}...`);
-        // Isolate the Triton cache per attempt to prevent stale compilations from affecting autotune.
-        const tritonCacheDir = join(artifactsDir, ".triton_cache", outDirName);
-        await rm(tritonCacheDir, { recursive: true, force: true });
-        await mkdir(tritonCacheDir, { recursive: true });
-        const env: NodeJS.ProcessEnv = {
-          ...process.env, ...options.env,
-          ...(options.device === undefined ? {} : { KERNEL_NPU_DEVICE: String(options.device) }),
-          PYTHONPATH: process.env.PYTHONPATH === undefined || process.env.PYTHONPATH === ""
-            ? atomDir : `${atomDir}${delimiter}${process.env.PYTHONPATH}`,
+        const attemptDir = join(artifactsDir, `attempt-${attempt}`);
+        const outputDir = join(attemptDir, `msprof_round_${args.round}`);
+        const replayResultPath = join(attemptDir, "replay-result.json");
+        const tritonCacheDir = join(attemptDir, ".triton_cache");
+        const consolePath = join(logsDir, attempt === 1 ? "console.log" : `console-attempt-${attempt}.log`);
+        await mkdir(attemptDir);
+        await mkdir(tritonCacheDir);
+        const env: Record<string, string> = {
+          ...workerEnv,
           TRITON_CACHE_DIR: tritonCacheDir,
           ENABLE_PRINT_UB_BITS: "true",
           TRITON_PRINT_AUTOTUNING: "1",
-          // msprof forwards only PRESERVE_ENV variables to the worker; explicitly preserve device bindings.
-          PRESERVE_ENV: ["PATH", "LD_LIBRARY_PATH", "PYTHONPATH", "TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR",
-            "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "ASCEND_VISIBLE_DEVICES", "ASCEND_AICPU_PATH",
-            "ASCEND_RT_VISIBLE_DEVICES", "KERNEL_NPU_DEVICE"].join(","),
         };
+        // msprof replays in a child process. Forward the filtered environment and the capture settings.
+        env.PRESERVE_ENV = Object.keys(env).join(",");
         try {
           const application = `${python} ${join(atomDir, "msprof_replay.py")} --request ${replayRequestPath} --output ${replayResultPath}`;
           const active = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(attemptTimeout)]);
@@ -298,8 +390,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
             args: ["op", `--output=${outputDir}`, `--application=${application}`,
               `--kernel-name=${kernelName}`, `--aic-metrics=${collection}`,
               "--mstx=on", "--mstx-include=rsi_operator_profile"],
-            cwd: artifactsDir, env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
-            input: null, outputBufferBytes: null }, active, options, join(logsDir, "console.log"), execution);
+            cwd: artifactsDir, env, inheritEnv: false,
+            input: null, outputBufferBytes: null }, active, options, consolePath, execution);
           const profDirs = (await exists(outputDir))
             ? (await readdir(outputDir)).filter(name => name.startsWith("OPPROF_")).sort()
             : [];
@@ -311,10 +403,10 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
           const coreKeys = ["aiv_vec_ratio", "aiv_scalar_ratio", "aiv_mte2_ratio", "aiv_mte3_ratio", "aic_cube_ratio"];
           if (!Object.values(table).some(row => coreKeys.some(key => typeof row[key] === "number" && Number.isFinite(row[key]) && Number(row[key]) >= 0 && Number(row[key]) <= 1)))
             throw new ProfileStepError("No valid core pipe metrics", false);
-          const replay = validateReplayProtocol(JSON.parse(await readFile(replayResultPath, "utf8")), seed, warmup);
+          const replay = validateReplayProtocol(JSON.parse(await readFile(replayResultPath, "utf8")), seed, warmup, inputUnmodified);
+          const l2 = await analyzeL2Cache(profDir);
           metadata["replay"] = replay;
           await writeFile(join(profilingDir, "replay.json"), JSON.stringify(replay, null, 2), "utf8");
-          const l2 = await analyzeL2Cache(profDir);
           for (const entry of Object.values(table)) entry["l2_cache_analysis"] = l2;
           metadata["metricUnits"] = Object.fromEntries([...new Set(Object.values(table).flatMap(row => Object.keys(row)))].map(name => [name,
             name.endsWith("_ratio") ? "ratio" : name.endsWith("(%)") ? "percent" : name.endsWith("(us)") ? "microseconds" :
@@ -377,10 +469,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
         JSON.stringify({ metrics, metadata: originalMetadata, profile_dir: profileDir }, null, 2), "utf8");
       metadata["originalMetadata"] = originalMetadata;
       if (profileDir !== "") metadata["profileDir"] = relativeTo(root, profileDir);
-      const replayJsonPath = join(profilingDir, "replay.json");
-      if (existsSync(replayJsonPath))
-        metadata["replay"] = JSON.parse(await readFile(replayJsonPath, "utf8")) as unknown;
-      const artifacts = await listArtifacts(root, profilingDir);
+      const artifacts = profileDir ? await listArtifacts(root, profileDir) : [];
       result["kernels"] = [{
         name: kernelName, metrics,
         metadata: { ...metadata }, artifacts,
@@ -391,7 +480,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
         await cache.put(kernelBytes, cacheScope, profileDir,
           metrics,
           { ...(metadata as Record<string, unknown>), round_num: args.round,
-            device: process.env["ASCEND_RT_VISIBLE_DEVICES"], problem_file: resolve(args.problem) },
+            device: visibleDevices, problem_file: resolve(args.problem) },
           metricsRecords);
     }
   } catch (error) {

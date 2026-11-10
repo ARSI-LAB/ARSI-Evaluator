@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { kernelProcessEnvironment } from "./environment.js";
+import { parseKernelSeeds } from "./seeds.js";
 
 const execFileAsync = promisify(execFile);
 export const MAX_KERNEL_TIMER_MS = 2147483647;
@@ -127,14 +129,7 @@ async function runEntry(sub: string, entry: string, argv: readonly string[], out
   options: KernelExecOptions = {}): Promise<Record<string, unknown>> {
   validateKernelExecOptions(options);
   const atomDir = resolveAtomDir(sub, options);
-  const env = {
-    ...process.env,
-    ...options.env,
-    ...(options.device === undefined ? {} : { KERNEL_NPU_DEVICE: String(options.device) }),
-    PYTHONPATH: process.env.PYTHONPATH === undefined || process.env.PYTHONPATH === ""
-      ? atomDir
-      : `${atomDir}${delimiter}${process.env.PYTHONPATH}`,
-  };
+  const env = kernelProcessEnvironment(atomDir, options);
   let payload: Record<string, unknown> | undefined;
   try {
     const { stdout } = await execFileAsync(options.python ?? "python",
@@ -189,7 +184,7 @@ export interface KernelPrecisionResult extends Record<string, unknown> {
 /** Run twice per seed against problem.Model with the kernel correctness tolerances. */
 export async function kernelPrecision(args: KernelBenchArgs & { seeds?: number[] },
   options: KernelExecOptions = {}): Promise<KernelPrecisionResult> {
-  const seeds = args.seeds ?? [0, 1];
+  const seeds = parseKernelSeeds(args.seeds ?? [0, 1]);
   const payload = await runEntry("precision", "precision.py",
     ["precision", "--problem", args.problem, "--kernel", args.kernel, "--out", args.out,
       "--seeds", ...seeds.map(String)],

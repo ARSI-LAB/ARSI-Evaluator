@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 CHECKS = ('entry', 'shape', 'dtype', 'device', 'layout', 'independent-output', 'input-unmodified', 'numerical')
+CHECK_INDEX = {name: index for index, name in enumerate(CHECKS)}
 
 
 def error_owner(exc):
@@ -84,11 +85,15 @@ def evaluate(request, profile_root, api):
     timer = api['load_module'](Path('runtime/timing.py'), 'kernel_strict_timer')
     if not timer.IS_NPU: raise RuntimeError('kernel benchmark did not select NPU')
     problem = api['load_task_module'](request['problem'], request['dataRoot'], 'problem')
-    seed, call = request['seeds'][0], 0
+    # new_assessment emits checks in seed, call, CHECKS order, including unattempted calls.
+    check_offset = 0
+    call_failed = False
 
     def mark(name, message=''):
-        check = next(c for c in assessment['checks'] if c['seed'] == seed and c['call'] == call and c['id'] == name)
+        nonlocal call_failed
+        check = assessment['checks'][check_offset + CHECK_INDEX[name]]
         check.update(status='failed' if message else 'passed', message=message)
+        if message: call_failed = True
 
     def invoke(function, inputs, synchronize=True):
         try:
@@ -103,7 +108,7 @@ def evaluate(request, profile_root, api):
             raise
 
     try:
-        candidate = api['load_task_module'](request['candidate'], request['dataRoot'], 'kernel').kernel_function
+        candidate = api['load_task_module'](request['candidate'], request.get('candidateRoot', request['dataRoot']), 'kernel').kernel_function
         if not callable(candidate): raise TypeError('kernel_function must be callable')
     except Exception as exc:
         if error_owner(exc) == 'candidate':
@@ -112,7 +117,7 @@ def evaluate(request, profile_root, api):
             raise api['CandidateError'](str(exc)) from exc
         raise
     with torch.inference_mode():
-        for seed in request['seeds']:
+        for seed_index, seed in enumerate(request['seeds']):
             random.seed(seed); torch.manual_seed(seed); torch.npu.manual_seed_all(seed)
             init = problem.get_init_inputs() if hasattr(problem, 'get_init_inputs') else []
             reference = problem.Model(*init).to(f'npu:{device}').eval()
@@ -129,8 +134,10 @@ def evaluate(request, profile_root, api):
             output_contract = contract['output']
             if not isinstance(expected, torch.Tensor) or list(expected.shape) != output_contract['shape'] or str(expected.dtype) != 'torch.' + output_contract['dtype'] or str(expected.device) != f'npu:{device}':
                 raise ValueError('Reference output metadata differs from contract')
-            api['compare_tree'](inputs, ref_inputs, torch, 0, 0)
+            if contract['inputUnmodified']:
+                api['compare_tree'](inputs, ref_inputs, torch, 0, 0)
             for call in range(2):
+                check_offset = (seed_index * 2 + call) * len(CHECKS)
                 trial = api['clone_tree'](inputs, torch)
                 original_metadata = [input_identity(value) for value in trial]
                 actual = invoke(candidate, trial)
@@ -148,13 +155,28 @@ def evaluate(request, profile_root, api):
                     api['compare_tree'](expected, actual, torch, request['rtol'], request['atol'])
                     mark('numerical')
                 except (AssertionError, ValueError) as exc: mark('numerical', str(exc))
-                if any(c['status'] == 'failed' for c in assessment['checks']):
+                if call_failed:
                     assessment['errorOwnership'] = 'candidate'
                     api['verify_hashes'](request['hashes'])
                     return {'status': 'incorrect', 'error': 'Strict kernel check failed'}
-        reference_audit, candidate_audit = {}, {}
-        reference_ms = api['positive_measurement'](timer.bench_kernel_ms(lambda: reference(*inputs), warmup=request['warmup'], active=request['repeat'], prof_dir=str(profile_root / 'profile-reference'), keep_res=True, triton_only=False, audit=reference_audit))
-        candidate_ms = api['positive_measurement'](timer.bench_kernel_ms(lambda: invoke(candidate, inputs, synchronize=False), warmup=request['warmup'], active=request['repeat'], prof_dir=str(profile_root / 'profile-candidate'), keep_res=True, triton_only=False, audit=candidate_audit))
+
+        def measure(name, run):
+            audit = {}
+            options = dict(warmup=request['warmup'], active=request['repeat'], prof_dir=str(profile_root / f'profile-{name}'),
+                           keep_res=True, triton_only=False, audit=audit)
+            if contract['inputUnmodified']:
+                ms = timer.bench_kernel_ms(lambda: run(inputs), **options)
+            else:
+                bench = getattr(timer, 'bench_prepared_kernel_ms', None)
+                if not callable(bench):
+                    raise RuntimeError('Mutable-input contracts require a timer with bench_prepared_kernel_ms')
+                ms = bench(run, lambda: api['clone_tree'](inputs, torch), **options)
+                if audit.get('stepLayout') != 'prepare-then-run':
+                    raise RuntimeError('Mutable-input timer must emit prepare-then-run timing evidence')
+            return api['positive_measurement'](ms), audit
+
+        reference_ms, reference_audit = measure('reference', lambda trial: reference(*trial))
+        candidate_ms, candidate_audit = measure('candidate', lambda trial: invoke(candidate, trial, synchronize=False))
     api['verify_hashes'](request['hashes'])
     return {'status': 'passed', 'error': '', 'referenceMs': reference_ms, 'candidateMs': candidate_ms, 'speedup': reference_ms / candidate_ms,
             'timingEvidence': {'schemaVersion': 2, 'method': 'profiler-flow/v1', 'reference': reference_audit, 'candidate': candidate_audit}}

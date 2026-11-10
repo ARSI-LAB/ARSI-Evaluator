@@ -4,7 +4,8 @@ import { expectRecord, expectNonEmptyString, rejectUnknown } from "../../../../c
 
 export const KERNEL_CHECK_IDS = ["entry", "shape", "dtype", "device", "layout", "independent-output", "input-unmodified", "numerical"] as const;
 export type KernelCheckId = typeof KERNEL_CHECK_IDS[number];
-type TensorContract = { shape: number[]; dtype: "float16"; contiguous: boolean };
+const TENSOR_DTYPES = ["float16", "bfloat16", "float32"] as const;
+type TensorContract = { shape: number[]; dtype: typeof TENSOR_DTYPES[number]; contiguous: boolean };
 export type KernelContract = { schemaVersion: 1; caseId: string; inputs: TensorContract[];
   output: TensorContract & { independent: boolean }; inputUnmodified: boolean };
 export type KernelCheck = { id: KernelCheckId; seed: number; call: number;
@@ -19,9 +20,11 @@ export type KernelAssessment = { schemaVersion: 1; contractSha256: string; check
 function tensor(value: unknown, output = false): TensorContract & { independent?: boolean } {
   const r = expectRecord(value, "contract tensor");
   rejectUnknown(r, output ? ["shape", "dtype", "contiguous", "independent"] : ["shape", "dtype", "contiguous"], "contract tensor");
-  if (!Array.isArray(r.shape) || !r.shape.length || r.shape.some(n => !Number.isSafeInteger(n) || n <= 0)) throw new TypeError("contract tensor.shape must contain positive integers");
-  if (r.dtype !== "float16" || typeof r.contiguous !== "boolean" || (output && typeof r.independent !== "boolean")) throw new TypeError("Invalid contract tensor dtype/layout");
-  return { shape: r.shape as number[], dtype: r.dtype, contiguous: r.contiguous,
+  if (!Array.isArray(r.shape) || r.shape.some(n => !Number.isSafeInteger(n) || n <= 0)) throw new TypeError("contract tensor.shape must contain positive integers");
+  const dtype = TENSOR_DTYPES.find(value => value === r.dtype);
+  if (dtype === undefined) throw new TypeError("contract tensor.dtype must be float16, bfloat16 or float32");
+  if (typeof r.contiguous !== "boolean" || (output && typeof r.independent !== "boolean")) throw new TypeError("Invalid contract tensor layout");
+  return { shape: r.shape as number[], dtype, contiguous: r.contiguous,
     ...(output ? { independent: r.independent as boolean } : {}) };
 }
 export function parseKernelContract(value: unknown): KernelContract {
@@ -40,11 +43,12 @@ export function parseKernelAssessment(value: unknown, contract: KernelContract, 
   rejectUnknown(r, ["schemaVersion", "contractSha256", "checks", "effectiveProtocol", "environment", "errorOwnership"], "kernel assessment");
   if (r.schemaVersion !== 1 || r.contractSha256 !== kernelContractDigest(contract)) throw new TypeError("Invalid kernel assessment contract identity");
   if (!Array.isArray(r.checks) || r.checks.length !== seeds.length * 2 * KERNEL_CHECK_IDS.length) throw new TypeError("Incomplete kernel checks");
+  const expectedSeeds = new Set(seeds);
   const seen = new Set<string>();
   const checks = r.checks.map(v => {
     const c = expectRecord(v, "kernel check");
     rejectUnknown(c, ["id", "seed", "call", "status", "message"], "kernel check");
-    if (!KERNEL_CHECK_IDS.some(id => id === c.id) || !seeds.includes(c.seed as number) || (c.call !== 0 && c.call !== 1) ||
+    if (!KERNEL_CHECK_IDS.some(id => id === c.id) || !expectedSeeds.has(c.seed as number) || (c.call !== 0 && c.call !== 1) ||
       !["passed", "failed", "not-run"].includes(String(c.status)) || typeof c.message !== "string") throw new TypeError("Invalid kernel check");
     const key = `${c.seed}/${c.call}/${c.id}`;
     if (seen.has(key)) throw new TypeError("Duplicate kernel check");
