@@ -6,8 +6,10 @@ import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
 import { bindSolverService } from "../../core/contracts/plugin.js";
 import { AgentXReplaySolver, parseAgentXReplayConfig } from "./agentx-replay.js";
 import { KernelReplaySolver } from "./kernel-replay.js";
+import { CodexSolver, parseCodexConfig } from "./codex.js";
 
 export function apply(ctx: Context): void {
+  ctx.evaluator.register("solver", "codex", parseCodexConfig, (_config, runtime) => new CodexSolver(bindSolverService(runtime)));
   ctx.evaluator.register("solver", "choice-logprobs", parseChoiceLogprobsConfig, (config, runtime) => {
     const { model, auth } = bindSolverService(runtime);
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);

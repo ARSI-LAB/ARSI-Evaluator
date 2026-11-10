@@ -10,6 +10,7 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | --- | --- | --- |
 | `simpleagent` | 内置 Pi Agent，普通质量题与需要工具/文件操作的任务 | 支持工具调用的模型 API；可选 Pi Bundle |
 | `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm、pi 或 Dify Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
+| `codex` | 用 Codex CLI 解文本题、执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
@@ -89,6 +90,33 @@ benchmark:
 ```
 
 两项都要填写，最大值不能小于默认值；该片段保留默认的 `simpleagent`。工具调用时实际超时不超过最大值。
+
+## 使用 Codex
+
+`codex` 在本机或 Docker 的任务目录运行 Codex CLI。Evaluator 在首次准备时安装固定版本 `0.167.0`，认证来自所选模型服务。将以下配置保存为实验 YAML，设置 `CODEX_MODEL`、`CODEX_ENDPOINT` 和 `CODEX_API_KEY` 后运行。
+
+```yaml
+services:
+  codex:
+    model: ${CODEX_MODEL}
+    base_url: ${CODEX_ENDPOINT}
+    api: openai-responses
+    api_key: ${CODEX_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: codex
+    service: codex
+environment: local
+run:
+  maxTasks: 1
+output:
+  directory: ./results/codex
+```
+
+- `base_url` 填 API 基址，例如 `https://api.openai.com/v1`，Codex 在该地址下请求 `/responses`。可用 `contextWindow` 指定自动压缩阈值。此 Solver 不支持服务字段 `maxTokens` 和 `retry`。
+- 本机使用 Codex 的 `workspace-write` 沙箱。Windows 沙箱拒绝任务的 shell 命令时，可在 Docker 或 WSL 中运行需要写文件的评测。TerminalBench 等容器任务选择 `environment: docker`。
+- 此 Solver 接收文本任务。显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。每次 attempt 的 `agent/` 保存 Codex 事件、Evaluator 轨迹和 stderr，评分仍由所选 Benchmark 或 Verifier 执行。
 
 ## 使用 AgentBundle
 
