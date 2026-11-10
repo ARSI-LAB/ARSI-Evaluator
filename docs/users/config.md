@@ -121,7 +121,7 @@ Configure download sources, proxies and image acquisition with a separate [netwo
 
 Pi/SimpleAgent and built-in judges with explicit OpenAI Chat Completions `base_url` send `services.<service>.maxTokens` only when configured. Omission sends neither `max_tokens` nor `max_completion_tokens`; the API decides. SDK model budgets still manage local context without hidden output caps. Registered providers retain SDK protocol defaults; external agents retain their own mechanisms.
 
-Pi local budgets prefer explicit `maxTokens`, packaged [model defaults](../../src/adapters/harness/pi/model-defaults.json), registered model settings, then `128000`. Defaults match model ID or `provider/model-ID`, preferring the latter, and participate in runtime digests. Server output/context limits may still truncate. Evaluator preserves actual termination reasons rather than accepting truncated output as valid scoring.
+Pi local budgets prefer explicit `maxTokens`, packaged [model defaults](../../src/runtimes/pi/model-defaults.json), registered model settings, then `128000`. Defaults match model ID or `provider/model-ID`, preferring the latter, and participate in runtime digests. Server output/context limits may still truncate. Evaluator preserves actual termination reasons rather than accepting truncated output as valid scoring.
 
 ### Environment Preparation Timeouts
 
@@ -281,3 +281,7 @@ Plugin authors: see [profile publication](../development/benchmarks.en.md#publis
 `ember-evaluator retry --run <run-id>` creates attempts for current network failures in the original run. Valid zeros, ordinary phase timeouts, and non-network errors are ineligible. Network operations retry within their own bounds rather than whole tasks; each manual request may add one eligible attempt. Removed `run.taskRetry` must be deleted from old YAML. Ray Jobs connects the original gateway through separate `deployment`, not a Scheduler plugin. See [network recovery](network-retry.md).
 
 [User guide](README.md) · [Quick start](quick-start.md)
+
+## Multimodal input
+
+Model services accept optional `inputModalities: [text, image, pdf]`. Declare only the capabilities implemented by your target endpoint. See [image and PDF evaluation](multimodal.md) for task attachments and Harness restrictions.

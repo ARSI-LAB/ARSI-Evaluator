@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { Evaluator } from "../../src/evaluator.js";
+import { Evaluator } from "../../src/application/evaluator.js";
 
 const roots: string[] = [];
 afterEach(async () => {

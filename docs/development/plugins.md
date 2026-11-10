@@ -101,65 +101,71 @@ export function apply(ctx) {
 
 执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，bootstrap 和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
 
-使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。加载前需要编译为 JavaScript，CLI 不直接加载 `.ts` 入口。
+使用 TypeScript 开发时，可从 `ember-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。发布产物只加载已编译的 JavaScript；从源码启动的 `pnpm dev` 会按清单回退到对应的 `.ts` 文件。
 
-## 仓库内插件与 `ember-plugin.json`
 
-`plugins/<id>/` 下的插件要想进入构建产物，必须提供 `plugins/<id>/ember-plugin.json`。`pnpm build` 扫描该目录后依次校验清单、按清单构建（`tsc` 类型检查，可选再执行插件自带的打包脚本），再把声明的文件复制到 `dist/plugins/<id>/`。没有清单的目录不编译、不复制，只能在源码中直接 import。
+## 仓库插件构建与扩展
 
-构建方式有两种：
-
-- **只做类型检查 + `tsc` 输出**：只声明 `build.tsconfig`，适用于代码直接编译为 ESM 的插件。
-- **自定义打包脚本**：声明 `build.script`，由插件自己的脚本产出 `dist/`，适用于需要 esbuild 打包、生成资源哈希或复制静态资源的插件（如 aisbench、docops）。两种方式可以叠加，先执行 `tsc` 校验，再执行脚本。
-
-构建把仓库插件的可执行入口汇总到 `dist/bundled-plugins.patch.yaml`，CLI、SDK 和 Ray 在初始化注册表时都会加载。插件声明了 `patch` 时，保留其中的模块 ID，并把原 patch 一并安装到 `dist/plugins/<id>/`。只声明 `entry` 时，使用清单的 `id` 注册模块。以 [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json) 为例：
+`pnpm build` 扫描 `plugins/*/ember-plugin.json`，依次校验清单、按清单构建，并把声明的文件安装到 `dist/plugins/<id>/`；构建同时生成 `dist/bundled-plugins.patch.yaml` 和索引 `dist/plugins/index.json`。没有清单的目录不编译、不复制，只能在源码中直接 import。
 
 ```json
 {
-  "id": "aisbench",
-  "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
+  "id": "example",
   "entry": "./dist/index.js",
-  "bundled": true,
-  "patch": "cordis.patch.yaml",
-  "build": { "tsconfig": "tsconfig.json", "script": "scripts/build.mjs", "install": ["dist"] }
+  "cli": "./dist/cli-register.js",
+  "flags": [
+    { "command": "run", "flag": "--example [url]", "description": "Enable example", "config": "url" }
+  ],
+  "build": {
+    "tsconfig": "./tsconfig.json",
+    "install": ["dist", { "from": "assets", "to": "dist/assets" }]
+  }
 }
 ```
 
-随包插件可直接在实验配置中使用。
-
-```bash
-ember-evaluator run experiment.yaml
-```
-
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `id` | 是 | 必须与目录名一致，同时决定 `dist/plugins/<id>/` 的位置 |
-| `description` | 否 | 插件说明 |
-| `version` | 否 | 省略时继承根 `package.json` 的版本，避免两处维护 |
-| `entry` | 否 | 编译后的 JS 入口，未声明 `patch` 时用于默认加载 |
-| `bundled` | 否 | 随包发布的描述字段，默认注册由已安装的入口决定 |
-| `patch` | 否 | 指向插件目录下的 `cordis.patch.yaml`；构建时复制到 `dist/plugins/<id>/`，并把其中 `./dist/` 前缀改写为 `./` |
-| `build.tsconfig` | 有 `build` 且无 `build.script` 时必填 | 插件自己的 tsconfig，用于类型检查（`noEmit`）或输出到 `dist` |
-| `build.script` | 有 `build` 且无 `build.tsconfig` 时必填 | 插件自带的 Node 打包脚本，以插件目录为工作目录执行，负责产出 `dist/` |
-| `build.install` | 有 `build` 时必填 | 要放进运行时的路径；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置 |
+ID 必须与目录名一致。version 默认继承宿主包版本。entry 是 Cordis 入口，cli 是可选的 CLI 注册模块。build.tsconfig 和 build.script 都可省略：只安装已编译的 JavaScript 时给出 build.install 即可，声明 tsconfig 时构建会执行 tsc。build.install 必填；`dist` 的内容平铺到 `dist/plugins/<id>/`，其他路径保留相对位置。安装后清单的相对路径仍然有效，越界路径和符号链接会被拒绝。
 
 构建产物：
 
 ```text
 dist/plugins/
-├── aisbench/
+├── <id>/
 │   ├── ember-plugin.json  # 原样复制，便于运行时追溯来源
-│   ├── cordis.patch.yaml  # 由清单的 patch 复制，./dist/ 前缀已改写为 ./
-│   ├── index.js
-│   ├── profiles/...
-│   └── runtime/...
-└── docops/
-    ├── ember-plugin.json
-    ├── cordis.patch.yaml
-    └── index.js
+│   ├── cordis.patch.yaml  # 仅在清单声明 patch 时存在
+│   └── index.js
 ```
 
-清单中的 `entry` 是相对插件目录的编译产物路径（如 `./dist/index.js`），安装后位于 `dist/plugins/<id>/` 下。
+清单中的 entry 是相对插件目录的编译产物路径（如 `./dist/index.js`），安装后位于 `dist/plugins/<id>/` 下。从 TypeScript 源码直接启动（`pnpm dev`）时，若声明的产物不存在，入口回退到对应的 `.ts` 文件；发布产物只加载已编译的 JavaScript。
+
+只给已有命令加参数时，可声明 `flags` 而不写 CLI 模块：宿主按清单注册参数，command 目前仅支持 `run`；flag 支持 `--name`、`--name <value>`、`--name [value]`；config 指定写入插件配置的键，声明 config 时 flag 必须能取值。`flags` 与 `cli` 可以同时使用，冲突检查覆盖两者。需要自己的子命令或动态逻辑时，再提供 `cli` 模块。
+
+需要 esbuild 等自定义产物的插件可声明 `build.script`，以插件目录为工作目录执行，由脚本自行产出 `dist`；同时声明 `build.tsconfig` 时先执行 `tsc`，再执行脚本。只通过 `--patch` 加载的插件声明 `patch`，构建时复制 `cordis.patch.yaml` 到安装目录，并把其中 `./dist/` 前缀改写为 `./`。
+
+CLI 模块导出 `registerCli(cli: PluginCliRegistrar)`，公共类型从 `ember-evaluator` 导入：
+
+```ts
+export function registerCli(cli: PluginCliRegistrar): void {
+  cli.addCommand({ name: "example", description: "Example tools", async run(argv, io, signal) {
+    const { run } = await import("./command.js");
+    return run(argv, io, signal);
+  } });
+  cli.extendCommand("run", {
+    flags: "--example [url]", description: "Enable example",
+    configure(value, activation) { activation.enable(typeof value === "string" ? { url: value } : {}); },
+  });
+}
+```
+
+宿主先发现安装索引和显式 --patch，加载注册声明，再严格解析完整参数。命令、参数及别名冲突时直接报错，不覆盖内置功能。注册阶段不能启动进程、访问网络或打开数据库。patch 插件可在 Cordis 入口同时导出 registerCli，无需 manifest；随包插件和 patch 插件不能使用相同 ID。
+
+运行扩展通过 `ctx.evaluator.registerStoreDecorator(name, validate, factory)` 注册，factory 返回接收底层 Store 的包装函数。宿主记录所属插件，注册名不必等于模块 ID，只为显式启用的插件创建包装。validate 在组件工厂之前执行；使用 Cordis effect 释放资源、runtime.signal 取消网络操作，并保留底层 Store 的可选能力和真实返回值。
+
+SDK 使用 `overrides.plugins: [{ id, config }]` 启用扩展。配置只包含可持久化 JSON，凭证使用环境变量引用。manifest.json 中的 pluginRuntime.plugins 保存启用项和配置，resume/retry 自动恢复；显式传入不同配置拒绝续跑。
+
+tracer 的 `--tracer [url]` 和 `tracer serve/stop/status/logs` 均由 plugins/tracer 注册。SDK 可通过 tokenEnv 指定认证环境变量，不接受 token 明文。默认数据目录为工作目录下的 .cache/tracer。Ray Jobs 把可移植扩展配置传给协调端；worker 只加载预装模块进行注册和版本检查，不创建协调端 Store 包装。tracer 采集协调端已导入的远端证据，不代表 worker 轨迹实时流。
+
+构建摘要包含带 manifest 的插件源码及资源，排除 dist、依赖和缓存。默认测试集自动发现这些插件下的 tests/**/*.test.ts。新增插件不需要修改 src、根 TypeScript include 或测试列表。
+
 
 ## 用 `--patch` 引用外部插件
 
@@ -194,7 +200,7 @@ metrics:                       # 显式列表会替换默认指标，需保留�
     # config: {}               # 组件参数写在这里；本示例插件不接受非空参数
 ```
 
-`--patch` 在默认组件之外追加插件。相同 ID 和入口摘要只注册一次，相同 ID 的不同模块会报错。
+运行时显式指定 patch；省略 `--patch` 时只加载内置组件：
 
 ```bash
 ember-evaluator run experiments/gsm8k.yaml --patch <path>/plugins/cordis.patch.yaml

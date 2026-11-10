@@ -2,13 +2,13 @@ import { expect, test, vi } from "vitest";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NpuKernelBackend } from "../../src/adapters/kernel/npu.js";
-import { readProcess } from "../../src/adapters/verifiers/process.js";
-import { startLocalProcess } from "../../src/plugins/environments/process.js";
-import { parseKernelConfig } from "../../src/plugins/benchmarks/protocols/kernel/index.js";
-import { MsProfCache } from "../../src/plugins/benchmarks/protocols/kernel/msprof-cache.js";
+import { NpuKernelBackend } from "../../src/plugins/benchmarks/operator/kernel/runtime/npu.js";
+import { readProcess } from "../../src/infrastructure/process/output.js";
+import { startLocalProcess } from "../../src/infrastructure/process/local.js";
+import { parseKernelConfig } from "../../src/plugins/benchmarks/operator/kernel/index.js";
+import { MsProfCache } from "../../src/plugins/benchmarks/operator/kernel/msprof-cache.js";
 import { parseArgs } from "../../src/cli.js";
-import { kernelBench, kernelPrecision, validateKernelExecOptions } from "../../src/adapters/kernel/cli.js";
+import { kernelBench, kernelPrecision, validateKernelExecOptions } from "../../src/plugins/benchmarks/operator/kernel/runtime/cli.js";
 import type { EnvironmentSession } from "../../src/core/contracts/environment.js";
 
 test("kernel configuration accepts large seed sets and explicit resource limits", () => {

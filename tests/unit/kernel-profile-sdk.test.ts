@@ -3,8 +3,8 @@ import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/pr
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { kernelProfile } from "../../src/adapters/kernel/profile.js";
-import { KernelBenchmark, parseKernelConfig } from "../../src/plugins/benchmarks/protocols/kernel/index.js";
+import { kernelProfile } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
+import { KernelBenchmark, parseKernelConfig } from "../../src/plugins/benchmarks/operator/kernel/index.js";
 import type { EnvironmentSession, CommandSpec, ProcessHandle } from "../../src/core/contracts/environment.js";
 
 async function fixture(

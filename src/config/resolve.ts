@@ -1,10 +1,12 @@
 import { basename, extname, join } from "node:path";
-import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/timeouts.js";
+import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/policies/timeouts.js";
 import { fileURLToPath } from "node:url";
 import { parseEffectiveConfig } from "./effective.js";
 import { parseDeployment } from "./deployment.js";
-import { profileChain, validateProfiles, type ProfileLayer, type ResolvedProfiles } from "./profiles.js";
-import { DEFAULT_LOCAL_CONCURRENCY, expectNonEmptyString, expectRecord, type CliOverrides, type EffectiveConfig, type Selection } from "./schema.js";
+import { profileChain, validateProfiles, type ProfileLayer, type ResolvedProfiles } from "./profile-schema.js";
+import { DEFAULT_LOCAL_CONCURRENCY } from "./defaults.js";
+import { expectNonEmptyString, expectRecord } from "../core/validation/input.js";
+import { type CliOverrides, type EffectiveConfig, type Selection } from "../core/contracts/config.js";
 import { normalizeComponentSelection, normalizeSelection, parseUserConfig, type UserConfig } from "./user-schema.js";
 
 export type ConfigOrigins = Record<string, string>;
@@ -81,7 +83,7 @@ function servicesInput(services: UserConfig["services"]): Record<string, unknown
     return [name, { name: expectNonEmptyString(model.model, `services.${name}.model`),
       endpoint: expectNonEmptyString(model.base_url, `services.${name}.base_url`), api: model.api ?? "openai-completions",
       ...(model.api_key === undefined ? {} : { apiKey: model.api_key }),
-      ...Object.fromEntries((["provider", "maxTokens", "contextWindow", "retry"] as const).filter(key => model[key] !== undefined).map(key => [key, model[key]])) }];
+      ...Object.fromEntries((["provider", "maxTokens", "contextWindow", "retry", "inputModalities"] as const).filter(key => model[key] !== undefined).map(key => [key, model[key]])) }];
   }));
 }
 

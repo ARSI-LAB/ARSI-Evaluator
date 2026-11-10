@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { setTimeout as delay } from "node:timers/promises";
-import { waitForProfileRetry } from "../../src/adapters/kernel/profile.js";
+import { waitForProfileRetry } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
 
 vi.mock("node:timers/promises", async importOriginal => ({
   ...await importOriginal<typeof import("node:timers/promises")>(),

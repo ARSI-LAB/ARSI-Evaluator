@@ -1,10 +1,11 @@
+import { kernelProfile } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { kernelBench, kernelPrecision, kernelProfile } from "../../src/adapters/kernel/cli.js";
-import { NpuKernelBackend } from "../../src/adapters/kernel/npu.js";
-import { LocalEnvironment } from "../../src/plugins/environments/local.js";
+import { kernelBench, kernelPrecision } from "../../src/plugins/benchmarks/operator/kernel/runtime/cli.js";
+import { NpuKernelBackend } from "../../src/plugins/benchmarks/operator/kernel/runtime/npu.js";
+import { LocalEnvironment } from "../../src/plugins/environments/local/environment.js";
 
 const python = process.env.PYTHON_BIN ?? "python3";
 const linuxPython = process.platform === "linux" && spawnSync(python, ["--version"]).status === 0;
@@ -29,7 +30,7 @@ test.skipIf(!linuxPython).each(["sdk-evaluate", "sdk-profile", "precision", "ben
     const keys = ["ASCEND_HOME_PATH", "ASCEND_OPP_PATH", "TOOLCHAIN_HOME", "ASCEND_RT_VISIBLE_DEVICES", "KERNEL_NPU_DEVICE",
       "OPENAI_API_KEY", "ASCEND_PRIVATE_TOKEN", "HTTPS_PROXY", "MY_KERNEL_SETTING"];
     const probe = `{k: os.environ.get(k) for k in ${JSON.stringify(keys)}}`;
-    vi.stubEnv("KERNEL_ATOM_DIR", resolve("src/adapters/kernel"));
+    vi.stubEnv("KERNEL_ATOM_DIR", resolve("src/plugins/benchmarks/operator/kernel/runtime"));
     vi.stubEnv("OPENAI_API_KEY", "fixture-key");
     vi.stubEnv("ASCEND_PRIVATE_TOKEN", "fixture-token");
     vi.stubEnv("HTTPS_PROXY", "http://fixture:password@localhost");

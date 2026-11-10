@@ -99,4 +99,4 @@ plugins/aisbench/
 
 `pnpm --dir plugins/aisbench check:package` 打包已构建的宿主和插件，在源码目录外新建消费者安装 tarball，验证加载隔离、doctor、dry-run、provider 版本和无凭据离线报告。需能安装宿主依赖；私有依赖不可访问时可用 `--dependency-overrides <json-file>` 显式提供本地 `.tgz`，结果会记录替代项。
 
-上游 [aisbench_auto_tools_prefix](https://github.com/rayn-zzz/aisbench_auto_tools_prefix/tree/ac06bd619726663ac8c7b0c84c9b3cdbb041b062) 固定 revision 为 `ac06bd619726663ac8c7b0c84c9b3cdbb041b062`，来源和许可见 [NOTICE](runtime/upstream/NOTICE.md) 与 [LICENSE](runtime/upstream/LICENSE)。真实 SSH、AISBench 和模型吞吐/延迟需部署环境验收，受控测试不能替代实际压测。
+上游 [aisbench_auto_tools_prefix](https://github.com/rayn-zzz/aisbench_auto_tools_prefix/tree/ac06bd619726663ac8c7b0c84c9b3cdbb041b062) 固定 revision 为 `ac06bd619726663ac8c7b0c84c9b3cdbb041b062`，来源和许可见 [NOTICE](runtime/upstream/NOTICE.md) 与 [LICENSE](runtime/upstream/LICENSE)。

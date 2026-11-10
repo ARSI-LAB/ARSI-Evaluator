@@ -1,7 +1,8 @@
+import { loadAttachments } from "../../runtimes/multimodal/input.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { join, posix } from "node:path";
 
-import type { ModelConfig, RuntimeAuth } from "../../config/schema.js";
+import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
 import type {
   EnvironmentSession,
   RuntimeInstallation,
@@ -10,12 +11,12 @@ import type {
 import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, PreparedSolver, Solver } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
-import { createPiRuntimeInstallation } from "../../adapters/harness/pi/package-runtime.js";
-import { disposePiBundle, stagePiBundle, type PiBundleOptions, type StagedPiBundle } from "../../adapters/harness/pi/bundle.js";
-import { projectRunnerInput } from "../../adapters/harness/pi/protocol.js";
-import { consumePiRunner, PiRunnerError } from "../../adapters/harness/pi/process.js";
-import { parseShellToolPolicy, type ShellToolPolicy } from "../../adapters/harness/pi/tool-policy.js";
-import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../config/schema.js";
+import { createPiRuntimeInstallation } from "../../runtimes/pi/package-runtime.js";
+import { disposePiBundle, stagePiBundle, type PiBundleOptions, type StagedPiBundle } from "../../runtimes/pi/bundle.js";
+import { projectRunnerInput } from "../../runtimes/pi/protocol.js";
+import { consumePiRunner, PiRunnerError } from "../../runtimes/pi/process.js";
+import { parseShellToolPolicy, type ShellToolPolicy } from "../../runtimes/pi/tool-policy.js";
+import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/validation/input.js";
 
 export class SimpleAgentError extends Error {
   constructor(
@@ -76,6 +77,7 @@ function mappedModel(session: EnvironmentSession, model: ModelConfig): ModelConf
 }
 
 export class SimpleAgentSolver implements Solver {
+  readonly inputModalities = ["text", "image"] as const;
   private staged: Promise<StagedPiBundle> | undefined;
 
   constructor(
@@ -128,8 +130,8 @@ export class SimpleAgentSolver implements Solver {
       throw new SimpleAgentError("ENV_RUNTIME_INSTALL_FAILED", "simpleagent requires an environment-prepared runtime");
     }
     return local(session)
-      ? join(runtime.root, "dist", "adapters", "harness", "pi", "runner.js")
-      : posix.join(runtime.root, "dist", "adapters", "harness", "pi", "runner.js");
+      ? join(runtime.root, "dist", "runtimes", "pi", "runner.js")
+      : posix.join(runtime.root, "dist", "runtimes", "pi", "runner.js");
   }
 
   /** Extension entry paths inside the target environment, or undefined without a bundle. */
@@ -152,6 +154,7 @@ export class SimpleAgentSolver implements Solver {
   ): Promise<SolveResult> {
     const extensions = await this.extensions(session, context.signal);
     const runnerInput = projectRunnerInput({
+      ...(input.attachments?.length ? { media: await loadAttachments(input, session, context) } : {}),
       key: context.key,
       input,
       model: mappedModel(session, this.model),

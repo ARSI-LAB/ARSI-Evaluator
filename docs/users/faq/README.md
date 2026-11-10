@@ -10,7 +10,7 @@ Choose the entry matching your issue. Dedicated guides define full configuration
 
 ### Why does installing SimpleAgent also install AgentBundle?
 
-Evaluator needs the AgentBundle SDK when importing built-in plugins, so pnpm downloads and builds it even when you select SimpleAgent. No manual clone is required, but the installation machine needs read access to the private GitHub repository. This differs from evaluated `AGENT_BUNDLE_PATH`. See [installation](../installation.md#install-from-source).
+Evaluator imports the AgentBundle SDK with its built-in plugins, so pnpm fetches and builds it even when you select SimpleAgent. `AGENT_BUNDLE_PATH` points to the bundle you want to evaluate. [Installation guide](../installation.md#install-from-source)
 
 ### Why is the command or configuration missing after changing directories?
 

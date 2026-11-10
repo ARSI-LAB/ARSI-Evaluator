@@ -103,4 +103,4 @@ Controlled tests use neither production datasets nor real models. Independent Do
 EVALUATOR_OFFICEQA_DOCKER_TESTS=1 pnpm test --run tests/integration/officeqa-docker.test.ts
 ```
 
-In PowerShell, set `$env:EVALUATOR_OFFICEQA_DOCKER_TESTS = "1"` before the test command. Passing controlled tests does not validate production downloads, real model quality, or real Ray clusters; validate each separately.
+In PowerShell, set `$env:EVALUATOR_OFFICEQA_DOCKER_TESTS = "1"` before the test command.

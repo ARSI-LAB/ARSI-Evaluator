@@ -101,65 +101,71 @@ export function apply(ctx) {
 
 Execution components receive the experiment's `npu` or `gpu` selection through `runtime.hardware`, supplied by bootstrap and Ray workers. Historical SDK callers that omit it mean NPU. Accelerator-dependent plugins select an implementation and reject unsupported hardware before allocating resources; other plugins need not probe devices. Metrics/Reporter keep their reporting context and never probe hardware for offline reports.
 
-TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Compile to JavaScript first; CLI does not load `.ts` entries.
+TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `ember-evaluator` roots and implement contracts. Released packages only load compiled JavaScript; `pnpm dev` started from source falls back to the matching `.ts` file declared by the manifest.
 
-## In-Repository Plugins and `ember-plugin.json`
 
-A plugin under `plugins/<id>/` reaches the build artifacts only when it ships `plugins/<id>/ember-plugin.json`. `pnpm build` scans `plugins/`, validates each manifest, builds it (a `tsc` type check plus an optional plugin-owned bundling script), and copies the declared files into `dist/plugins/<id>/`. Directories without a manifest are neither compiled nor copied; they stay source-only.
+## Building and extending repository plugins
 
-Two build modes are available:
-
-- **Type check plus `tsc` emit**: declare only `build.tsconfig`, for plugins that compile straight to ESM.
-- **Custom bundling script**: declare `build.script` and let the plugin produce `dist/` itself, for plugins that need esbuild, resource hashes, or static asset copies (such as aisbench and docops). Both may be combined: `tsc` runs first, then the script.
-
-The build collects repository plugin entrypoints in `dist/bundled-plugins.patch.yaml`. The CLI, SDK, and Ray load it when opening the registry. When the manifest declares `patch`, the build preserves its module IDs and installs the original patch in `dist/plugins/<id>/`. With only `entry`, it uses the manifest's `id`. For example, see [`plugins/aisbench/ember-plugin.json`](../../plugins/aisbench/ember-plugin.json):
+`pnpm build` scans `plugins/*/ember-plugin.json`, validates each manifest, builds it, and installs the declared files into `dist/plugins/<id>/`; it also writes `dist/bundled-plugins.patch.yaml` and the `dist/plugins/index.json` catalog. Directories without a manifest are not compiled or copied and can only be imported from source.
 
 ```json
 {
-  "id": "aisbench",
-  "description": "AISBench benchmark with an SSH solver for remote accelerator evaluation",
+  "id": "example",
   "entry": "./dist/index.js",
-  "bundled": true,
-  "patch": "cordis.patch.yaml",
-  "build": { "tsconfig": "tsconfig.json", "script": "scripts/build.mjs", "install": ["dist"] }
+  "cli": "./dist/cli-register.js",
+  "flags": [
+    { "command": "run", "flag": "--example [url]", "description": "Enable example", "config": "url" }
+  ],
+  "build": {
+    "tsconfig": "./tsconfig.json",
+    "install": ["dist", { "from": "assets", "to": "dist/assets" }]
+  }
 }
 ```
 
-Use bundled plugins directly in an experiment configuration.
-
-```bash
-ember-evaluator run experiment.yaml
-```
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `id` | Yes | Must equal the directory name and decides the `dist/plugins/<id>/` location |
-| `description` | No | Plugin summary |
-| `version` | No | Inherits the root `package.json` version when omitted, so it is maintained in one place |
-| `entry` | No | Compiled JS entry used for default loading when `patch` is absent |
-| `bundled` | No | Describes package inclusion. Installed entrypoints determine default registration |
-| `patch` | No | Path to the plugin's `cordis.patch.yaml`; copied into `dist/plugins/<id>/` with every `./dist/` prefix rewritten to `./` |
-| `build.tsconfig` | With `build` and without `build.script` | The plugin's own tsconfig, used for a type check (`noEmit`) or to emit into `dist` |
-| `build.script` | With `build` and without `build.tsconfig` | Plugin-owned Node bundling script run with the plugin directory as cwd; produces `dist/` |
-| `build.install` | With `build` | Paths installed into the runtime; `dist` contents are flattened into `dist/plugins/<id>/`, other paths keep their relative position |
+ID must match the directory name. Version defaults to the host version. entry is the Cordis entry; optional cli loads CLI registrations. Both build.tsconfig and build.script are optional: install precompiled JavaScript by declaring only build.install, and a declared tsconfig runs `tsc` during the build. Required build.install accepts relative paths or from/to resource copies; `dist` contents are flattened into `dist/plugins/<id>/` while other paths keep their relative location. Manifest paths remain valid after installation; escaping paths and symlinks are rejected.
 
 Build output:
 
 ```text
 dist/plugins/
-├── aisbench/
-│   ├── ember-plugin.json  # Copied verbatim for runtime provenance
-│   ├── cordis.patch.yaml  # Copied from the manifest patch, ./dist/ rewritten to ./
-│   ├── index.js
-│   ├── profiles/...
-│   └── runtime/...
-└── docops/
-    ├── ember-plugin.json
-    ├── cordis.patch.yaml
-    └── index.js
+├── <id>/
+│   ├── ember-plugin.json  # copied verbatim for runtime provenance
+│   ├── cordis.patch.yaml  # only when the manifest declares patch
+│   └── index.js
 ```
 
-`entry` is a compiled path relative to the plugin directory (for example `./dist/index.js`); the installed copy lives under `dist/plugins/<id>/`.
+The manifest entry is the compiled path relative to the plugin directory (for example `./dist/index.js`) and lands under `dist/plugins/<id>/`. When started directly from TypeScript sources (`pnpm dev`), a missing declared artifact falls back to the matching `.ts` file; released packages only load compiled JavaScript.
+
+When a plugin only adds options to an existing command, declare `flags` instead of shipping a CLI module: the host registers them from the manifest, `command` currently supports `run`, flags use `--name`, `--name <value>` or `--name [value]`, and `config` names the activation key written when the flag carries a value. `flags` and `cli` may be combined; conflict checks cover both. Use a `cli` module for dedicated subcommands or dynamic logic.
+
+Plugins that need esbuild or other custom output may declare `build.script`, executed with the plugin directory as cwd; the script owns the `dist` output. When `build.tsconfig` is also declared, `tsc` runs before the script. Plugins loaded only through `--patch` declare `patch`, and the build copies `cordis.patch.yaml` into the installed directory and rewrites its `./dist/` prefix to `./`.
+
+The CLI module exports `registerCli(cli: PluginCliRegistrar)`, importing types from `ember-evaluator`:
+
+```ts
+export function registerCli(cli: PluginCliRegistrar): void {
+  cli.addCommand({ name: "example", description: "Example tools", async run(argv, io, signal) {
+    const { run } = await import("./command.js");
+    return run(argv, io, signal);
+  } });
+  cli.extendCommand("run", {
+    flags: "--example [url]", description: "Enable example",
+    configure(value, activation) { activation.enable(typeof value === "string" ? { url: value } : {}); },
+  });
+}
+```
+
+The host discovers the catalog and explicit --patch, loads registrations, then strictly parses all arguments. Duplicate commands, flags and aliases fail instead of overriding builtins. Registration cannot start processes, access the network or open databases. Patch plugins may export registerCli from their Cordis entry without a manifest. Installed and patch plugin IDs must not collide.
+
+`ctx.evaluator.registerStoreDecorator(name, validate, factory)` registers a factory returning a Store wrapper. Ownership is recorded by plugin ID; names may differ. Only activated plugins create wrappers. Validation precedes component factories. Use Cordis effects for cleanup, runtime.signal for cancellation, and preserve optional Store capabilities and return values.
+
+SDK callers activate extensions with `overrides.plugins: [{ id, config }]`. Persistable JSON options must use environment references for credentials. manifest.json records pluginRuntime.plugins; resume/retry restore options and reject conflicting explicit options.
+
+The tracer plugin owns `--tracer [url]` and `tracer serve/stop/status/logs`. SDK options accept tokenEnv instead of literal token credentials. Default data lives in .cache/tracer under the working directory. Ray Jobs sends portable options to the coordinator; workers register preinstalled modules for version checks without activating coordinator Store wrappers. Tracer mirrors imported remote evidence on the coordinator, not a live worker stream.
+
+The checkout fingerprint includes manifested plugin sources and assets, excluding generated output, dependencies and caches. Tests under each manifested plugin's tests/**/*.test.ts are discovered automatically. Adding plugins requires no host source changes or per-plugin TypeScript/test include entries.
+
 
 ## Reference External Plugins with `--patch`
 
@@ -194,7 +200,7 @@ metrics:                       # Explicit lists replace defaults; include built-
     # config: {}               # Component options go here; this example rejects nonempty options
 ```
 
-`--patch` adds plugins to the default set. An identical ID and entry digest register once. An ID shared by different modules raises an error.
+Pass patches explicitly; omission loads built-ins only:
 
 ```bash
 ember-evaluator run experiments/gsm8k.yaml --patch <path>/plugins/cordis.patch.yaml

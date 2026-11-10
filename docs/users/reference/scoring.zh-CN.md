@@ -6,7 +6,7 @@
 
 ## 记录型 Benchmark 评分
 
-本页集中记录评分规则、参考实现、固定版本与适配差异。模型提示词、工具权限、采样次数、数据版本及裁判模型也会影响最终成绩。尚未进行真实模型与官方完整评测的对照，不应将这些运行直接发布为官方可比成绩。
+本页集中记录评分规则、参考实现、固定版本与适配差异。模型提示词、工具权限、采样次数、数据版本及裁判模型也会影响最终成绩。
 
 | Benchmark | 协议 | 结果 |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ MATH-500、SimpleQA、HealthBench 的模板与裁判解析规则依据固定的 
 
 OfficeQA `reward.py` 的 SHA-256 为 `0d91698c87df6d889339aac36f63ae0966607f169890b0bf8b472b26bfe8138f`。运行时将完整预测直接传给 `score_answer`，最终答案提取与匹配由原始脚本执行；基础设施失败不产生分数，题库答案不随程序包分发。
 
-复制模板的 MIT 许可保存在 [LICENSE-MIT](../../../src/plugins/benchmarks/definitions/scoring/LICENSE-MIT)。OfficeQA 的原始 [LICENSE-APACHE](../../../src/adapters/verifiers/officeqa/LICENSE-APACHE) 和 [NOTICE](../../../src/adapters/verifiers/officeqa/NOTICE) 保留在评分脚本旁，并随构建打包。
+复制模板的 MIT 许可保存在 [LICENSE-MIT](../../../src/plugins/benchmarks/agent-harness/definitions/scoring/LICENSE-MIT)。OfficeQA 的原始 [LICENSE-APACHE](../../../src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/runtime/LICENSE-APACHE) 和 [NOTICE](../../../src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/runtime/NOTICE) 保留在评分脚本旁，并随构建打包。
 
 ## MMLU 概率评分与服务要求
 

@@ -98,6 +98,8 @@ export type AttemptRecord = {
   readiness?: { roundId: string; readyAt: string; queueDurationMs: number };
   /** Original prompt and, when the benchmark has one, its textual reference answer. */
   task?: { prompt: string; answer?: JsonValue };
+  /** Public input identity, independent of optional prompt/answer disclosure. */
+  inputAttachments?: import("./task.js").TaskAttachment[];
 };
 
 export type AttemptStepResult = {
@@ -170,6 +172,8 @@ export type RunManifest = {
     coordinatorPatchPath?: string;
     entries: RunPluginEntry[];
     reportingProviders?: Record<string, string>;
+    /** Activated extensions and credential-free options, restored for resume/retry. */
+    plugins?: import("./plugin-extension.js").PluginActivation[];
   };
   startedAt: string;
   finishedAt: string | null;

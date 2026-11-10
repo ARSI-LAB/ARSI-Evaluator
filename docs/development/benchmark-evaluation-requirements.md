@@ -371,7 +371,7 @@ output:
 先完成安装与构建，再在仓库根目录执行；示例文件路径按实际位置替换：
 
 ```bash
-ember-evaluator config explain experiment.yaml
+ember-evaluator inspect experiment.yaml
 ember-evaluator doctor experiment.yaml
 ember-evaluator run experiment.yaml --dry-run
 ember-evaluator run experiment.yaml
@@ -397,7 +397,7 @@ ember-evaluator report <run-dir>
 | 离线报告 | 不调用模型或裁判，能从保存结果重建指标和报告 |
 | Ray | 节点独立物化、镜像拉取、平台、插件版本、认证和 slot 容量均验收 |
 
-验收记录分别标注静态检查、受控测试、真实运行、失败、跳过和待验收。插件回归测试不能代替这里的真实运行验收；代码检查和受控测试见[插件回归测试](benchmarks.md#插件回归测试)。
+验收记录分别标注静态检查、受控测试、真实运行、失败、跳过和待验收。代码检查和受控测试见[插件回归测试](benchmarks.md#插件回归测试)。
 
 ## 12. 接入完成的交付物
 

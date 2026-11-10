@@ -1,7 +1,10 @@
-import { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS, expectRecord, rejectUnknown, expectNonEmptyString, expectPositiveInteger, parseSelection, type EffectiveConfig, type ModelConfig, type Selection, type VerifierSelection } from "./schema.js";
+import { parseInputModalities } from "../core/validation/multimodal.js";
+import { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS } from "./defaults.js";
+import { expectRecord, rejectUnknown, expectNonEmptyString, expectPositiveInteger, parseSelection } from "../core/validation/input.js";
+import { type EffectiveConfig, type ModelConfig, type Selection, type VerifierSelection } from "../core/contracts/config.js";
 import { parseHardware } from "./hardware.js";
-import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/timeouts.js";
-import { preparationTimeoutMs } from "../core/preparation-timeout.js";
+import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/policies/timeouts.js";
+import { preparationTimeoutMs } from "../core/preparation/preparation-timeout.js";
 
 export function parseVerifierSelection(value: unknown): VerifierSelection {
   const selection = expectRecord(value, "verifier");
@@ -17,7 +20,7 @@ function parseModelRetry(value: unknown): { maxAttempts: number } {
 }
 
 export function parseModel(model: Record<string, unknown>): ModelConfig {
-  rejectUnknown(model, ["name", "endpoint", "provider", "api", "apiKey", "apiKeyEnv", "maxTokens", "contextWindow", "retry"], "model");
+  rejectUnknown(model, ["name", "endpoint", "provider", "api", "apiKey", "apiKeyEnv", "maxTokens", "contextWindow", "retry", "inputModalities"], "model");
   const name = expectNonEmptyString(model.name, "model.name");
   const endpoint =
     model.endpoint === undefined || model.endpoint === null
@@ -41,6 +44,7 @@ export function parseModel(model: Record<string, unknown>): ModelConfig {
   // Preserve the old persisted shape and resume fingerprint when omitted.
   return {
     name,
+    ...(model.inputModalities === undefined ? {} : { inputModalities: parseInputModalities(model.inputModalities) }),
     endpoint,
     provider,
     api,

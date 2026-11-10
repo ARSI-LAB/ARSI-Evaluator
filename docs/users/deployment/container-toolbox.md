@@ -14,17 +14,9 @@ bash scripts/toolbox/run.sh
 
 The first launch builds the image, then opens a container terminal. After exiting, run the same command to return.
 
-## GitHub HTTPS Login in the Container
+## Install Evaluator in the Container
 
-Run from the repository root inside the container:
-
-```bash
-bash scripts/toolbox/git-login.sh
-```
-
-Enter your GitHub account and access token when prompted. The account needs read access to the private `evolving-foundry/agentbundle` repository. The token is cached in memory for eight hours; run the login script again after reentering the container or when authentication expires.
-
-Follow the three commands in the [installation guide](../installation.md#install-from-source) and confirm that `ember-evaluator --help` prints usage. pnpm is already configured in the container; `pnpm setup` is unnecessary.
+From the repository root inside the container, follow the [installation guide](../installation.md#install-from-source) and confirm that `ember-evaluator --help` prints usage. The container already has pnpm configured.
 
 ## Run Experiments Inside the Container
 
@@ -46,7 +38,7 @@ docker exec -it ember-evaluator-toolbox bash
 ## Environment Boundaries
 
 - Source files and results are shared with the host. Dependencies and Git settings persist in Docker volumes after exit.
-- The container uses host Docker and can manage its containers and images. Host Git credentials are not imported automatically.
+- The container uses host Docker and can manage its containers and images.
 - Keep the mount paths set by the launcher. This setup does not support Windows Docker Desktop or remote Docker daemons.
 - Exiting the management container does not stop Ray clusters.
 

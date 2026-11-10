@@ -10,7 +10,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-runtime = Path(__file__).resolve().parents[2] / 'src/adapters/kernel'
+runtime = Path(__file__).resolve().parents[2] / 'src/plugins/benchmarks/operator/kernel/runtime'
 sys.path.insert(0, str(runtime))
 import precision
 import msprof_replay
