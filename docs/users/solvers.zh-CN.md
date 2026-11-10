@@ -11,6 +11,7 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | `simpleagent` | 内置 Pi Agent，普通质量题与需要工具/文件操作的任务 | 支持工具调用的模型 API；可选 Pi Bundle |
 | `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm、pi 或 Dify Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
 | `codex` | 用 Codex CLI 解文本题、执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
+| `claudecode` | 用 Claude Code 解文本题和编辑任务文件，Docker 中也可执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
@@ -117,6 +118,34 @@ output:
 - `base_url` 填 API 基址，例如 `https://api.openai.com/v1`，Codex 在该地址下请求 `/responses`。可用 `contextWindow` 指定自动压缩阈值。此 Solver 不支持服务字段 `maxTokens` 和 `retry`。
 - 本机使用 Codex 的 `workspace-write` 沙箱。Windows 沙箱拒绝任务的 shell 命令时，可在 Docker 或 WSL 中运行需要写文件的评测。TerminalBench 等容器任务选择 `environment: docker`。
 - 此 Solver 接收文本任务。显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。每次 attempt 的 `agent/` 保存 Codex 事件、Evaluator 轨迹和 stderr，评分仍由所选 Benchmark 或 Verifier 执行。
+
+## 使用 Claude Code
+
+Evaluator 在本机和 Docker 中安装固定版本的 Claude Code `2.1.322`。保存以下实验配置，设置 `CLAUDE_MODEL`、`CLAUDE_ENDPOINT` 和 `CLAUDE_API_KEY` 后运行。
+
+```yaml
+services:
+  claude:
+    model: ${CLAUDE_MODEL}
+    base_url: ${CLAUDE_ENDPOINT}
+    api: anthropic-messages
+    api_key: ${CLAUDE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: claudecode
+    service: claude
+environment: local
+run:
+  maxTasks: 1
+output:
+  directory: ./results/claudecode
+```
+
+- `base_url` 填 API 基址。Claude Code 会在该地址下请求 `/v1/messages`，通过 `x-api-key` 传递认证。Anthropic 原生服务可填 `https://api.anthropic.com`，DeepSeek 兼容服务可填 `https://api.deepseek.com/anthropic`。
+- 本机只开放任务目录内的文件工具。受限模式下 CLI 可以用 `Edit` 新建文件。需要 Bash 时选择 Docker，并按 Benchmark 指定任务镜像。Linux 运行时通过仅供当前 attempt 使用的本地转发器访问模型，Bash 启动时会清除转发凭据。
+- Solver 接收文本任务，显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。
+- 服务字段 `maxTokens` 传给 Claude Code 的输出用量设置，`contextWindow` 设置自动压缩阈值，允许 100000 到 1000000 token。此 Solver 不接受 `retry`。事件、轨迹和 stderr 保存在每次 attempt 的 `agent/` 目录。
 
 ## 使用 AgentBundle
 

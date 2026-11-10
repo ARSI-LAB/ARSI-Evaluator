@@ -120,7 +120,7 @@ await writeFile(new URL("cli.js", distribution), await readFile(new URL("./cli-b
 await writeFile(new URL("source-provenance.json", distribution),
   JSON.stringify({ schemaVersion: 1, digest: await sourceFingerprint() }, null, 2) + "\n");
 // Fixed standalone upstream CLI and locked harness recipes travel with npm packs.
-for (const directory of ["dsh", "deepagents", "dify", "jiuwenswarm", "hermes", "agentx", "codex"]) {
+for (const directory of ["dsh", "deepagents", "dify", "jiuwenswarm", "hermes", "agentx", "codex", "claudecode"]) {
   const target = new URL(`../dist/runtimes/${directory}/assets/`, import.meta.url);
   await mkdir(target, { recursive: true });
   await cp(new URL(`../src/runtimes/${directory}/assets/`, import.meta.url), target, { recursive: true });
