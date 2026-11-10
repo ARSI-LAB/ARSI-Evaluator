@@ -1,0 +1,67 @@
+name: "Bug Report"
+description: "Report a reproducible defect or a regression in Ember Evaluator"
+title: "[Bug] "
+labels: ["category:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please provide a minimal reproduction.
+        **Remove API keys, tokens, private datasets, and other secrets from logs.**
+  - type: input
+    id: version
+    attributes:
+      label: Ember Evaluator Version / Commit
+      description: "Release version or commit SHA."
+      placeholder: "e.g. master @ <commit-sha>"
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Execution Environment
+      options:
+        - Local
+        - Docker
+        - Ray
+        - Other / Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: "Include the command or minimal YAML configuration, if possible."
+      placeholder: |
+        1. Configure ...
+        2. Run `ember-evaluator ...`
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Messages
+      description: "Paste redacted logs, stack traces, or links to artifacts."
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: "Related issues, screenshots, whether this is a regression, or environment details."
+    validations:
+      required: false
