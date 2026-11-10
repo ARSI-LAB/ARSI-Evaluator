@@ -76,8 +76,50 @@ test("tracer mirrors accepted remote evidence and preserves absent Store capabil
     expect(requests).toEqual([]);
     accepted = true;
     expect(await store.importAttempt!(record, files, root)).toBe(true);
+    await store.flush();
     expect(requests.some(item => item.text.includes('"type":"start"'))).toBe(true);
     expect(requests.some(item => item.text.includes(record.key.taskId))).toBe(true);
+  } finally {
+    await store.close();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("commit releases the scheduler before a slow Collector finishes uploading", async () => {
+  await mkdir(resolve(".scratch"), { recursive: true });
+  const root = await mkdtemp(resolve(".scratch/tracer-commit-")); roots.push(root);
+  const order: string[] = [];
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) { /* drain the body */ }
+    order.push(request.url!);
+    if (request.url!.startsWith("/v1/ingest")) await new Promise(resolveDelay => setTimeout(resolveDelay, 200));
+    response.setHeader("content-type", "application/json");
+    response.end(request.url === "/healthz" ? '{"ok":true}' : "{}");
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No server address");
+  const client = new TracerClient(parseTracerConfig({ url: `http://127.0.0.1:${address.port}`, autostart: false }), () => {});
+  const paths = { root, agent: join(root, "agent"), verifier: join(root, "verifier"), artifacts: join(root, "artifacts") };
+  const inner: RunStore = {
+    async create() {}, async open() { return mixedSnapshot.run; }, async allocate() { return paths; },
+    async listAttempts() { return []; }, async updateRun() {}, async commit() {},
+    async snapshot() { return mixedSnapshot; }, async saveReportBundle() {}, async close() {},
+  };
+  const store = new TracerStore(inner, client, () => {});
+  try {
+    await store.create(root, mixedSnapshot.run, null);
+    const record = mixedSnapshot.records[0]!;
+    const files = { schemaVersion: 1 as const, files: [], missing: [] };
+    const started = Date.now();
+    await store.commit(record, files);
+    expect(Date.now() - started).toBeLessThan(150);
+    // Finish must wait for the queue, otherwise the exported analysis can miss this attempt.
+    await store.updateRun({ status: "completed" });
+    const ingest = order.findIndex(url => url.startsWith("/v1/ingest"));
+    const finish = order.indexOf(`/v1/runs/${mixedSnapshot.run.runId}/finish`);
+    expect(ingest).toBeGreaterThanOrEqual(0);
+    expect(finish).toBeGreaterThan(ingest);
   } finally {
     await store.close();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
