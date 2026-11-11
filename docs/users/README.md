@@ -38,7 +38,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Benchmark | [Scenario index](benchmarks/README.md): [Harbor](benchmarks/harbor.md), [WorkBuddy](benchmarks/workbuddy.md), [DeepSWE](benchmarks/deepswe.md), [Terminal-Bench](benchmarks/terminalbench.md), [AgentX](benchmarks/agentx.md) |
 | Deployment | [Management container](deployment/container-toolbox.md), [Docker platforms](deployment/docker-platform.md); see [configuration](config.md#ray-and-execution-nodes) for Ray |
 | FAQ | [Common questions](faq/README.md), [downloads and mirrors](faq/downloads.md), [Docker and cross-architecture execution](faq/docker.md) |
-| Reference | [Scoring](reference/scoring.md), [error and exit codes](reference/errors.md) |
+| Reference | [CLI commands](reference/cli.md), [scoring](reference/scoring.md), [error and exit codes](reference/errors.md) |
 | Architecture | PNG architecture diagrams in module guides and source entry points in `src/` |
 | Development | [Development documentation](../development/README.en.md): plugins, benchmarks, structured errors, and controlled tests |
 
