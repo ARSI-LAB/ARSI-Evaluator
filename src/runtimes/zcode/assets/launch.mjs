@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startModelRelay } from "./model-relay.mjs";
+import { stageAttachments } from "./stage-attachments.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, prompt, token } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, inputModalities, prompt, token, media = [] } = JSON.parse(readFileSync(0, "utf8"));
 const settings = join(home, ".zcode", "cli");
 await mkdir(home, { mode: 0o700 });
 let relay;
@@ -25,7 +26,15 @@ try {
           api: { type: apiType, baseUrl: relay.endpoint }, personalModelIds: [model],
         },
       }] },
-      modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
+      modelConfigRules: {
+        providerModelRules: inputModalities === undefined ? [] : [{
+          providerId, modelId: model, config: { properties: { inputFormat: {
+            supportsImage: inputModalities.includes("image"),
+            supportsPdf: inputModalities.includes("pdf"),
+          } } },
+        }],
+        manualProviderModelRules: [],
+      },
       defaultModelSelection: { providerId, modelId: model },
     },
   }), { mode: 0o600 });
@@ -38,6 +47,7 @@ try {
   }), { mode: 0o600 });
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:ZCODE_|OTEL_)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
+  const attachmentPaths = await stageAttachments(home, media);
   const child = spawn(process.execPath, [
     join(import.meta.dirname, "cli.mjs"), entry,
     "--cwd", process.cwd(), "--mode", "yolo", "--workflow-mode", "disabled", "--output-format", "stream-json", "--no-color",
@@ -59,7 +69,7 @@ try {
   const terminate = () => child.kill("SIGTERM");
   process.once("SIGTERM", terminate);
   try {
-    child.stdin.end(prompt, "utf8");
+    child.stdin.end(JSON.stringify({ prompt, attachmentPaths }), "utf8");
     process.exitCode = await exited;
   } finally {
     process.removeListener("SIGTERM", terminate);

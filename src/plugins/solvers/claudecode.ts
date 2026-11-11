@@ -10,6 +10,7 @@ import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
 import { consumeClaudeCode } from "../../runtimes/claudecode/protocol.js";
 import { CLAUDE_CODE_ENTRY, CLAUDE_CODE_VERSION, claudeCodeRuntimeInstallation } from "../../runtimes/claudecode/runtime.js";
+import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
 export function parseClaudeCodeConfig(value: unknown): Record<string, never> {
   rejectUnknown(expectRecord(value, "claudecode config"), [], "claudecode config");
@@ -27,6 +28,7 @@ function messagesEndpoint(endpoint: string | null): string {
 }
 
 export class ClaudeCodeSolver implements Solver {
+  readonly inputModalities = ["text", "image", "pdf"] as const;
   private readonly endpoint: string;
 
   constructor(private readonly binding: ServiceBinding) {
@@ -57,9 +59,10 @@ export class ClaudeCodeSolver implements Solver {
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "claudecode requires a non-empty, single-line API key on its selected service");
     }
-    if (input.attachments?.length || input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "claudecode supports text tasks without task skills or MCP servers");
+    if (input.skillsDirectories?.length || input.mcpServers?.length) {
+      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "claudecode does not support task skills or MCP servers");
     }
+    requireInputModalities(input, model.inputModalities ?? ["text"]);
     const runtime = session.runtime;
     if (runtime?.stateRoot === undefined) {
       throw new EvaluatorError("ENV_RUNTIME_INSTALL_FAILED", "claudecode requires an environment-prepared runtime with writable state");
@@ -71,6 +74,7 @@ export class ClaudeCodeSolver implements Solver {
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
     const tools = "Read,Edit,Write,Bash";
     const gitBash = local && process.platform === "win32" ? process.env.CLAUDE_CODE_GIT_BASH_PATH : undefined;
+    const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
@@ -82,7 +86,7 @@ export class ClaudeCodeSolver implements Solver {
         env: gitBash === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: gitBash },
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, baseUrl, model: model.name,
-          maxTokens: model.maxTokens, contextWindow: model.contextWindow }), "utf8"),
+          maxTokens: model.maxTokens, contextWindow: model.contextWindow, media }), "utf8"),
       }, signal);
       return await consumeClaudeCode(handle, context, auth.value);
     } finally {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startMessagesRelay } from "./messages-relay.mjs";
 
 const [home, entry, ...args] = process.argv.slice(2);
-const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, media = [] } = JSON.parse(readFileSync(0, "utf8"));
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
@@ -21,6 +21,7 @@ try {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     !/^(?:ANTHROPIC_|CLAUDE_|DISABLE_(?:UPDATES|AUTOUPDATER|TELEMETRY|ERROR_REPORTING)$)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
+  if (media.length) args.push("--input-format", "stream-json");
   const cli = spawn(entry, args, {
     env: {
       ...env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, ".claude"),
@@ -50,7 +51,13 @@ try {
   const terminate = () => { cli.kill("SIGTERM"); };
   process.once("SIGTERM", terminate);
   try {
-    cli.stdin.end(prompt, "utf8");
+    const content = [{ type: "text", text: prompt }, ...media.map(({ name, mediaType, data }) => ({
+      ...(mediaType === "application/pdf" ? { type: "document", title: name } : { type: "image" }),
+      source: { type: "base64", media_type: mediaType, data },
+    }))];
+    cli.stdin.end(media.length ? JSON.stringify({
+      type: "user", message: { role: "user", content }, parent_tool_use_id: null, session_id: "",
+    }) + "\n" : prompt, "utf8");
     process.exitCode = await exited;
   } finally {
     process.removeListener("SIGTERM", terminate);

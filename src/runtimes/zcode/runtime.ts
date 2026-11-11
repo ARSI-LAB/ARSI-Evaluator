@@ -19,8 +19,11 @@ export async function zcodeRuntimeInstallation(signal: AbortSignal): Promise<Run
   return {
     id: `zcode:${cliVersion}:${commit}`,
     cacheName: `zcode-${cliVersion}`,
-    files: ["package.json", "package-lock.json", "source-lock.json", "install.mjs", "launch.mjs", "cli.mjs", "model-relay.mjs"]
-      .map(target => ({ source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target })),
+    files: [
+      ...["package.json", "package-lock.json", "source-lock.json", "install.mjs", "launch.mjs", "cli.mjs", "model-relay.mjs"]
+        .map(target => ({ source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target })),
+      { source: fileURLToPath(new URL("../shared/assets/stage-attachments.mjs", import.meta.url)), target: "stage-attachments.mjs" },
+    ],
     commands: [
       { executable: "npm", args: ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"] },
       { executable: "node", args: ["install.mjs"], env: { NODE_USE_ENV_PROXY: "1" } },

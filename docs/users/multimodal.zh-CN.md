@@ -49,9 +49,14 @@ services:
 | Hermes 固定版本 | 原生用户图像消息 | 明确拒绝 | 保留候选原生工具 |
 | Dify | 上传后绑定文件变量 | 原始 PDF 以 `document` 绑定 | 由工作流定义 |
 | JiuwenSwarm 0.2.5（9b3706f） | 原生图片消息 | 明确拒绝 | 原生 `read_file` |
+| Codex 0.167.0 | CLI `--image` | 使用 `pages` 模式 | Codex `view_image` |
+| Claude Code 2.1.322 | Messages `image` 内容块 | Messages `document` 内容块 | Claude Code `Read` |
+| ZCode 0.17.1 | CLI `--attach` | CLI `--attach` | ZCode `Read` |
 
 外部 Solver 默认只支持文本；开发者必须声明并实现 `inputModalities` 才能接收附件。
 
+- Codex、Claude Code 和 ZCode 都通过服务的 `inputModalities` 声明附件能力。图片和 PDF 页图声明 `image`，原生 PDF 声明 `pdf`。Codex 只接收 PDF 页图，使用原生 PDF 的任务会报能力不支持。
+- ZCode 的原生 PDF 分别使用 Chat Completions 的 `file.file_data`、Responses 的 `input_file` 或 Messages 的 `document`，目标服务须支持对应的输入格式。
 - Pi 需要保留图片；`images.blockImages: true` 会与图片任务冲突。
 - DSH 使用同版本的 `@deepseek-ai/dsh-sdk-client`。Docker 运行时包含该依赖；本地 DSH 安装也必须能解析同版本 SDK。适配器保留候选 Profile，只替换文本启动入口和对应权限上下文。
 - DeepAgents 当前只适配 OpenAI-compatible Chat Completions。开启图片能力后，Runner 给候选增加 `view_image`，仅允许读取任务工作区内的图片，并把图片送给原目标模型。

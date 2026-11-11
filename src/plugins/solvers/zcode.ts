@@ -8,6 +8,7 @@ import type { AttemptContext, Solver, SolverProvenance } from "../../core/contra
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 import { consumeZCode } from "../../runtimes/zcode/protocol.js";
 import { readZCodeSourceLock, ZCODE_ENTRY, zcodeRuntimeInstallation } from "../../runtimes/zcode/runtime.js";
 
@@ -26,6 +27,7 @@ function apiBase(endpoint: string | null): string {
 }
 
 export class ZCodeSolver implements Solver {
+  readonly inputModalities = ["text", "image", "pdf"] as const;
   private readonly endpoint: string;
 
   constructor(private readonly binding: ServiceBinding) {
@@ -57,8 +59,8 @@ export class ZCodeSolver implements Solver {
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "zcode requires a non-empty, single-line API key on its selected service");
     }
-    if (input.attachments?.length || input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "zcode supports text tasks without task skills or MCP servers");
+    if (input.skillsDirectories?.length || input.mcpServers?.length) {
+      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "zcode does not support task skills or MCP servers");
     }
     const runtime = session.runtime;
     if (runtime?.stateRoot === undefined) {
@@ -70,6 +72,8 @@ export class ZCodeSolver implements Solver {
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
     const token = randomUUID();
+    requireInputModalities(input, model.inputModalities ?? ["text"]);
+    const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
@@ -77,7 +81,10 @@ export class ZCodeSolver implements Solver {
         cwd: session.workdir,
         env: { NODE_USE_ENV_PROXY: "1" },
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, api: model.api, baseUrl, model: model.name, prompt: input.prompt, token }), "utf8"),
+        input: Buffer.from(JSON.stringify({
+          apiKey: auth.value, api: model.api, baseUrl, model: model.name, inputModalities: model.inputModalities,
+          prompt: input.prompt, token, media,
+        }), "utf8"),
       }, signal);
       return await consumeZCode(handle, context, [auth.value, token]);
     } finally {
