@@ -36,6 +36,16 @@ export function parseAisbenchSummary(value: unknown): AisbenchSummary {
   if (!last?.total_req?.trim() || !last.qps?.trim() || Number(last.total_req) !== workload.dataCount ||
     !Number.isFinite(Number(last.qps)) || Number(last.qps) <= 0)
     throw new TypeError("AISBench final CSV row requires matching total_req and positive measured qps");
+  if (workload.dataset === "synthetic") {
+    if (!last || !/^[a-f0-9]{64}$/u.test(last.dataset_implementation ?? "") ||
+      !last.failed_req?.trim() || Number(last.failed_req) !== 0 || Number(last.total_input_tokens) !== workload.inputLength * workload.dataCount ||
+      Number(last.total_output_tokens) !== workload.outputLength * workload.dataCount ||
+      !Number.isFinite(Number(last.output_throughput)) || Number(last.output_throughput) <= 0)
+      throw new TypeError("Synthetic AISBench requires complete request/token totals and dataset identity");
+    for (const field of ["TTFT P90", "TPOT SLO_P90", "E2EL P90"])
+      if (!last[field]?.trim() || !Number.isFinite(Number(last[field])) || Number(last[field]) < 0)
+        throw new TypeError(`Missing synthetic latency metric ${field}`);
+  }
   return { schemaVersion: 1, kind: "aisbench", workload, bundleDigest,
     aisbenchVersion: expectNonEmptyString(v.aisbenchVersion, "AISBench version"), rows };
 }

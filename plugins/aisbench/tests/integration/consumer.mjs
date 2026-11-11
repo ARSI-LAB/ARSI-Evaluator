@@ -9,6 +9,9 @@ const [scenario, directory, patchPath] = process.argv.slice(2);
 assert(directory && patchPath, "usage: consumer.mjs <scenario> <directory> <patch>");
 process.env.EVALUATOR_RUN_INDEX_DIR = join(directory, "run-index");
 const experiment = join(directory, "experiment.yaml");
+const networkConfigPath = join(directory, "network.json");
+await writeFile(networkConfigPath, "{}\n");
+process.env.EVALUATOR_NETWORK_CONFIG = networkConfigPath;
 const guard = new URL("./no-external.mjs", import.meta.url).href;
 
 async function hostCli() {
@@ -57,19 +60,19 @@ const config = {
 await writeFile(experiment, JSON.stringify(config));
 
 async function checkAbsence() {
-  assert.doesNotMatch(await cli(["benchmark", "list"]), /\baisbench\b/iu);
-  await assert.rejects(loadConfig(experiment, {}, {}, { allowMissingAuth: true }), /aisbench|unknown|profile/iu);
+  assert.match(await cli(["benchmark", "list"]), /\baisbench\b/iu);
+  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true });
+  assert.equal(loaded.experiment.benchmark.name, "aisbench");
 }
 
 async function checkConfig() {
   const listed = await cli(["benchmark", "list", "--patch", patchPath]);
   assert.match(listed, /aisbench/iu);
   assert.match(await cli(["benchmark", "info", "aisbench", "--patch", patchPath]), /aisbench/iu);
-  // The existing host resolves service credentials for doctor/dry-run. No model is called.
+  // Dry-run resolves credentials and validates configuration without network probes.
   process.env.AISBENCH_OFFLINE_KEY = "fixture-secret";
-  await cli(["doctor", experiment, "--patch", patchPath]);
   await cli(["run", experiment, "--dry-run", "--patch", patchPath]);
-  const loaded = await loadConfig(experiment, {}, {}, { allowMissingAuth: true, patchPath });
+  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true, patchPath });
   assert.equal(loaded.experiment.solver.name, "aisbench-ssh");
   assert.equal(loaded.experiment.reporter.name, "aisbench-markdown");
   assert.deepEqual(loaded.experiment.metrics.map(item => item.name), ["aisbench-performance", "duration", "usage"]);
@@ -90,7 +93,7 @@ async function checkConfig() {
 
 async function checkReport() {
   // Persist only public contracts through the store returned by public bootstrap().
-  const loaded = await loadConfig(experiment, {}, {}, { allowMissingAuth: true, patchPath });
+  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true, patchPath });
   const components = await bootstrap(loaded, directory, patchPath);
   const signal = new AbortController().signal;
   const source = await components.benchmark.resolveSource(null, signal);
@@ -135,7 +138,7 @@ async function checkReport() {
   // The host must refuse to load a provider different from the one that produced the run.
   const manifestFile = join(runDirectory, "manifest.json");
   const saved = JSON.parse(await readFile(manifestFile, "utf8"));
-  saved.pluginVersions["aisbench-plugin"] = "different-version";
+  saved.pluginRuntime.entries.find(entry => entry.id === "aisbench-plugin").bundledVersion = "different-version";
   await writeFile(manifestFile, JSON.stringify(saved));
   await assert.rejects(rebuildReport(runDirectory), /Plugin version differs/iu);
 }

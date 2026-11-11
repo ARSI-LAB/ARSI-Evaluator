@@ -87,6 +87,9 @@ def isolated_install(source, target):
 
 
 def prepare(root, config):
+    if config["workload"].get("dataset") == "synthetic":
+        from synthetic import prepare_run
+        return prepare_run(root, config)
     if importlib.metadata.version("ais-bench-benchmark") != config["aisbenchVersion"]:
         raise RuntimeError("AISBench version differs from configured aisbenchVersion")
     for module in ["ais_bench", "transformers", "torch", "pandas", "requests"]:
@@ -127,7 +130,7 @@ def prepare(root, config):
 def collect(root, secret):
     run = root / "run"
     artifacts = root / "artifacts"
-    for name in ["aisbench_result.csv", "aisbench.log", "aisbench_all.log", "outputs"]:
+    for name in ["aisbench_result.csv", "aisbench.log", "aisbench_all.log", "aisbench_client.log", "outputs"]:
         source = run / name
         if not source.exists() or source.is_symlink():
             continue

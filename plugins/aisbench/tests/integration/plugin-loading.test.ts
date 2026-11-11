@@ -10,7 +10,7 @@ const consumer = fileURLToPath(new URL("./consumer.mjs", import.meta.url));
 const guard = new URL("./no-external.mjs", import.meta.url).href;
 
 test.each([
-  ["absence", "host does not expose AISBench without an explicit patch"],
+  ["absence", "host exposes the bundled AISBench without an explicit patch"],
   ["config", "patch loads all providers and CLI validates configuration without SSH"],
   ["report", "persisted results rebuild offline through public API and CLI with provider version checks"],
 ])("%s: %s", async scenario => {

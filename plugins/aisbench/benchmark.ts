@@ -30,7 +30,7 @@ export class AisbenchBenchmark implements Benchmark {
 
   async resolveSource(previous: SourceLock | null, signal: AbortSignal): Promise<SourceLock> {
     signal.throwIfAborted();
-    const source: SourceLock = { source: sourceName, revision: upstreamRevision, files: [], metadata: { bundleDigest: await bundleDigest() } };
+    const source: SourceLock = { source: this.config.workload.dataset === "synthetic" ? "aisbench:synthetic" : sourceName, revision: this.config.workload.dataset === "synthetic" ? "1" : upstreamRevision, files: [], metadata: { bundleDigest: await bundleDigest() } };
     if (previous && fingerprintConfig(previous) !== fingerprintConfig(source)) throw new TypeError("AISBench locked source differs from the installed bundle");
     return source;
   }
