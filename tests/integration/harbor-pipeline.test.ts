@@ -1,9 +1,11 @@
 import "../fixtures/network-fetch.js";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { create, Header } from "tar";
 import { afterEach, expect, test, vi } from "vitest";
 import { HarborBenchmark, parseHarborConfig, scoreHarborEvidence } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/index.js";
@@ -137,6 +139,33 @@ test("separate verification uses a private build context and declared artifact c
   expect(task).toMatchObject({ verificationMode: "separate", solveEnv: { network: "model-api", workdir: "/app", image: "fixture:locked" },
     verifyEnv: { workdir: "/grading", network: "none", build: { visibility: "verifier", context: join(root, "tasks/example/tests") } },
     transfer: { kind: "artifacts", paths: ["/logs/artifacts/model.patch"], optionalPaths: ["/logs/artifacts/model.patch"] }, collect: [{ timeoutSeconds: 20 }], preparationTimeoutSeconds: { solve: 600, verify: 1800 }, phaseTimeoutSeconds: {} });
+});
+
+test.skipIf(process.platform !== "linux")("Harbor main collect trusts only its checkout and preserves inherited Git settings", async () => {
+  const root = await fixture();
+  const repo = join(root, "agent's checkout");
+  const other = join(root, "other");
+  const run = promisify(execFile);
+  await run("git", ["init", "-q", repo]);
+  await run("git", ["init", "-q", other]);
+  const env = {
+    ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TEST_ASSUME_DIFFERENT_OWNER: "1", GIT_CONFIG_PARAMETERS: "'user.name=Collector'",
+  };
+  await expect(run("git", ["-C", repo, "status"], { env })).rejects.toThrow(/dubious ownership/u);
+  const taskDir = join(root, "tasks/example");
+  await writeFile(join(taskDir, "task.toml"), [
+    "[environment]", "docker_image = 'fixture:locked'", "workdir = " + JSON.stringify(repo),
+    "[[verifier.collect]]", "service = 'main'",
+    "command = " + JSON.stringify('git diff --binary && git config user.name && test "$#" = 0'),
+  ].join("\n"));
+  const task = await loadGenericHarborTask(taskDir, root, "example", parseHarborConfig({}), new HarborShellVerifier(), signal());
+  const hook = task.collect![0]!;
+  const result = await run(hook.executable, [...hook.args], { cwd: hook.cwd, env: { ...env, ...hook.env } });
+  expect(result.stdout.trim()).toBe("Collector");
+  // The hook's command config is inherited by its Git subprocesses only.
+  await expect(run(hook.executable, [...hook.args], { cwd: other, env: { ...env, ...hook.env } })).rejects.toThrow();
+  await expect(run("git", ["-C", repo, "status"], { env })).rejects.toThrow(/dubious ownership/u);
 });
 
 test.each([

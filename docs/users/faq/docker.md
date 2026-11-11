@@ -14,6 +14,8 @@ Registry API acquisition supports the built-in Node.js client and user-installed
 
 `FROM` and external `COPY --from` use Docker's built-in builder and the daemon's active network settings. `doctor experiment.yaml` generates application guidance without changing files or restarting Docker. After an administrator applies it, use `doctor experiment.yaml` to check explicit acquisition, `FROM`, and `RUN` independently.
 
+When a task image lacks system CA certificates, Evaluator writes the pinned Node.js version's bundled public roots to `/etc/ssl/certs/ca-certificates.crt` while building the derived runtime image. Existing CA certificates and explicitly configured certificate paths are preserved. This supplies trust roots for HTTPS clients that use the system store, including Codex.
+
 ## Identify and Inspect Task Images
 
 Local images use `ember-evaluator/<short-task>:<purpose>-<kind>-<hash>`. `solve` and `verify` identify solving and verification; the suffix distinguishes tasks and content. Use the task name or purpose to find images:

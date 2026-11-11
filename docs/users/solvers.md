@@ -10,6 +10,8 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 | --- | --- | --- |
 | `simpleagent` | Built-in Pi Agent for quality tasks and tool/file operations | Model API with tool calling; optional Pi Bundle |
 | `agentbundle` | Packaged DSH, deepagents, Hermes, Jiuwenswarm, pi, or Dify agents | Readable, valid bundle and harness requirements |
+| `codex` | Codex CLI for text tasks, commands, and workspace files | Model service with streaming Responses API and tool calling |
+| `claudecode` | Claude Code for text, workspace files, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
 
@@ -89,6 +91,62 @@ benchmark:
 ```
 
 Provide both fields; the maximum must be at least the default. This fragment retains default `simpleagent`. Actual tool call timeouts cannot exceed the maximum.
+
+## Codex
+
+`codex` runs Codex CLI in the task working directory on the local machine or in Docker. Evaluator installs CLI version `0.167.0` during environment preparation and authenticates with the selected model service. Save the following experiment YAML and set `CODEX_MODEL`, `CODEX_ENDPOINT`, and `CODEX_API_KEY` before running it.
+
+```yaml
+services:
+  codex:
+    model: ${CODEX_MODEL}
+    base_url: ${CODEX_ENDPOINT}
+    api: openai-responses
+    api_key: ${CODEX_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: codex
+    service: codex
+environment: local
+run:
+  maxTasks: 1
+output:
+  directory: ./results/codex
+```
+
+- Set `base_url` to the API base, for example `https://api.openai.com/v1`. Codex sends requests to `/responses` under that base. `contextWindow` sets the automatic compaction threshold. The solver rejects the `maxTokens` and `retry` service fields.
+- Local runs use the Codex `workspace-write` sandbox. If the Windows sandbox blocks task commands, use Docker or WSL for evaluations that write files. Select `environment: docker` for container-based benchmarks such as TerminalBench.
+- The solver accepts text tasks. It rejects explicit images, PDFs, task skills directories, and task MCP configuration. Each attempt saves Codex events, the Evaluator trajectory, and stderr under `agent/`. The selected benchmark or verifier scores the result.
+
+## Claude Code
+
+Evaluator installs Claude Code `2.1.322` for local and Docker tasks. Save this experiment YAML and set `CLAUDE_MODEL`, `CLAUDE_ENDPOINT`, and `CLAUDE_API_KEY` before running it.
+
+```yaml
+services:
+  claude:
+    model: ${CLAUDE_MODEL}
+    base_url: ${CLAUDE_ENDPOINT}
+    api: anthropic-messages
+    api_key: ${CLAUDE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: claudecode
+    service: claude
+environment: local
+run:
+  maxTasks: 1
+output:
+  directory: ./results/claudecode
+```
+
+- Set `base_url` to the API base. Claude Code sends requests to `/v1/messages` under that base and authenticates via `x-api-key`. Use `https://api.anthropic.com` for Anthropic or `https://api.deepseek.com/anthropic` for DeepSeek's compatible API.
+- The built-in file tools are limited to the task workspace. The restricted CLI may use `Edit` to create files. Bash is available locally and in Docker, and it runs with the permissions of the host or container process. On Windows, install Git for Windows and set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` if Claude Code cannot find it.
+- On Linux, the runtime sends model requests through an attempt-local relay and clears its temporary credentials from Bash's environment.
+- The solver accepts text and rejects explicit images, PDFs, task skills directories, and task MCP configuration.
+- `maxTokens` sets Claude Code's output token setting, and `contextWindow` sets the auto-compaction window between 100000 and 1000000 tokens. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
 
 ## AgentBundle
 

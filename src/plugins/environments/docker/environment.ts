@@ -396,6 +396,11 @@ export class DockerEnvironment implements Environment {
     await solverRuntime.install(installation, signal);
   }
   async recoverAttempts(keys: AttemptKey[], signal: AbortSignal): Promise<void> {
+    // Load from the installed Evaluator so this path does not change the
+    // bundled verifier's bytes and block resume of existing runs.
+    const module = new URL("../../../infrastructure/containers/log-recovery.js", import.meta.url);
+    const { restoreInterruptedDockerLogs } = await import(module.href) as typeof import("../../../infrastructure/containers/log-recovery.js");
+    await restoreInterruptedDockerLogs(this.command, keys, signal);
     await recoverDockerAttempts(this.command, keys, signal);
     await recoverComposeNetworks(this.command, keys, signal);
     // Gateway containers carry the same attempt labels and are reaped above;
