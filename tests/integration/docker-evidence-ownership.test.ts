@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
@@ -101,6 +101,37 @@ test.skipIf(!enabled).each(["success", "failure", "cancel"] as const)(
     } finally { await store.close(); await rm(root, { recursive: true, force: true }); }
   }, 180_000,
 );
+
+test.skipIf(!enabled)("Docker recovery hands private logs from an interrupted container back to the host", async () => {
+  const root = await mkdtemp(join(tmpdir(), "evaluator-interrupted-logs-"));
+  const key = { runId: randomUUID(), taskId: "fixture", attemptId: randomUUID() };
+  const agent = join(root, key.attemptId, "agent");
+  const container = "evaluator-log-recovery-" + key.attemptId;
+  const docker = (args: string[]) => promisify(execFile)("docker", args, { timeout: 30_000 });
+  try {
+    await mkdir(agent, { recursive: true });
+    await chmod(agent, 0o777);
+    await docker(["run", "--detach", "--pull", "never", "--name", container, "--network", "none",
+      "--label", "ember.run=" + key.runId, "--label", "ember.task=" + key.taskId,
+      "--label", "ember.attempt=" + key.attemptId, "--label", "ember.phase=solve",
+      "--mount", "type=bind,source=" + agent + ",target=/logs/agent", "--entrypoint", "node",
+      PINNED_NODE_IMAGE, "-e", "setInterval(() => {}, 60000)"]);
+    await docker(["exec", "--user", "0", container, "node", "-e",
+      "const fs = require('node:fs'); fs.mkdirSync('/logs/agent/nested', { mode: 0o700 }); " +
+      "fs.writeFileSync('/logs/agent/nested/stderr.log', 'before SIGKILL\\n', { mode: 0o600 });"]);
+    const file = join(agent, "nested", "stderr.log");
+    await expect(readFile(file)).rejects.toMatchObject({ code: "EACCES" });
+    await new DockerEnvironment().recoverAttempts([key], AbortSignal.timeout(60_000));
+    expect(await readFile(file, "utf8")).toBe("before SIGKILL\n");
+    expect((await stat(file)).uid).toBe(process.getuid?.());
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(agent)).mode & 0o777).toBe(0o700);
+    await expect(docker(["container", "inspect", container])).rejects.toThrow(/No such/u);
+  } finally {
+    await docker(["rm", "--force", container]).catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  }
+}, 90_000);
 
 test.skipIf(!enabled)("log ownership handoff leaves symlink targets outside the log mounts untouched", async () => {
   const root = await mkdtemp(join(tmpdir(), "evaluator-log-owner-links-"));
