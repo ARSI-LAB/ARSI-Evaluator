@@ -191,6 +191,22 @@ test("standalone warmup loads a patch without API keys, honors task ID overrides
   await expect(access(join(root, "results"))).rejects.toThrow();
 });
 
+test.each([
+  ["codex", "openai-responses"],
+  ["claudecode", "anthropic-messages"],
+])("%s warms up its runtime without model credentials", async (solver, api) => {
+  const { root, file, patch, experiment, events, stdout, stderr, io } = await cliFixture();
+  await writeFile(file, JSON.stringify({
+    ...experiment,
+    services: { default: { ...experiment.services.default, api } },
+    benchmark: { ...experiment.benchmark, solver: { name: solver, service: "default", config: {} } },
+  }));
+  expect(await runCli(["warmup", file, "--patch", patch, "--progress", "plain"], io), stderr.join("\n")).toBe(0);
+  expect(stdout).toEqual(["Image warmup: 1/1 tasks ready; 0 failed"]);
+  expect(events.filter(item => item.name === "materialize").map(item => item.value)).toEqual(["a"]);
+  await expect(access(join(root, "results"))).rejects.toThrow();
+});
+
 test("CLI returns 1 for partial warmup and redacts source credentials from its summary", async () => {
   const { file, patch, experiment, stdout, stderr, io } = await cliFixture();
   vi.stubEnv("WARMUP_TEST_TOKEN", "fixture-private-token");

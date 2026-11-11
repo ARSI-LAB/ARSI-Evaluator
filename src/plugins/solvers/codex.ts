@@ -35,9 +35,6 @@ export class CodexSolver implements Solver {
     if (binding.model.maxTokens !== undefined || binding.model.retry !== undefined) {
       throw new TypeError("codex does not support services.*.maxTokens or services.*.retry");
     }
-    if (!binding.auth.value.trim() || /[\r\n\0]/u.test(binding.auth.value)) {
-      throw new TypeError("codex requires a non-empty, single-line API key on its selected service");
-    }
   }
 
   requirements(): RuntimeRequirement[] {
@@ -54,6 +51,10 @@ export class CodexSolver implements Solver {
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
     const { signal } = context;
     signal.throwIfAborted();
+    const { model, auth } = this.binding;
+    if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
+      throw new EvaluatorError("MODEL_AUTH_FAILED", "codex requires a non-empty, single-line API key on its selected service");
+    }
     if (input.attachments?.length || input.skillsDirectories?.length || input.mcpServers?.length) {
       throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex supports text tasks without task skills or MCP servers");
     }
@@ -61,7 +62,6 @@ export class CodexSolver implements Solver {
     if (runtime?.stateRoot === undefined) {
       throw new EvaluatorError("ENV_RUNTIME_INSTALL_FAILED", "codex requires an environment-prepared runtime with writable state");
     }
-    const { model, auth } = this.binding;
     const mapping = session.modelEndpoint;
     const endpoint = mapping?.originEndpoint === model.endpoint ? responsesEndpoint(mapping.baseUrl) : this.endpoint;
     const local = runtime.persistent;

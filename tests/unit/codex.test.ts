@@ -86,7 +86,7 @@ test.each([new DOMException("cancelled", "AbortError"), new DOMException("timed 
   },
 );
 
-test("Codex validates service protocol, unsupported settings and authentication", () => {
+test("Codex validates service settings and supports preparation without credentials", () => {
   const binding: ServiceBinding = {
     model: { name: "fixture", endpoint: "http://127.0.0.1:1234/v1", provider: null, api: "openai-responses" },
     auth: { value: secret, reference: null },
@@ -95,5 +95,5 @@ test("Codex validates service protocol, unsupported settings and authentication"
   expect(() => parseCodexConfig({ executable: "codex" })).toThrow(/unknown field executable/u);
   expect(() => new CodexSolver({ ...binding, model: { ...binding.model, api: "openai-completions" } })).toThrow(/openai-responses/u);
   expect(() => new CodexSolver({ ...binding, model: { ...binding.model, maxTokens: 50 } })).toThrow(/maxTokens/u);
-  expect(() => new CodexSolver({ ...binding, auth: { value: "", reference: null } })).toThrow(/API key/u);
+  expect(() => new CodexSolver({ ...binding, auth: { value: "", reference: null } }).requirements()).not.toThrow();
 });

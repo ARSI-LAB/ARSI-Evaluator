@@ -30,15 +30,12 @@ export class ClaudeCodeSolver implements Solver {
   private readonly endpoint: string;
 
   constructor(private readonly binding: ServiceBinding) {
-    const { model, auth } = binding;
+    const { model } = binding;
     if (model.api !== "anthropic-messages") throw new TypeError("claudecode requires api: anthropic-messages on its selected service");
     this.endpoint = messagesEndpoint(model.endpoint);
     if (model.retry !== undefined) throw new TypeError("claudecode does not support services.*.retry");
     if (model.contextWindow !== undefined && (model.contextWindow < 100_000 || model.contextWindow > 1_000_000)) {
       throw new TypeError("claudecode contextWindow must be between 100000 and 1000000 tokens");
-    }
-    if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
-      throw new TypeError("claudecode requires a non-empty, single-line API key on its selected service");
     }
   }
 
@@ -56,6 +53,10 @@ export class ClaudeCodeSolver implements Solver {
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
     const { signal } = context;
     signal.throwIfAborted();
+    const { model, auth } = this.binding;
+    if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
+      throw new EvaluatorError("MODEL_AUTH_FAILED", "claudecode requires a non-empty, single-line API key on its selected service");
+    }
     if (input.attachments?.length || input.skillsDirectories?.length || input.mcpServers?.length) {
       throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "claudecode supports text tasks without task skills or MCP servers");
     }
@@ -63,7 +64,6 @@ export class ClaudeCodeSolver implements Solver {
     if (runtime?.stateRoot === undefined) {
       throw new EvaluatorError("ENV_RUNTIME_INSTALL_FAILED", "claudecode requires an environment-prepared runtime with writable state");
     }
-    const { model, auth } = this.binding;
     const mapping = session.modelEndpoint;
     const baseUrl = mapping?.originEndpoint === model.endpoint ? messagesEndpoint(mapping.baseUrl) : this.endpoint;
     const local = runtime.persistent;
