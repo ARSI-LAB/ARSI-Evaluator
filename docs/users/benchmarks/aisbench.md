@@ -16,8 +16,7 @@ and no generated shared prefixes are required; this does not disable server
 prefix caching or assert a cache hit rate.
 
 The SSH solver validates successful requests, zero failures, exact input/output
-token totals, millisecond latencies, and records the installed dataset source
-digest. A synthetic performance result is not an accuracy measurement. Existing
+token totals, and millisecond latencies. A synthetic performance result is not an accuracy measurement. Existing
 GSM8K/prefix workloads are unchanged when `dataset` is omitted. Remote failures
 attempt cancellation even without local abort; unconfirmed cancellation leaves
 `cleanup-unconfirmed.json`, which callers must reconcile before restarting.

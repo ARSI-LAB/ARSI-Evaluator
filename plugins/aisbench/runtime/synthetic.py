@@ -1,8 +1,6 @@
 """Fixed-length SyntheticDataset workload, owned by the AISBench SSH plugin."""
 import csv
-import hashlib
 import importlib.metadata
-import inspect
 import json
 import math
 import os
@@ -115,12 +113,10 @@ def prepare_run(root, config):
 
 
 def main(directory):
-    from ais_bench.benchmark.datasets import SyntheticDataset
     config = json.loads((directory / "settings.json").read_text())
     cli = shutil.which("ais_bench")
     if not cli:
         raise ValueError("ais_bench is not in the selected Python environment PATH")
-    source = Path(inspect.getfile(SyntheticDataset)).read_bytes()
     configuration = directory / "config.py"
     configuration.write_text(render_config(config))
     os.chmod(configuration, 0o600)
@@ -136,7 +132,6 @@ def main(directory):
         "output_throughput": metrics["outputThroughput"],
         # Equal output lengths and verified totals make this aggregate rate exact.
         "qps": metrics["outputThroughput"] / config["workload"]["outputLength"],
-        "dataset_implementation": hashlib.sha256(source).hexdigest(),
     }
     for metric, column in [("ttftP90", "TTFT P90"), ("tpotP90", "TPOT SLO_P90"), ("e2elP90", "E2EL P90")]:
         if metric not in metrics:
