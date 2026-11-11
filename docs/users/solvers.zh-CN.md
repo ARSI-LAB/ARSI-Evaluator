@@ -12,6 +12,7 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm、pi 或 Dify Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
 | `codex` | 用 Codex CLI 解文本题、执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
 | `claudecode` | 用 Claude Code 解文本题、编辑任务文件，在本机和 Docker 中执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
+| `zcode` | 用 ZCode CLI 解文本题、编辑任务文件，在本机和 Docker 中执行 Bash | 支持流式 Chat Completions、Responses 或 Messages 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
@@ -147,6 +148,40 @@ output:
 - Linux 运行时通过仅供当前 attempt 使用的本地转发器访问模型，Bash 启动时会清除转发凭据。
 - Solver 接收文本任务，显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。
 - 服务字段 `maxTokens` 传给 Claude Code 的输出用量设置，`contextWindow` 设置自动压缩阈值，允许 100000 到 1000000 token。此 Solver 不接受 `retry`。事件、轨迹和 stderr 保存在每次 attempt 的 `agent/` 目录。
+
+## 使用 ZCode
+
+Evaluator 在准备运行时时从固定源码归档构建 ZCode CLI `0.17.1`。首次运行或预热需要访问 GitHub 和 npm registry，后续运行复用构建缓存。预热无需模型密钥。镜像源配置见[网络配置指南](network.zh-CN.md)。
+
+```yaml
+services:
+  zcode:
+    model: ${ZCODE_MODEL}
+    base_url: ${ZCODE_ENDPOINT}
+    api: openai-completions
+    api_key: ${ZCODE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: zcode
+    service: zcode
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 1800
+    roundTimeoutSeconds: 1800
+output:
+  directory: ./results/zcode
+```
+
+示例给首次构建预留 30 分钟，可按网络情况调整。
+
+`base_url` 使用接口基地址。Chat Completions 或 Responses 通常填写以 `/v1` 结尾的地址。还可设置 `api: openai-responses` 或 `api: anthropic-messages`。使用此 Solver 时省略 `maxTokens`、`contextWindow` 和 `retry`。
+
+本机和 Docker 都开放 Bash。本机 Bash 具有宿主进程权限，只用于可信任务。Windows 下使用 Bash 工具需要安装 Git Bash。任务需要容器隔离时使用 Docker。
+
+Solver 接收文本提示词和任务工作区文件。显式附件、任务技能目录和任务 MCP 配置会报能力不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、轨迹和 stderr。
 
 ## 使用 AgentBundle
 

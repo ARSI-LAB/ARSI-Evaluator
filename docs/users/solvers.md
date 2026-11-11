@@ -12,6 +12,7 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 | `agentbundle` | Packaged DSH, deepagents, Hermes, Jiuwenswarm, pi, or Dify agents | Readable, valid bundle and harness requirements |
 | `codex` | Codex CLI for text tasks, commands, and workspace files | Model service with streaming Responses API and tool calling |
 | `claudecode` | Claude Code for text, workspace files, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
+| `zcode` | ZCode CLI for text, workspace files, and Bash in local and Docker runs | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
 
@@ -147,6 +148,40 @@ output:
 - On Linux, the runtime sends model requests through an attempt-local relay and clears its temporary credentials from Bash's environment.
 - The solver accepts text and rejects explicit images, PDFs, task skills directories, and task MCP configuration.
 - `maxTokens` sets Claude Code's output token setting, and `contextWindow` sets the auto-compaction window between 100000 and 1000000 tokens. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
+
+## ZCode
+
+Evaluator builds ZCode CLI `0.17.1` from a pinned source archive during runtime preparation. The first run or `warmup` needs access to GitHub and the npm registry. Later runs reuse the build. Warmup requires no model credentials. See [network configuration](network.md) for mirror settings.
+
+```yaml
+services:
+  zcode:
+    model: ${ZCODE_MODEL}
+    base_url: ${ZCODE_ENDPOINT}
+    api: openai-completions
+    api_key: ${ZCODE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: zcode
+    service: zcode
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 1800
+    roundTimeoutSeconds: 1800
+output:
+  directory: ./results/zcode
+```
+
+The preparation timeouts allow up to 30 minutes for the initial build and can be adjusted for your network.
+
+Use the API base URL. Chat Completions and Responses usually use a URL ending in `/v1`. The solver also accepts `api: openai-responses` and `api: anthropic-messages`. Omit `maxTokens`, `contextWindow`, and `retry`.
+
+ZCode enables Bash in local and Docker runs. Use local mode for trusted tasks since Bash runs with the host process's permissions. Install Git Bash for Bash tools on Windows. Use Docker for tasks that need container isolation.
+
+The solver supports text prompts and workspace files. Explicit attachments, task skills, and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`.
 
 ## AgentBundle
 

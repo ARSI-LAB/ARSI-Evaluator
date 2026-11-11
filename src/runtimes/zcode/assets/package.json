@@ -1,0 +1,9 @@
+{
+  "name": "evaluator-zcode-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "pnpm": "10.33.2",
+    "tar": "7.5.22"
+  }
+}

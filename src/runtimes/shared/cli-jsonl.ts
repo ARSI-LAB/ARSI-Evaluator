@@ -60,7 +60,7 @@ async function readEvents(
   }
 }
 
-async function saveStderr(source: ProcessHandle["stderr"], file: FileHandle, secrets: string[], label: string): Promise<string> {
+async function saveStderr(source: ProcessHandle["stderr"], file: FileHandle, secrets: readonly string[], label: string): Promise<string> {
   const decoder = new StringDecoder("utf8");
   let pending = "";
   let bytes = 0;
@@ -92,10 +92,9 @@ type CliProtocol = {
 };
 
 export async function consumeCliJsonl(
-  handle: ProcessHandle, context: AttemptContext, secret: string, protocol: CliProtocol,
+  handle: ProcessHandle, context: AttemptContext, secrets: readonly string[], protocol: CliProtocol,
 ): Promise<SolveResult> {
   const { signal, paths, key } = context;
-  const secrets = [secret];
   const trajectory = new TrajectoryWriter(join(paths.agent, "trajectory.jsonl"), key);
   let session: FileHandle | undefined;
   let stderr: FileHandle | undefined;
@@ -123,7 +122,10 @@ export async function consumeCliJsonl(
     const [exit, , stderrTail] = await Promise.all([handle.done, stdout, stderrOutput]);
     signal.throwIfAborted();
     const result = protocol.finish(exit, stderrTail);
-    const finalText = secret ? result.finalText.replaceAll(secret, "[redacted]").replaceAll(encodeURIComponent(secret), "[redacted]") : result.finalText;
+    let finalText = result.finalText;
+    for (const secret of secrets) {
+      if (secret) finalText = finalText.replaceAll(secret, "[redacted]").replaceAll(encodeURIComponent(secret), "[redacted]");
+    }
     await trajectory.append("usage", result.usage);
     await trajectory.append("end", { status: "completed", finalText }, true);
     return { ...result, finalText };
