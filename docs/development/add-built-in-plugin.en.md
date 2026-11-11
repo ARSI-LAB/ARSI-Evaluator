@@ -6,6 +6,8 @@ This example adds `runGuard` alongside the eight existing component roles, such 
 
 Follow the guide to add the `runGuard` role and its `task-limit` implementation to the source. To add an implementation of an existing role, such as another metric, see [Add a built-in implementation for an existing role](plugins.en.md#add-a-built-in-implementation-for-an-existing-role).
 
+![Define and register a new built-in component role alongside the eight existing roles, wire it into the evaluator, and select an implementation in YAML](imgs/02-flowchart-built-in-role.png)
+
 ## Minimal example
 
 | Step | Change |

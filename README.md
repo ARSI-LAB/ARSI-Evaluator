@@ -31,7 +31,7 @@ Ember Evaluator uses YAML to select tasks and components and `--patch` to load c
 
 Supported scenarios include evaluating agent harnesses on terminal, coding, and office tasks, benchmarking inference engine performance, and testing kernel correctness and performance.
 
-![Evaluator architecture from YAML configuration through execution, verification, result storage, and reporting](imgs/01-framework-project-overview-v2.png.png)
+![Ember Evaluator flowchart showing agent harness capability, inference serving performance, and kernel performance alongside the eight core components, Cordis plugins, and optional Tracer](imgs/01-flowchart-evaluation-architecture.png)
 
 [Source architecture and execution flow](docs/development/architecture.en.md)
 
