@@ -1,0 +1,41 @@
+{
+  "version": "0.214.1",
+  "baseUrl": "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/",
+  "platforms": {
+    "linux-x64": [
+      {
+        "source": "releases/0.214.1/traex-linux-x86_64.gz",
+        "target": "traecli",
+        "size": 200071245,
+        "sha256": "0a8ea02e0445c95a36718c54d41749e3ab32f0a71366ed615a3a0cdce0141191"
+      },
+      {
+        "source": "releases/0.214.1/traex-code-mode-host-linux-x86_64.gz",
+        "target": "traex-code-mode-host",
+        "size": 23682130,
+        "sha256": "c013c637ae6b92494e1dcb7c47c41fc26f10b2bcf8f38f42fe41515fd20104a6"
+      },
+      {
+        "source": "deps/bubblewrap/0.11.0/bwrap-linux-x86_64.tar.gz",
+        "target": "traecli-resources/bwrap",
+        "member": "bubblewrap-0.11.0-x86_64-unknown-linux-musl/bwrap",
+        "size": 216674,
+        "sha256": "637baba28efa469a35b16a2a67d08e4265bd2206514ca9f198d431c900c9c8e9"
+      }
+    ],
+    "win32-x64": [
+      {
+        "source": "releases/0.214.1/traex-windows-x86_64.exe.gz",
+        "target": "traecli.exe",
+        "size": 144912878,
+        "sha256": "e5179f4000c1624f77d81553b6edb14e1b2a611f309c01ccd256112b4ffcdc35"
+      },
+      {
+        "source": "releases/0.214.1/traex-code-mode-host-windows-x86_64.exe.gz",
+        "target": "traex-code-mode-host.exe",
+        "size": 26186562,
+        "sha256": "164683fddc8e619a7180098b1d41e623a3172a80faa5067d98be39d01e5a7335"
+      }
+    ]
+  }
+}
