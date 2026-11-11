@@ -14,6 +14,7 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | `claudecode` | 用 Claude Code 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
 | `zcode` | 用 ZCode CLI 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Chat Completions、Responses 或 Messages 和工具调用的模型服务 |
 | `trae` | 用 TRAE CLI 2.0 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Responses API 和工具调用的模型服务 |
+| `codebuddy` | 用 CodeBuddy Code 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Chat Completions 或 Responses 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
@@ -215,6 +216,36 @@ output:
 - `base_url` 填 API 基址，例如 `https://api.openai.com/v1`。TRAE 会在该地址下请求 `/responses`。`solver.config` 可省略或填 `{}`，服务字段 `maxTokens`、`contextWindow` 和 `retry` 须省略。
 - WSL 本机使用 Bash，Windows 原生使用 PowerShell，两者都使用 `workspace-write` 沙箱。Windows 原生可能需要先完成 [TRAE 沙箱初始化](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh)。需要 Bash 的任务用 WSL 或 Docker，Docker 中的 Bash 在任务容器内运行。
 - 使用图片或 PDF `pages` 附件时，在服务中设置 `inputModalities: [text, image]`。原生 PDF、任务技能和任务 MCP 配置会报能力不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、Evaluator 轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
+
+## 使用 CodeBuddy Code
+
+Evaluator 在 x64 Windows、WSL 和 Linux Docker 中安装并缓存独立发布的 `@tencent-ai/codebuddy-code` 版本 `2.183.0`。首次预热或运行使用配置的 npm registry，预热无需模型密钥。设置 `CODEBUDDY_MODEL`、`CODEBUDDY_ENDPOINT` 和 `CODEBUDDY_API_KEY` 后运行以下实验。
+
+```yaml
+services:
+  codebuddy:
+    model: ${CODEBUDDY_MODEL}
+    base_url: ${CODEBUDDY_ENDPOINT}
+    api: openai-completions
+    api_key: ${CODEBUDDY_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: codebuddy
+    service: codebuddy
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 900
+    roundTimeoutSeconds: 900
+output:
+  directory: ./results/codebuddy
+```
+
+- `base_url` 填 API 基址，例如 `https://api.openai.com/v1`。也可选 `api: openai-responses`。`maxTokens` 指定模型输出上限，省略 `contextWindow` 和 `retry`。`solver.config` 可省略或填 `{}`。
+- Windows 原生开放 PowerShell，WSL 和 Docker 开放 Bash。本机命令按宿主进程权限运行，只用于可信任务。Docker 命令在任务容器内执行。
+- 工作区的 `.codebuddy/models.json` 会覆盖实验指定的模型端点，发现该文件时 Solver 会在启动 CLI 前报错。使用图片或 PDF `pages` 附件时，设置 `inputModalities: [text, image]`。原生 PDF、任务技能和任务 MCP 配置暂不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
 
 ## 使用 AgentBundle
 

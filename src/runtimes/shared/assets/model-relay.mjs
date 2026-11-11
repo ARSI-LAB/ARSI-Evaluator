@@ -41,7 +41,7 @@ export async function startModelRelay({ api, baseUrl, apiKey, token }) {
       if (response.destroyed) return;
       if (response.headersSent) response.destroy();
       else response.writeHead(502, { "content-type": "application/json" })
-        .end(JSON.stringify({ error: { message: "ZCode model relay could not reach its upstream" } }));
+        .end(JSON.stringify({ error: { message: "Model relay could not reach its upstream" } }));
     }
   });
   await new Promise((resolve, reject) => {

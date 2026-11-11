@@ -20,8 +20,9 @@ export async function zcodeRuntimeInstallation(signal: AbortSignal): Promise<Run
     id: `zcode:${cliVersion}:${commit}`,
     cacheName: `zcode-${cliVersion}`,
     files: [
-      ...["package.json", "package-lock.json", "source-lock.json", "install.mjs", "launch.mjs", "cli.mjs", "model-relay.mjs"]
+      ...["package.json", "package-lock.json", "source-lock.json", "install.mjs", "launch.mjs", "cli.mjs"]
         .map(target => ({ source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target })),
+      { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "model-relay.mjs" },
       { source: fileURLToPath(new URL("../shared/assets/stage-attachments.mjs", import.meta.url)), target: "stage-attachments.mjs" },
     ],
     commands: [

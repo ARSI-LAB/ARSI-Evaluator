@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { expect, test } from "vitest";
-import { startModelRelay } from "../../src/runtimes/zcode/assets/model-relay.mjs";
+import { startModelRelay } from "../../src/runtimes/shared/assets/model-relay.mjs";
 
 test.each([
   ["openai-completions", "/v1", "/chat/completions", "authorization", "Bearer "],
