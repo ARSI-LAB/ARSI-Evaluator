@@ -62,7 +62,7 @@ async function checkEvidence(agent: string): Promise<void> {
   }
 }
 
-test.skipIf(!enabled("local"))("Claude Code limits native file tools to the task workspace", async () => {
+test.skipIf(!enabled("local"))("Claude Code uses Bash locally and limits native file tools to the task workspace", async () => {
   const root = await mkdtemp(join(tmpdir(), "ember-claude-local-"));
   const steps: Tool[] = [];
   const fixture = await messagesFixture(false, steps);
@@ -88,23 +88,25 @@ test.skipIf(!enabled("local"))("Claude Code limits native file tools to the task
         { name: "Read", input: { file_path: file } },
         { name: "Edit", input: { file_path: file, old_string: "before", new_string: "after" } },
         { name: "Edit", input: { file_path: created, old_string: "", new_string: "written" } },
-        { name: "Bash", input: { command: "echo forbidden > forbidden.txt" } });
+        { name: "Bash", input: {
+          command: 'test -z "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}" && printf answer > result.txt && echo written',
+          description: "Write the answer",
+        } });
       const result = await solver.solve({ id: key.taskId, prompt: "检查文件并给出结果" }, session, { key, paths, signal });
       expect(result).toEqual({ finalText, usage: { inputTokens: 154, outputTokens: 49, totalTokens: 203 } });
       expect(await readFile(file, "utf8")).toBe("after");
       expect(fixture.requests[5]?.input.slice(-600)).not.toContain('"is_error":true');
       expect(await readFile(created, "utf8")).toBe("written");
       await expect(access(outsideCreated)).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(access(join(session.workdir, "forbidden.txt"))).rejects.toMatchObject({ code: "ENOENT" });
       expect(fixture.requests).toHaveLength(7);
       expect(fixture.requests[0]).toMatchObject({ model, maxTokens: 1024, authenticated: true });
       expect(fixture.requests[0]?.input).toContain("检查文件");
-      expect(fixture.requests[0]?.tools).toEqual(expect.arrayContaining(["Read", "Edit"]));
-      expect(fixture.requests[0]?.tools).not.toContain("Bash");
+      expect(fixture.requests[0]?.tools).toEqual(expect.arrayContaining(["Read", "Edit", "Bash"]));
       expect(fixture.requests[1]?.input).toContain('"is_error":true');
       expect(fixture.requests[1]?.input).not.toContain("outside-private-sentinel");
       expect(fixture.requests[2]?.input).toContain('"is_error":true');
-      expect(fixture.requests[6]?.input).toContain('"is_error":true');
+      expect(fixture.requests[6]?.input).toMatch(/"type":"tool_result","content":"written(?:\\n)?"/u);
+      expect(await readFile(join(session.workdir, "result.txt"), "utf8")).toBe("answer");
       await checkEvidence(paths.agent);
     } finally {
       await session.dispose(AbortSignal.timeout(10_000));

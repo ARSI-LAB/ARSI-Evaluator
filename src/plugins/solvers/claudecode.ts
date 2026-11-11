@@ -69,7 +69,7 @@ export class ClaudeCodeSolver implements Solver {
     const local = runtime.persistent;
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
-    const tools = local ? "Read,Edit,Write" : "Read,Edit,Write,Bash";
+    const tools = "Read,Edit,Write,Bash";
     const gitBash = local && process.platform === "win32" ? process.env.CLAUDE_CODE_GIT_BASH_PATH : undefined;
     try {
       const handle = await session.start({
