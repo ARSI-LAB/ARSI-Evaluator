@@ -107,15 +107,18 @@ run:
   timeoutSeconds: 7200        # 整题上限，单位秒
   solveTimeoutSeconds: 3600   # 可选：解题阶段上限
   verifyTimeoutSeconds: 600   # 可选：评分阶段上限
+  # scoreAfterSolveTimeout: false   # 解题超时直接计有效 0 分
 ```
 
 `run.timeoutSeconds` 保留为单个 attempt 的整题上限。框架默认值为 7200 秒（2 小时）；所选 Profile 或 YAML 显式提供的整题值仍优先于框架默认值，已有示例的显式值不会自动改写。
 
 解题和评分分别选择自己的时限：显式 `run.solveTimeoutSeconds` / `run.verifyTimeoutSeconds` 优先，其次采用任务 `agent.timeout_sec` / `verifier.timeout_sec`。对应两处均未设置时，不额外创建该阶段的时限，只遵循整题上限。两个新字段均为可选正整数；省略表示不覆盖任务声明，`0`、`null` 和负数不是关闭时限的方法。
 
-整题时钟与阶段时钟同时生效，先到期的限制终止执行；阶段时限从进入对应阶段开始，设置更长的阶段值不会延长整题上限。提前环境准备与清理使用各自时限，详见下文。
+阶段时限从进入对应阶段开始，到期时结束该阶段。整题时限一直生效，到期时结束当前评测。提前环境准备与清理使用各自时限。
 
-旧字段 `benchmark.config.defaults.verifyTimeoutSeconds` 已删除，改用 `run.verifyTimeoutSeconds`，不自动兼容或迁移。更新 Ray 部署时，coordinator、worker 和 Jobs 运行包需要一起更新，确保阶段参数传递一致。
+`run.scoreAfterSolveTimeout` 控制本次 run 的质量型评测如何处理解题超时。省略或设为 `true` 时，在整题剩余时间内用已有产物评分。设为 `false` 时跳过 verifier，整题计有效 0 分。解题耗尽整题时限时，超时步骤没有剩余时间启动 verifier。
+
+旧字段 `benchmark.config.defaults.verifyTimeoutSeconds` 已删除，改用 `run.verifyTimeoutSeconds`。使用新 run 字段时，Ray coordinator、worker 和 Jobs 运行包需要一起更新。
 
 下载源、代理及镜像获取方式使用独立的 [网络 YAML](network.zh-CN.md)，由 `--network` 指定。
 

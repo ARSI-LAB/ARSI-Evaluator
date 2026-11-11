@@ -59,7 +59,8 @@ function parseRun(value: unknown, executionConcurrency: number, defaultPreparati
     return { maxTasks: null, taskIds: null, timeoutSeconds: DEFAULT_TASK_TIMEOUT_SECONDS };
   }
   const run = expectRecord(value, "run");
-  rejectUnknown(run, ["maxTasks", "offset", "taskIds", "timeoutSeconds", "solveTimeoutSeconds", "verifyTimeoutSeconds", "sampling", "onError", "includeTaskAnswer", "preparation"], "run");
+  rejectUnknown(run, ["maxTasks", "offset", "taskIds", "timeoutSeconds", "solveTimeoutSeconds", "verifyTimeoutSeconds",
+    "scoreAfterSolveTimeout", "sampling", "onError", "includeTaskAnswer", "preparation"], "run");
   const maxTasks =
     run.maxTasks === undefined || run.maxTasks === null ? null : expectPositiveInteger(run.maxTasks, "run.maxTasks");
   const offset = run.offset;
@@ -79,6 +80,9 @@ function parseRun(value: unknown, executionConcurrency: number, defaultPreparati
     ...(run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: expectPositiveInteger(run.solveTimeoutSeconds, "run.solveTimeoutSeconds") }),
     ...(run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: expectPositiveInteger(run.verifyTimeoutSeconds, "run.verifyTimeoutSeconds") }),
   };
+  const scoreAfterSolveTimeout = run.scoreAfterSolveTimeout;
+  if (scoreAfterSolveTimeout !== undefined && typeof scoreAfterSolveTimeout !== "boolean")
+    throw new TypeError("run.scoreAfterSolveTimeout must be a boolean");
   if (run.includeTaskAnswer !== undefined && typeof run.includeTaskAnswer !== "boolean") {
     throw new TypeError("run.includeTaskAnswer must be a boolean");
   }
@@ -106,6 +110,7 @@ function parseRun(value: unknown, executionConcurrency: number, defaultPreparati
   }
   const optional = {
     ...phaseTimeouts,
+    ...(scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout }),
     ...(offset === undefined ? {} : { offset }),
     ...includeTaskAnswer,
     ...(preparation === undefined ? {} : { preparation }),

@@ -124,7 +124,6 @@ scenarios:
           timeoutMultiplier: 2
           agentUser: dev
           verifierUser: root
-          scoreAfterSolveFailure: true
         scoring:
           primary: reward
           passThreshold: 1

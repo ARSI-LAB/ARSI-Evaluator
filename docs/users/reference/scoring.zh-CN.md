@@ -130,7 +130,7 @@ HealthBench 中途失败时，`verdict.details.grades` 保留已完成的逐项�
 
 quality-score 的 mean/rawMean 只基于有测量分数的有效结果，measured 明确给出覆盖数；HealthBench 对整体平均值截断到 [0,1]，原始平均值保留。SimpleQA 分类计数、未尝试率、已尝试正确率与 F1 分别汇总。
 
-success-rate 不把 passed:null 的已验证样本计入正确率分母；全部样本都未测二元正确性时返回 applicable:false 和空分母。其他质量任务沿用所选任务扣除明确无效评测的保守分母，pending 会使报告保持未完成。Agent 解题超时按执行规则记有效零分；Judge/基础设施超时不是模型答错。
+success-rate 从正确率分母中排除 `passed: null` 的已验证样本。全部样本都未测二元正确性时，返回 `applicable: false` 和空分母。其他质量任务沿用所选任务扣除明确无效评测的保守分母，pending 会使报告保持未完成。Agent 解题超时后成功验证的任务按实际 verdict 计分，状态为 `agent_timeout` 的任务计有效零分。Judge 或基础设施超时的任务记为无效评测。
 
 性能报告不计算质量分母。测量完整、请求错误率和可比性分别报告；Engine 总耗时、预热和清理不属于请求性能计时，详情见 [AgentX](../benchmarks/agentx.zh-CN.md)。
 

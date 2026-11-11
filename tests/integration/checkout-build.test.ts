@@ -20,6 +20,11 @@ async function fixture(): Promise<string> {
   await writeFile(join(root, "src/cli.ts"), "fixture");
   await writeFile(join(root, "src/plugins/benchmarks/agent-harness/profiles/fixture.yaml"), "id: fixture\n");
   await writeFile(join(root, "src/runtimes/dify/assets/runner.mjs"), "export {};\n");
+  for (const runtime of ["codex", "claudecode"]) {
+    const assets = join(root, "src/runtimes", runtime, "assets");
+    await mkdir(assets, { recursive: true });
+    await writeFile(join(assets, "launch.mjs"), "export {};\n");
+  }
   await writeFile(join(root, "src/runtimes/pi/model-defaults.json"), "{}\n");
   await mkdir(join(root, "src/runtimes/agentx/assets"), { recursive: true });
   await writeFile(join(root, "src/runtimes/agentx/assets/runner.py"), "# AgentX bridge fixture\n");

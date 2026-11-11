@@ -22,17 +22,22 @@ beforeAll(async () => { registry = await openPluginRegistry(); });
 afterAll(async () => { await registry?.dispose(); });
 const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
 
-test("Ray carries explicit phase limits independently of its whole-task transport guard", () => {
+test.each([undefined, true, false])("Ray carries phase limits and scoreAfterSolveTimeout %j", scoreAfterSolveTimeout => {
   const config = resolveConfig("experiment.yaml", { services: { default: { model: "fixture", base_url: "https://model.invalid" } },
     benchmark: { name: "harbor", config: {} }, environment: "local",
-    run: { timeoutSeconds: 7200, solveTimeoutSeconds: 9000, verifyTimeoutSeconds: 120 } }, []);
+    run: { timeoutSeconds: 7200, solveTimeoutSeconds: 9000, verifyTimeoutSeconds: 120,
+      ...(scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout }) } }, []);
   const remote = projectRemoteJob({ job: { runId: mixedSnapshot.run.runId, taskId: "pass", attemptId: "phase-attempt", ref: { id: "pass", recordKey: "pass" }, configFingerprint: mixedSnapshot.run.configFingerprint },
     run: mixedSnapshot.run, config, packageDigest: `sha256:${"a".repeat(64)}`, uploadEndpoint: "https://collector.invalid", previousAttempts: [], configTransport: lookup });
   expect(remote.safeConfig).toMatchObject({ timeoutSeconds: 7200, solveTimeoutSeconds: 9000, verifyTimeoutSeconds: 120 });
+  expect(remote.safeConfig.scoreAfterSolveTimeout).toBe(scoreAfterSolveTimeout);
+  expect(Object.hasOwn(remote.safeConfig, "scoreAfterSolveTimeout")).toBe(scoreAfterSolveTimeout !== undefined);
   expect(validateRemoteJob(remote, lookup)).toEqual(remote);
   for (const key of ["solveTimeoutSeconds", "verifyTimeoutSeconds"]) for (const value of [0, -1, "10", null]) {
     expect(() => validateRemoteJob({ ...remote, safeConfig: { ...remote.safeConfig, [key]: value } }, lookup)).toThrow(key);
   }
+  expect(() => validateRemoteJob({ ...remote, safeConfig: { ...remote.safeConfig, scoreAfterSolveTimeout: "false" } }, lookup))
+    .toThrow("run.scoreAfterSolveTimeout must be a boolean");
 });
 
 test("Ray node config resolves a preinstalled plugin patch relative to its own file", () => {

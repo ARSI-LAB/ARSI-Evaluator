@@ -34,7 +34,9 @@ HumanEval 的 Python 验证镜像和 `harbor-python` 的辅助验证镜像也计
 
 ### 超时与评分
 
-质量型 Benchmark 的 Agent 达到解题阶段时限，或在解题时耗尽 `run.timeoutSeconds`，记录为 `executionStatus: agent_timeout`、`scoreStatus: valid`。这是有效评测，计入分母、记 0 分，不自动重跑，也不触发 `run.onError: abort`；清理和保存完成后即可补位。`--resume` 跳过此类任务。未运行 verifier 时 `verdict` 保持 null，报告中的 0 分由超时评测政策给出。
+质量型 Benchmark 的 Agent 解题超时后，只要整题还有时间，默认停止解题并用已有产物运行 verifier。验证成功时保存实际结果和解题超时记录。为验证准备产物失败或 verifier 执行失败时，记录实际错误，评测无效。
+
+设为 `run.scoreAfterSolveTimeout: false` 时，解题超时跳过 verifier，整题计有效 0 分。整题在解题时耗尽 `run.timeoutSeconds` 也会跳过该步的 verifier。有效 0 分记录为 `executionStatus: agent_timeout`、`scoreStatus: valid` 和 `verdict: null`，清理和保存完成后补位，`--resume` 跳过此类任务。[run 配置](config.zh-CN.md#整题与阶段超时)
 
 性能型 AgentX 超时属于未完成测量，不产生正确率或零分；普通时限耗尽不能通过网络补测重做。
 

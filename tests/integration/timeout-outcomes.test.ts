@@ -37,7 +37,7 @@ async function untilAborted(signal: AbortSignal) {
 
 test.each([
   { phase: "solve", taskLimit: 0.01, override: 0.3, status: "completed" },
-  { phase: "solve", taskLimit: 0.3, override: 0.01, status: "agent_timeout" },
+  { phase: "solve", taskLimit: 0.3, override: 0.01, status: "completed" },
   { phase: "verify", taskLimit: 0.01, override: 0.3, status: "completed" },
   { phase: "verify", taskLimit: 0.3, override: 0.01, status: "failed" },
 ] as const)("explicit $phase ceiling $override replaces task ceiling $taskLimit", async ({ phase, taskLimit, override, status }) => {
@@ -56,19 +56,10 @@ test.each([
   }
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(result.records[0]?.executionStatus).toBe(status);
-  if (status === "agent_timeout") expect(result.records[0]).toMatchObject({ scoreStatus: "valid", verdict: null });
+  if (phase === "solve" && override < taskLimit)
+    expect(result.records[0]).toMatchObject({ scoreStatus: "valid", verdict: { score: 1 },
+      errors: expect.arrayContaining([expect.objectContaining({ code: "SOLVER_AGENT_TIMEOUT" })]) });
   if (status === "failed") expect(result.records[0]).toMatchObject({ scoreStatus: "invalid", verdict: null });
-});
-
-test("a verify-only override leaves the task's solve deadline in effect", async () => {
-  const value = await fixture({ wait: true });
-  value.config.experiment.run.taskIds = ["a"];
-  value.config.experiment.run.verifyTimeoutSeconds = 2;
-  const prepare = value.components.benchmark.prepare.bind(value.components.benchmark);
-  value.components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { solve: 0.03 } });
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
-  expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", verdict: null });
-  expect(value.events).not.toContain("verify");
 });
 
 test("a long phase override cannot extend a shorter whole-task deadline", async () => {
@@ -78,6 +69,7 @@ test("a long phase override cannot extend a shorter whole-task deadline", async 
   value.config.experiment.run.solveTimeoutSeconds = 100;
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", verdict: null });
+  expect(value.events).not.toContain("verify");
   expect(result.records[0]!.durationMs).toBeLessThan(2000);
 });
 
@@ -94,8 +86,9 @@ test("runTask without an explicit whole-task budget can solve past the old 300-s
   } finally { vi.useRealTimers(); }
 });
 
-test("Agent solve deadline is a zero-score evaluation, refills the slot and is skipped on resume", async () => {
+test("a run can force a valid zero after solve timeout and skip the task on resume", async () => {
   const value = await fixture();
+  value.config.experiment.run.scoreAfterSolveTimeout = false;
   const prepare = value.components.benchmark.prepare.bind(value.components.benchmark);
   value.components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { solve: 0.03 } });
   const solve = value.components.solver.solve.bind(value.components.solver);
@@ -107,6 +100,7 @@ test("Agent solve deadline is a zero-score evaluation, refills the slot and is s
   };
   const result = await runEngine({ ...value, signal: new AbortController().signal });
   expect(calls).toEqual(["a", "b", "c"]);
+  expect(value.events.filter(event => event === "verify")).toHaveLength(2);
   expect(result.run.status).toBe("completed");
   expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", solve: null, verdict: null });
   expect(computeSuccessRate(result)).toMatchObject({ selected: 3, denominator: 3, invalid: 0, passed: 2, rate: 2 / 3 });
@@ -152,8 +146,13 @@ test.each(["partial", "missing-session", "missing-trajectory", "export-failure"]
     };
     const result = await runEngine({ ...value, signal: new AbortController().signal });
     const record = result.records[0]!;
-    expect(record).toMatchObject({ executionStatus: "agent_timeout", scoreStatus: "valid", cleanupStatus: "cleaned" });
-    expect(computeSuccessRate(result)).toMatchObject({ denominator: 1, passed: 0, invalid: 0, rate: 0 });
+    if (evidence === "export-failure") {
+      expect(record).toMatchObject({ executionStatus: "failed", scoreStatus: "invalid", verdict: null, cleanupStatus: "cleaned" });
+      expect(value.events).not.toContain("verify");
+    } else {
+      expect(record).toMatchObject({ executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1 }, cleanupStatus: "cleaned" });
+      expect(computeSuccessRate(result)).toMatchObject({ denominator: 1, passed: 1, invalid: 0, rate: 1 });
+    }
     if (evidence === "partial") {
       expect(record.errors.map(error => error.code)).toEqual(["SOLVER_AGENT_TIMEOUT"]);
       expect(record.warnings).toEqual([expect.objectContaining({ phase: "collect", code: "ARTIFACT_COLLECTION_INCOMPLETE" })]);

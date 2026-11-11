@@ -14,6 +14,8 @@ Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配
 
 `FROM` 和外部 `COPY --from` 由 Docker 自带构建器下载，使用 daemon 已生效的网络设置。`doctor experiment.yaml` 检查镜像获取、`FROM` 和 `RUN`，并生成配置建议，不修改配置或重启 Docker；管理员应用建议后再次运行诊断。
 
+任务镜像缺少系统 CA 时，Evaluator 会在构建派生 Runtime 镜像时，将固定 Node 版本自带的公共根证书写入 `/etc/ssl/certs/ca-certificates.crt`。已有 CA 证书和显式配置的证书路径会保留。Codex 等使用系统 CA 的客户端可以直接进行 HTTPS 证书校验。
+
 ## 如何按任务区分和查看镜像？
 
 本地镜像名称采用 `ember-evaluator/<任务短名>:<用途>-<种类>-<hash>`。`solve` 表示解题，`verify` 表示验证；名称后缀用于区分不同任务和内容。可按任务短名或用途查找镜像：

@@ -142,6 +142,32 @@ function validateRequirements(requirements: RuntimeRequirement[], platform: Cont
 }
 
 type RuntimeImageIdentity = Omit<PreparedRuntimeImage, "runtimes">;
+const ensureSystemCaSource = String.raw`const { mkdirSync, rmSync, statSync, writeFileSync } = require("node:fs");
+const { dirname } = require("node:path");
+const { getCACertificates } = require("node:tls");
+const bundle = "/etc/ssl/certs/ca-certificates.crt";
+const candidates = [
+  process.env.SSL_CERT_FILE,
+  bundle,
+  "/etc/ssl/cert.pem",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/pki/tls/cacert.pem",
+  "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+];
+const hasBundle = candidates.some(path => {
+  const file = path && statSync(path, { throwIfNoEntry: false });
+  return file && file.isFile() && file.size > 0;
+});
+if (!hasBundle && getCACertificates("system").length === 0) {
+  // Use the pinned Node image's public roots without contacting package repositories.
+  process.umask(0o022);
+  mkdirSync(dirname(bundle), { recursive: true });
+  // Replace an empty file or a dangling link without writing through the link.
+  rmSync(bundle, { force: true });
+  writeFileSync(bundle, getCACertificates("bundled").join("\n") + "\n", { flag: "wx", mode: 0o644 });
+}
+`;
 const runtimeDockerfile = [
   "ARG NODE_IMAGE",
   "ARG BASE_IMAGE",
@@ -149,6 +175,7 @@ const runtimeDockerfile = [
   "FROM ${BASE_IMAGE}",
   "USER 0:0",
   "COPY --from=evaluator_node /usr/local/bin/node /usr/local/bin/node",
+  `RUN ${JSON.stringify([EVALUATOR_NODE_EXECUTABLE, "-e", ensureSystemCaSource])}`,
   // COPY merges directories; stale nested npm dependencies can shadow the pinned versions.
   "RUN rm -rf /usr/local/lib/node_modules/npm",
   "COPY --from=evaluator_node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm",

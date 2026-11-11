@@ -34,6 +34,7 @@ export function apply(ctx) {
     solve: forbidden,
   }));
   ctx.evaluator.register("environment", "warmup-fixture", validate, options => ({
+    supportsRuntimeInstallation: true,
     async materialize(spec, signal, _ready, _activity, context) {
       await event("materialize", context.taskId);
       signal.throwIfAborted();

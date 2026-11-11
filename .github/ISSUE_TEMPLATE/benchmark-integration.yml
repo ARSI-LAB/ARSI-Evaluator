@@ -1,0 +1,58 @@
+name: "Benchmark Integration"
+description: "Request integration of a new benchmark or dataset into Ember Evaluator"
+title: "[Benchmark] "
+labels: ["category:benchmark"]
+body:
+  - type: input
+    id: benchmark
+    attributes:
+      label: Benchmark Name and Version
+      placeholder: "e.g. Terminal-Bench-Science 0.1"
+    validations:
+      required: true
+  - type: input
+    id: upstream
+    attributes:
+      label: Official Repository / Dataset URL
+      placeholder: "https://github.com/owner/benchmark"
+    validations:
+      required: true
+  - type: textarea
+    id: overview
+    attributes:
+      label: Overview
+      description: "What capability does the benchmark evaluate? Why should Ember support it?"
+    validations:
+      required: true
+  - type: textarea
+    id: dataset
+    attributes:
+      label: Dataset and Input Format
+      description: "Source, version/revision, task IDs/splits, text/images/files, access restrictions."
+    validations:
+      required: false
+  - type: textarea
+    id: runtime-scoring
+    attributes:
+      label: Execution, Verification and Scoring
+      description: "Runtime/environment requirements, solver tools, private references, official verifier/judge, metrics."
+    validations:
+      required: false
+  - type: textarea
+    id: integration
+    attributes:
+      label: Suggested Integration Approach
+      description: "Can the existing Harbor protocol, dataset source, or multimodal task attachments be reused?"
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: "What should work at completion? Include smoke tests, results, and documentation."
+      placeholder: |
+        - [ ] Pinned dataset can be loaded and enumerated
+        - [ ] Tasks execute and score using the intended protocol
+        - [ ] Example playbook and regression tests are included
+    validations:
+      required: true

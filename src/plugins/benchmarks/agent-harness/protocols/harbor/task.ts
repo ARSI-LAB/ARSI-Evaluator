@@ -286,13 +286,21 @@ async function prepareHarborStage(
   }
   const hooks = document.verifier && declaredVerifier.collect !== undefined ? declaredVerifier.collect : [];
   if (!Array.isArray(hooks)) invalid("verifier.collect must be an array");
+  // Git treats a trailing /* as a pattern, so it cannot be trusted literally.
+  const collectGitConfig = workdir.endsWith("/*") ? null : "'safe.directory=" + workdir.replaceAll("'", "'\\''") + "'";
   const collect = (hooks as unknown[]).map(value => {
     const hook = table(value, "verifier.collect");
     fields(hook, ["command", "timeout_sec", "service"], "verifier.collect");
     if (hook.service !== undefined && (typeof hook.service !== "string" || (hook.service !== "main" && !solveEnv.services?.[hook.service]))) invalid("Unknown collect service");
     if (typeof hook.command !== "string" || !hook.command.trim()) invalid("Collect command must be non-empty");
-    // Harbor keeps bash in main, but third-party sidecars may provide only sh.
-    return { executable: hook.service && hook.service !== "main" ? "sh" : "bash", args: ["-c", hook.command as string], cwd: workdir, env: {},
+    // Trust only the main checkout and keep any Git command configuration
+    // already inherited by the hook. Sidecars have their own workdirs.
+    const sidecar = hook.service && hook.service !== "main";
+    const args = sidecar || collectGitConfig === null ? ["-c", hook.command] : [
+      "-c", 'export GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }$1"; shift\n' + hook.command,
+      "bash", collectGitConfig,
+    ];
+    return { executable: sidecar ? "sh" : "bash", args, cwd: workdir, env: {},
       timeoutSeconds: positive(hook.timeout_sec ?? 60, "collect.timeout_sec"),
       ...(typeof hook.service === "string" ? { service: hook.service } : {}) };
   });
@@ -333,7 +341,6 @@ async function prepareHarborStage(
     ...(typeof declaredEnvironment.skills_dir === "string" ? { skillsDirectories: [declaredEnvironment.skills_dir] } : {}),
     ...(publicMcp.length ? { mcpServers: publicMcp } : {}) },
     solveEnv, verifyEnv, verification, verificationMode: mode,
-    ...(config.defaults.scoreAfterSolveFailure === undefined ? {} : { scoreAfterSolveFailure: config.defaults.scoreAfterSolveFailure }),
     ...(mode === "shared" ? { verificationNetwork: phaseNetwork(declaredVerifier, declaredEnvironment) } : {}),
     transfer: mode === "shared" ? null : artifactSpec,
     ...(mode === "shared" && artifactSpec ? { artifactCollection: artifactSpec } : {}),
