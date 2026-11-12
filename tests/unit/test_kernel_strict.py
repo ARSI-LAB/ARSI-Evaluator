@@ -27,16 +27,6 @@ spec = importlib.util.spec_from_file_location('kernel_strict', path)
 strict = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(strict)
 
-class PrecisionSeedTests(unittest.TestCase):
-    def test_standalone_precision_rejects_invalid_seeds_before_device_import(self):
-        spec = importlib.util.spec_from_file_location('precision_seed_test', path.with_name('precision.py'))
-        worker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(worker)
-        for seeds in ([], [1, 1], [-1], [2**32], [True], [1.5]):
-            with self.subTest(seeds=seeds), self.assertRaisesRegex(ValueError, 'seeds'):
-                worker.run_precision_atom('p.py', 'k.py', seeds, None, 0)
-
-
 class Storage:
     def __init__(self, pointer): self.pointer = pointer
     def data_ptr(self): return self.pointer
@@ -119,7 +109,7 @@ class StrictTests(unittest.TestCase):
 
 
 class WorkerCoreTests(unittest.TestCase):
-    def run_candidate(self, defect=None, candidate_error=None, input_unmodified=True, emit_layout=True, seeds=None):
+    def run_candidate(self, defect=None, candidate_error=None, input_unmodified=True, emit_layout=True, seeds=None, operation='evaluate'):
         import copy, contextlib, types, sys
         # Device APIs are test doubles; this exercises the fixed checker, not NPU execution.
         sync_calls = []
@@ -157,7 +147,7 @@ class WorkerCoreTests(unittest.TestCase):
                 for a, b in zip(left, right): compare(a, b)
             else:
                 if left.values != right.values: raise AssertionError('Tensor values changed')
-        request = {'hashes': {}, 'candidate': 'candidate/kernel.py', 'candidateRoot': 'candidate', 'problem': 'problem.py', 'dataRoot': '.',
+        request = {'operation': operation, 'hashes': {}, 'candidate': 'candidate/kernel.py', 'candidateRoot': 'candidate', 'problem': 'problem.py', 'dataRoot': '.',
             'contractSha256': 'test-fixture', 'seeds': [42] if seeds is None else seeds, 'rtol': 0, 'atol': 0, 'warmup': 5, 'repeat': 20,
             'contract': {'inputs': [{'shape': [2,4], 'dtype': 'float16', 'contiguous': True}],
                 'output': {'shape': [2,2,2], 'dtype': 'float16', 'contiguous': True, 'independent': True}, 'inputUnmodified': input_unmodified}}
@@ -202,6 +192,20 @@ class WorkerCoreTests(unittest.TestCase):
         self.assertEqual([t['active'] for t in timings], [20, 20])
         self.assertEqual([t['synchronizations'] for t in timings], [0, 0], 'The timer owns synchronization symmetrically')
         self.assertTrue(all(t['triton_only'] is False for t in timings))
+
+    def test_precision_retains_strict_failure_and_mutable_input_rules_without_timing(self):
+        for defect in ('mutation', 'numerical', 'alias', 'layout'):
+            with self.subTest(defect=defect):
+                result, assessment, timings = self.run_candidate(defect, operation='precision')
+                self.assertEqual(result['status'], 'incorrect')
+                self.assertEqual(assessment['errorOwnership'], 'candidate')
+                self.assertEqual(timings, [])
+        result, assessment, timings = self.run_candidate('mutation', input_unmodified=False, operation='precision')
+        self.assertEqual(result['status'], 'passed')
+        self.assertTrue(all(c['status'] == 'passed' for c in assessment['checks']))
+        self.assertEqual(self.candidate_inputs, [1, 1])
+        self.assertEqual(timings, [])
+        self.assertNotIn('timingEvidence', result)
 
     def test_mutating_kernel_starts_from_seed_inputs_for_every_timed_call(self):
         result, _, _ = self.run_candidate('mutation', input_unmodified=False)

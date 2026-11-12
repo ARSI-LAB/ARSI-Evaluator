@@ -1,6 +1,5 @@
 import { Command as Commander, CommanderError, Option } from "commander";
 import { resolve } from "node:path";
-import { parseKernelSeeds, type KernelCommand } from "../application/kernel.js";
 import { pluginCommandArguments } from "../application/plugins/cli-extensions.js";
 import type { CliExtensions } from "../application/plugins/cli-extensions.js";
 import type { PluginActivation } from "../core/contracts/plugin-extension.js";
@@ -14,7 +13,6 @@ export type Command = (
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
-  | KernelCommand
   | { kind: "plugin"; plugin: PluginCliCommand; argv: string[] }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
@@ -29,10 +27,7 @@ interface Options extends Omit<CliOverrides, "plugins"> {
   patch?: string; taskIdsFile?: string; resume?: boolean | string; dryRun?: boolean;
   all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
-  problem?: string; kernel?: string; out?: string; round?: string; device?: string;
-  python?: string; seeds?: string; seed?: string; warmup?: string; repeat?: string; network?: string;
-  timeoutMs?: string; outputLimitBytes?: string; cleanupGraceMs?: string; cleanupTimeoutMs?: string;
-  maxAttempts?: string; attemptTimeoutSeconds?: string; cacheMaxEntries?: string; retryDelayMs?: string;
+  network?: string;
 }
 
 export class CommandUsageError extends TypeError {
@@ -111,54 +106,6 @@ export function parseCommand(argv: string[], extensions: CliExtensions = { comma
       if (!file && opts.patch) throw new TypeError("--patch requires YAML");
       result = { kind: "cleanup-images", all: opts.all ?? false, execute: opts.yes ?? false, ...(file ? { file } : {}), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) };
     });
-  const kernel = program.command("kernel").description("Measure kernel performance, precision, or profiling data");
-  const integer = (raw: string | undefined, fallback: number, flag: string) => {
-    const value = raw === undefined ? fallback : Number(raw);
-    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${flag} must be a non-negative integer`);
-    return value;
-  };
-  for (const name of ["bench", "precision", "profile"] as const) {
-    const cmd = kernel.command(name).description(name === "bench" ? "Verify a kernel, then benchmark its performance" : name === "precision" ? "Check kernel correctness with selected random seeds" : "Collect kernel profiling metrics independently")
-      .requiredOption("--problem <path>", "Problem definition path")
-      .requiredOption("--kernel <path>", "Kernel implementation path")
-      .requiredOption("--out <json>", "Destination JSON result file")
-      .option("--device <n>", "NPU device index", "0")
-      .option("--timeout-ms <n>", "Overall worker timeout in milliseconds; 0 disables it (bench/precision default: 900000)")
-      .option("--output-limit-bytes <n>", "Explicit per-stream output capacity; omitted preserves complete output")
-      .option("--python <executable>", "Python interpreter used by the kernel executor");
-    if (name === "profile") cmd.option("--round <n>", "Profiling round index", "0")
-      .option("--seed <n>", "Replay input seed", "0")
-      .option("--warmup <n>", "Warmup calls before capture", "25")
-      .option("--max-attempts <n>", "Maximum profiler capture attempts including the first (default: 2)")
-      .option("--attempt-timeout-seconds <n>", "Timeout per profiler capture attempt (default: 300)")
-      .option("--retry-delay-ms <n>", "Wait before each capture retry; 0 disables waiting (default: exponential)")
-      .option("--cleanup-grace-ms <n>", "Grace period before forcing process termination (default: 100)")
-      .option("--cleanup-timeout-ms <n>", "Wait to confirm profiler cleanup (default: 3000)")
-      .option("--cache-max-entries <n>", "Maximum profiling cache entries; omitted disables eviction");
-    if (name === "bench") cmd.option("--warmup <n>", "Warmup timing calls", "25")
-      .option("--repeat <n>", "Measured timing calls", "100");
-    if (name === "precision") cmd.option("--seeds <list>", 'Space-separated random seeds; quote the list, e.g. --seeds "0 1"', "0 1");
-    cmd.action((opts: Options) => {
-      const base = { problem: resolve(String(opts.problem)), kernel: resolve(String(opts.kernel)), out: resolve(String(opts.out)), device: integer(opts.device, 0, "--device"), ...(opts.python === undefined ? {} : { python: opts.python }) };
-      const processOptions: { timeoutMs?: number; outputLimitBytes?: number; cleanupGraceMs?: number; cleanupTimeoutMs?: number } = {};
-      for (const [key, flag] of [["timeoutMs", "--timeout-ms"], ["outputLimitBytes", "--output-limit-bytes"], ["cleanupGraceMs", "--cleanup-grace-ms"], ["cleanupTimeoutMs", "--cleanup-timeout-ms"]] as const) {
-        if (opts[key] === undefined) continue;
-        const value = integer(opts[key], 0, flag);
-        if (key !== "timeoutMs" && value === 0) throw new TypeError(`${flag} must be a positive integer`);
-        processOptions[key] = value;
-      }
-      const profileOptions: { maxAttempts?: number; attemptTimeoutSeconds?: number; cacheMaxEntries?: number; retryDelayMs?: number } = {};
-      for (const [key, flag] of [["maxAttempts", "--max-attempts"], ["attemptTimeoutSeconds", "--attempt-timeout-seconds"], ["cacheMaxEntries", "--cache-max-entries"], ["retryDelayMs", "--retry-delay-ms"]] as const) {
-        if (opts[key] === undefined) continue;
-        const value = integer(opts[key], 0, flag);
-        if (key !== "retryDelayMs" && value === 0) throw new TypeError(`${flag} must be a positive integer`);
-        profileOptions[key] = value;
-      }
-      result = name === "profile" ? { kind: "kernel-profile", ...base, ...processOptions, ...profileOptions, round: integer(opts.round, 0, "--round"), seed: integer(opts.seed, 0, "--seed"), warmup: integer(opts.warmup, 25, "--warmup") }
-        : name === "precision" ? { kind: "kernel-precision", ...base, ...processOptions, seeds: parseKernelSeeds((opts.seeds ?? "0 1").trim().split(/\s+/).filter(Boolean).map(Number)) }
-        : { kind: "kernel-bench", ...base, ...processOptions, warmup: integer(opts.warmup, 25, "--warmup"), repeat: integer(opts.repeat, 100, "--repeat") };
-    });
-  }
   const names = new Set(program.commands.map(command => command.name()));
   names.add("help");
   for (const plugin of plugins) {

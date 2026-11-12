@@ -35,13 +35,17 @@ export function renderKernelTables(value: JsonValue | undefined, evidenceRoot = 
   const metric = expectRecord(value, "kernel metric");
   if (!Array.isArray(metric.rows)) throw new TypeError("Invalid kernel report rows");
   const rows = metric.rows.map(value => expectRecord(value, "kernel report row"));
-  const lines = ["## 算子正确性与性能", "",
+  const timingOnly = rows.some(row => row.operation === "bench");
+  const lines = timingOnly ? ["## Kernel timing", "",
+    `Measured ${number(metric.measured)} / ${number(metric.selected)}. Correctness was not checked; no candidate score or speedup is reported.`, "",
+    "| Task | Candidate (ms) | Timing scope | Evidence |", "| --- | --- | --- | --- |"] : ["## 算子正确性与性能", "",
     `正确 ${number(metric.passed)} / ${number(metric.selected)}；有效计时 ${number(metric.measured)}；加速 ${number(metric.faster)}；加速比几何均值 ${number(metric.geometricMeanSpeedup)}。`, "",
     "正确性通过不代表性能提升。加速比为参考耗时 / 候选耗时；耗时只含设备 kernel，详细 profiler 重放不参与该计时。", "",
     "| 任务 | 有效 / 正确 | 参考种类 | 参考 (ms) | 候选 (ms) | 加速比 | 证据 |",
     "| --- | --- | --- | --- | --- | --- | --- |"];
-  for (const row of rows) lines.push(
-    `| ${escape(String(row.taskId))} | ${row.valid} / ${row.passed} | ${escape(String(row.referenceKind ?? "—"))} | ${number(row.referenceMs)} | ${number(row.candidateMs)} | ${number(row.speedup)} | ${resultLink(row, evidenceRoot)} |`,
+  for (const row of rows) lines.push(timingOnly
+    ? `| ${escape(String(row.taskId))} | ${number(row.candidateMs)} | ${escape(String(row.timingScope ?? "—"))} | ${resultLink(row, evidenceRoot)} |`
+    : `| ${escape(String(row.taskId))} | ${row.valid} / ${row.passed} | ${escape(String(row.referenceKind ?? "—"))} | ${number(row.referenceMs)} | ${number(row.candidateMs)} | ${number(row.speedup)} | ${resultLink(row, evidenceRoot)} |`,
   );
   if (!rows.some(row => row.profilingRequested === true || row.profiling != null)) {
     lines.push("", "详细 profiling 未启用。", "");

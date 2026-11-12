@@ -16,9 +16,9 @@
 | 网络补测 | `ember-evaluator retry --run <run-id-or-directory>` | 在原 run 定向补测有明确网络故障证据的无效题。 |
 | 重建报告 | `ember-evaluator report <run-dir>` | 从保存的结果重建指标和 Markdown 报告，无需模型 API key。 |
 | 清理镜像 | `ember-evaluator cleanup images experiment.yaml` | 默认预览，`--yes` 执行删除。仅在用户要求清理时执行删除。 |
-| Kernel 性能 | `ember-evaluator kernel bench --help` | 先验证 Kernel，再测性能。 |
-| Kernel 精度 | `ember-evaluator kernel precision --help` | 按指定随机种子验证正确性。 |
-| Kernel Profiling | `ember-evaluator kernel profile --help` | 单独采集 profiling 数据。 |
+| Kernel 性能 | `ember-evaluator run experiment.yaml` | 设置 `benchmark.config.operation: bench`，只测候选 Triton 耗时，无正确性分数。 |
+| Kernel 精度 | `ember-evaluator run experiment.yaml` | 设置 `benchmark.config.operation: precision`，只验证正确性。 |
+| Kernel Profiling | `ember-evaluator run experiment.yaml` | 设置 `benchmark.config.operation: profile`，独立采集 profiling 数据。 |
 
 `benchmark list/info`、`init`、`inspect`、`doctor`、`warmup` 和 `run` 支持显式 `--patch`。inspect、doctor、warmup、run 和 retry 支持 `--network`。retry 从保存的 run 恢复插件，传参时省略 `--patch`。report 重建时仍需要能访问 run 记录的外部报告插件。
 

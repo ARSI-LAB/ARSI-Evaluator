@@ -8,15 +8,11 @@ test.each([
   ["warmup", "--task-ids-file", "--progress"],
   ["retry", "--task-id", "--request-id"],
   ["cleanup images", "--all", "--yes"],
-  ["kernel precision", "--seeds", "--device"],
-  ["kernel bench", "--problem", "--kernel", "--out"],
-  ["kernel profile", "--round", "--python"],
   ["init", "--benchmark", "--output"],
   ["doctor", "--network", "--patch"],
   ["inspect", "--network", "--patch"],
   ["report", "<run-dir>"],
   ["cleanup", "images"],
-  ["kernel", "bench", "precision", "profile"],
 ])("%s help describes its own arguments without executing", async (path, ...flags) => {
   const out: string[] = [], errors: string[] = [];
   expect(await runCli([...path.split(" "), "--help"], { out: text => out.push(text), error: text => errors.push(text) })).toBe(0);
@@ -48,21 +44,21 @@ test("run retains model and credential overrides", () => {
     .toMatchObject({ kind: "run", overrides: { apiKey: "fixture-key" } });
 });
 
-test.each([["config"], ["config", "resolve", "experiment.yaml"], ["unknown"]])("removed or unknown command %j prints root help", async (...args) => {
+test.each([["config"], ["config", "resolve", "experiment.yaml"], ["kernel"], ["unknown"]])("removed or unknown command %j prints root help", async (...args) => {
   const out: string[] = [], errors: string[] = [];
   expect(await runCli(args, { out: text => out.push(text), error: text => errors.push(text) })).toBe(2);
   expect([...out, ...errors].join("\n")).toContain("Usage: ember-evaluator");
 });
-test.each(["benchmark", "cleanup", "kernel"])("%s without a subcommand prints its help", async name => {
+test.each(["benchmark", "cleanup"])("%s without a subcommand prints its help", async name => {
   const out: string[] = [], errors: string[] = [];
   expect(await runCli([name], { out: text => out.push(text), error: text => errors.push(text) })).toBe(2);
   expect([...out, ...errors].join("\n")).toContain("Usage: ember-evaluator " + name);
 });
-test("root help includes benchmark and omits config", () => {
+test("root help includes benchmark and omits removed commands", () => {
   const result = parseArgs(["--help"]);
   expect(result).toMatchObject({ kind: "help" });
   if (result.kind === "help") {
     expect(result.text).toMatch(/^  benchmark\s/m);
-    expect(result.text).not.toMatch(/^  config\s/m);
+    expect(result.text).not.toMatch(/^  (config|kernel)\s/m);
   }
 });

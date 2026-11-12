@@ -1,6 +1,6 @@
 import { delimiter } from "node:path";
 import { runtimeProcessEnvironment } from "../../../../../infrastructure/process/local.js";
-import type { KernelExecOptions } from "./cli.js";
+import type { KernelExecOptions } from "./execution.js";
 
 // CANN set_env.sh, Python environments and native/Triton compilers supply these
 // settings on the host. Match individual names so unrelated credentials stay out.

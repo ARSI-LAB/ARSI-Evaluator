@@ -83,7 +83,10 @@ class TimerCaptureTest(unittest.TestCase):
     def test_prepared_capture_separates_restore_from_kernel_even_if_they_have_the_same_name(self):
         self.run_capture(prepared=True)
 
-    def run_capture(self, prepared):
+    def test_prepared_triton_timing_excludes_framework_and_reduction_invocations(self):
+        self.run_capture(prepared=True, triton_only=True)
+
+    def run_capture(self, prepared, triton_only=False):
         import sys, types
         from unittest.mock import patch
         calls, steps, synchronizations, preparations = [], [], [], []
@@ -114,6 +117,17 @@ class TimerCaptureTest(unittest.TestCase):
                     import json
                     name = 'kernel-timing-prepared.json' if prepared else 'kernel-timing-flow.json'
                     fixture = json.loads((root / 'tests/fixtures' / name).read_text())
+                    if triton_only:
+                        lines = fixture['csv'].splitlines()
+                        fixture['csv'] = lines[0] + ',Type\n' + ''.join(line + ',Triton\n' for line in lines[1:])
+                        for timestamp in (120, 320):
+                            for offset, name, kind in ((0, 'aclnnFramework', 'AI_CORE'), (10, 'clearL2', 'ReduceSum')):
+                                start = timestamp + offset
+                                fixture['csv'] += f'0,7,{name},{start},8,{kind}\n'
+                                fixture['trace'].extend([
+                                    dict(ph='X', name=name, pid=2, tid=7, ts=start, dur=8),
+                                    dict(ph='s', name='torch_to_npu', pid=1, tid=1, ts=start - 5, id=start),
+                                    dict(ph='f', name='torch_to_npu', pid=2, tid=7, ts=start, id=start)])
                     (directory / 'kernel_details.csv').write_text(fixture['csv'])
                     (directory / 'trace_view.json').write_text(json.dumps(fixture['trace']) if prepared else fixture['trace'])
                 return write_trace
@@ -126,7 +140,7 @@ class TimerCaptureTest(unittest.TestCase):
                 timer = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(timer)
                 audit = {}
-                options = dict(warmup=1, active=1 if prepared else 2, prof_dir=str(directory), keep_res=True, audit=audit)
+                options = dict(warmup=1, active=1 if prepared else 2, prof_dir=str(directory), keep_res=True, audit=audit, triton_only=triton_only)
                 if prepared:
                     def prepare():
                         preparations.append(len(steps))

@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,8 +7,7 @@ import { readProcess } from "../../src/infrastructure/process/output.js";
 import { startLocalProcess } from "../../src/infrastructure/process/local.js";
 import { parseKernelConfig } from "../../src/plugins/benchmarks/operator/kernel/index.js";
 import { MsProfCache } from "../../src/plugins/benchmarks/operator/kernel/msprof-cache.js";
-import { parseArgs } from "../../src/cli.js";
-import { kernelBench, kernelPrecision, validateKernelExecOptions } from "../../src/plugins/benchmarks/operator/kernel/runtime/cli.js";
+import { validateKernelExecOptions } from "../../src/plugins/benchmarks/operator/kernel/runtime/execution.js";
 import type { EnvironmentSession } from "../../src/core/contracts/environment.js";
 
 test("kernel configuration accepts large seed sets and explicit resource limits", () => {
@@ -19,7 +18,7 @@ test("kernel configuration accepts large seed sets and explicit resource limits"
   expect(config.outputLimitBytes).toBe(2_000_000);
   expect(config.profiling.cacheMaxEntries).toBe(3);
   expect(config.profiling.retryDelayMs).toBe(0);
-  for (const seeds of [[1, 1], [-1], [0x100000000]])
+  for (const seeds of [[], [1, 1], [-1], [0x100000000], [1.5], [NaN]])
     expect(() => parseKernelConfig({ manifest: "m", seeds })).toThrow();
   expect(() => parseKernelConfig({ manifest: "m", outputLimitBytes: 0 })).toThrow(/outputLimitBytes/);
   expect(() => parseKernelConfig({ manifest: "m", profiling: { retryDelayMs: -1 } })).toThrow(/retryDelayMs/);
@@ -99,37 +98,4 @@ test("profiling cache prunes only when callers configure a capacity", async () =
     await limited.put(profile, { metrics: {}, replay: {} });
     expect(await readdir(directory)).toHaveLength(2);
   } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test("standalone bench forwards iteration controls and enforces explicit output capacity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "kernel-bench-options-"));
-  vi.stubEnv("KERNEL_ATOM_DIR", root);
-  try {
-    const out = join(root, "out.json");
-    await writeFile(join(root, "precision.py"), "// worker location\n");
-    await writeFile(join(root, "timing.py"), `const fs = require('node:fs'); const args = process.argv.slice(2); const out = args[args.indexOf('--out') + 1]; fs.writeFileSync(out, JSON.stringify({time_ms: 1, error: '', args})); console.log(JSON.stringify({time_ms: 1, error: ''}));\n`);
-    const args = { problem: "p.py", kernel: "k.py", out, warmup: 11, repeat: 123 };
-    expect((await kernelBench(args, { python: process.execPath, timeoutMs: 7000 })).time_ms).toBe(1);
-    expect(JSON.parse(await readFile(out, "utf8")).args).toEqual(["--problem", "p.py", "--kernel", "k.py", "--out", out, "--warmup", "11", "--repeat", "123"]);
-    await expect(kernelBench(args, { python: process.execPath, outputLimitBytes: 10 })).rejects.toThrow(/maxBuffer|output/i);
-  } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
-});
-
-test("kernel CLI exposes workload and process controls", () => {
-  const base = ["--problem", "p.py", "--kernel", "k.py", "--out", "r.json"];
-  expect(parseArgs(["kernel", "bench", ...base, "--warmup", "11", "--repeat", "123", "--timeout-ms", "7000", "--output-limit-bytes", "2000000"]))
-    .toMatchObject({ kind: "kernel-bench", warmup: 11, repeat: 123, timeoutMs: 7000, outputLimitBytes: 2000000 });
-  expect(parseArgs(["kernel", "profile", ...base, "--max-attempts", "7", "--attempt-timeout-seconds", "600", "--cache-max-entries", "1000", "--cleanup-grace-ms", "40", "--cleanup-timeout-ms", "8000", "--retry-delay-ms", "0"]))
-    .toMatchObject({ kind: "kernel-profile", maxAttempts: 7, attemptTimeoutSeconds: 600, cacheMaxEntries: 1000, cleanupGraceMs: 40, cleanupTimeoutMs: 8000, retryDelayMs: 0 });
-});
-
-test("precision rejects an empty or invalid seed protocol before starting a worker", async () => {
-  const args = { problem: "p.py", kernel: "k.py", out: "out.json" };
-  for (const seeds of [[], [1, 1], [-1], [0x100000000], [1.5], [NaN]]) {
-    await expect(kernelPrecision({ ...args, seeds }, { python: "missing-interpreter" })).rejects.toThrow(/seeds/);
-  }
-  for (const seeds of ["", "0 invalid", "-1", "1 1", "4294967296"]) {
-    expect(() => parseArgs(["kernel", "precision", "--problem", "p.py", "--kernel", "k.py",
-      "--out", "out.json", "--seeds", seeds])).toThrow(/seeds/);
-  }
 });

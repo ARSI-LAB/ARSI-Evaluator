@@ -3,8 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { profileSingleKernel } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
-import { kernelBench, kernelPrecision } from "../../src/plugins/benchmarks/operator/kernel/runtime/cli.js";
+import { kernelProfile } from "../../src/plugins/benchmarks/operator/kernel/runtime/profile.js";
 import { NpuKernelBackend } from "../../src/plugins/benchmarks/operator/kernel/runtime/npu.js";
 import { LocalEnvironment } from "../../src/plugins/environments/local/environment.js";
 
@@ -16,7 +15,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 // Run the packaged Python workers until they import the candidate. Only the hardware
 // APIs and the msprof executable are substituted, so the child environment is real.
-test.skipIf(!linuxPython).each(["sdk-evaluate", "sdk-profile", "precision", "bench", "profile"] as const)(
+test.skipIf(!linuxPython).each(["evaluate", "precision", "bench", "profile", "direct-profile"] as const)(
   "%s passes only runtime settings and explicit overrides to candidate processes", async operation => {
     await mkdir(".scratch", { recursive: true });
     const root = await mkdtemp(resolve(".scratch/kernel-env-"));
@@ -26,7 +25,7 @@ test.skipIf(!linuxPython).each(["sdk-evaluate", "sdk-profile", "precision", "ben
     const kernel = join(root, "candidate.py");
     const msprof = join(root, "msprof");
     const out = join(root, "out.json");
-    const sdk = operation.startsWith("sdk");
+    const sdk = operation !== "direct-profile";
     const profiling = operation.endsWith("profile");
     const keys = ["ASCEND_HOME_PATH", "ASCEND_OPP_PATH", "TOOLCHAIN_HOME", "ASCEND_RT_VISIBLE_DEVICES", "KERNEL_NPU_DEVICE",
       "OPENAI_API_KEY", "ASCEND_PRIVATE_TOKEN", "HTTPS_PROXY", "MY_KERNEL_SETTING"];
@@ -66,16 +65,16 @@ sys.exit(subprocess.call(shlex.split(app), env={k: os.environ[k] for k in keep i
         try {
           const hashes = Object.fromEntries(await Promise.all(sessionFiles.map(async ({ source, target }) =>
             [target, createHash("sha256").update(await readFile(source)).digest("hex")] as const)));
-          await backend.execute({ operation: profiling ? "profile" : "evaluate", candidateSha256: hashes["data/candidate/kernel.py"],
+          await backend.execute({ operation, candidateSha256: hashes["data/candidate/kernel.py"],
             problem: "data/problem.py", candidate: "data/candidate/kernel.py", candidateRoot: "data/candidate", dataRoot: "data", hashes, seeds: [0], referenceKind: "pytorch" },
           session, signal);
         } finally { await session.dispose(signal); }
       } else {
         const options = { python, device: 2, env: { MY_KERNEL_SETTING: "explicit", ASCEND_HOME_PATH: "/override/cann", PYTHONPATH: root } };
         const args = { problem, kernel, out };
-        if (operation === "precision") await kernelPrecision(args, options);
-        else if (operation === "bench") await kernelBench(args, options);
-        else await profileSingleKernel({ ...args, round: 1, cacheEnabled: false, maxAttempts: 1, msprofBin: msprof }, options);
+        await kernelProfile({ ...args, candidateRoot: root,
+          candidateFiles: [{ path: "candidate.py", sha256: createHash("sha256").update(await readFile(kernel)).digest("hex") }],
+          round: 1, cacheEnabled: false, maxAttempts: 1, msprofBin: msprof }, options);
       }
       const expected = { ASCEND_HOME_PATH: sdk ? "/fixture/cann" : "/override/cann", ASCEND_OPP_PATH: "/fixture/opp", TOOLCHAIN_HOME: "/fixture/compiler",
         ASCEND_RT_VISIBLE_DEVICES: sdk ? "3" : "0,1,2", KERNEL_NPU_DEVICE: sdk ? "0" : "2",

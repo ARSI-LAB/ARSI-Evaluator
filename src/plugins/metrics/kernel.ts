@@ -67,14 +67,17 @@ export class KernelMetrics implements Metrics {
     const rows = records.map(record => {
       const details = record.verdict?.details;
       const d = details && typeof details === "object" && !Array.isArray(details) ? details : {};
-      const valid = isEvaluationComplete(record) && d.protocol === "kernel-v1";
+      const valid = isEvaluationComplete(record) && (d.protocol === "kernel-v1" || d.protocol === "kernel-bench/v1");
+      const timingOnly = d.protocol === "kernel-bench/v1";
       const speedup = valid && record.verdict?.passed === true && typeof d.speedup === "number" && Number.isFinite(d.speedup) && d.speedup > 0 ? d.speedup : null;
       const profiling = summarizeProfiling(d.profiling);
       const safeAttempt = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(record.key.attemptId) && !record.key.attemptId.endsWith(".");
-      return { taskId: record.key.taskId, valid, passed: valid && record.verdict?.passed === true,
+      return { taskId: record.key.taskId, operation: d.operation ?? null, timingScope: d.timingScope ?? null, valid,
+        passed: record.evaluationKind === "performance" ? null : valid && record.verdict?.passed === true,
         referenceKind: d.referenceKind ?? null, status: d.status ?? record.executionStatus,
         referenceMs: speedup === null ? null : d.referenceMs ?? null,
-        candidateMs: speedup === null ? null : d.candidateMs ?? null, speedup,
+        candidateMs: valid && (timingOnly || speedup !== null) && typeof d.candidateMs === "number" &&
+          Number.isFinite(d.candidateMs) && d.candidateMs > 0 ? d.candidateMs : null, speedup,
         profilingRequested: d.profilingRequested === true || profiling !== null, profiling,
         evidencePath: safeAttempt ? `tasks/${safeTaskKey(record.key.taskId)}/attempts/${record.key.attemptId}` : null };
     });
@@ -84,9 +87,10 @@ export class KernelMetrics implements Metrics {
     const profilingRequested = rows.filter(row => row.profilingRequested).length;
     const profiled = rows.filter(row => row.profiling?.status === "completed").length;
     const profilingErrors = rows.filter(row => row.profiling?.status === "failed").length;
-    return { selected, valid, invalid: rows.length - valid, pending: selected - rows.length, passed, measured: speedups.length, faster,
-      passRateValid: valid ? passed / valid : null, passCoverage: selected ? passed / selected : null,
-      fasterCoverage: selected ? faster / selected : null,
+    return { selected, valid, invalid: rows.length - valid, pending: selected - rows.length, passed, measured: rows.filter(row => row.candidateMs !== null).length, faster,
+      passRateValid: snapshot.run.evaluationKind === "performance" || !valid ? null : passed / valid,
+      passCoverage: snapshot.run.evaluationKind === "performance" || !selected ? null : passed / selected,
+      fasterCoverage: snapshot.run.evaluationKind === "performance" || !selected ? null : faster / selected,
       geometricMeanSpeedup: speedups.length ? Math.exp(speedups.reduce((sum, s) => sum + Math.log(s), 0) / speedups.length) : null,
       profilingRequested, profiled, profilingErrors, profilingUncollected: profilingRequested - profiled - profilingErrors,
       profilingCoverage: selected ? profiled / selected : null,

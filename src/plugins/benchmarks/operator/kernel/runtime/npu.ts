@@ -8,7 +8,7 @@ import type { KernelBackend, KernelExecutionOptions } from "./backend.js";
 import { expectNonEmptyString, expectRecord } from "../../../../../core/validation/input.js";
 import { VerificationError } from "../../../../../core/errors/verification-error.js";
 import { readProcess } from "../../../../../infrastructure/process/output.js";
-import { KernelExecError } from "./cli.js";
+import { KernelExecError } from "./execution.js";
 import { kernelProcessEnvironment } from "./environment.js";
 import { kernelProfile } from "./profile.js";
 

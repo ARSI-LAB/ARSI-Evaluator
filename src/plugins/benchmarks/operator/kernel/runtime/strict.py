@@ -82,7 +82,6 @@ def evaluate(request, profile_root, api):
     device = api['npu_device_id']()
     torch.npu.set_device(device)
     assessment['environment'] = observe_environment(torch, torch_npu, device)
-    timer = api['load_module'](Path(__file__).with_name('timing.py'), 'kernel_strict_timer')
     problem = api['load_task_module'](request['problem'], request['dataRoot'])
     # new_assessment emits checks in seed, call, CHECKS order, including unattempted calls.
     check_offset = 0
@@ -159,6 +158,11 @@ def evaluate(request, profile_root, api):
                     assessment['errorOwnership'] = 'candidate'
                     api['verify_hashes'](request['hashes'])
                     return {'status': 'incorrect', 'error': 'Strict kernel check failed'}
+
+        if request.get('operation', 'evaluate') == 'precision':
+            api['verify_hashes'](request['hashes'])
+            return {'status': 'passed', 'error': ''}
+        timer = api['load_module'](Path(__file__).with_name('timing.py'), 'kernel_strict_timer')
 
         def measure(name, run):
             audit = {}

@@ -6,7 +6,7 @@
 
 ## 硬件选择
 
-实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU backend is not implemented”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。`kernel precision/bench/profile` 独立命令仍为 NPU 入口。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。
+实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU backend is not implemented”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。
 
 ## 环境与运行
 
@@ -14,26 +14,61 @@
 
 需要 Linux、可用 NPU、CANN、torch、torch_npu、triton-ascend；详细采集模块还依赖 pandas、NumPy 和 Jinja2。Python 应使用已验证可运行算子的解释器；启动前加载其 CANN 环境。仅支持 `local` 环境与 `local` 调度器，并发固定为 1；确保指定设备没有其他计时任务。验证由本 Benchmark 内置 worker 执行，不能另配 `benchmark.verifier`。仅运行可信候选。Python 使用当前系统账户的权限，可以访问该账户的文件与进程。运行模型生成的代码时，使用独立评测账户或主机，并将模型凭据与私有文件保存在其权限范围之外。
 
-kernel worker 按白名单继承 Python 和 CANN 路径、编译器设置、设备绑定等运行时变量。模型密钥应仅由调用模型的进程持有。通过 `KernelExecOptions.env` 显式传入的值对候选与 profiler 可见。
+kernel worker 按白名单继承 Python 和 CANN 路径、编译器设置、设备绑定等运行时变量。模型密钥应仅由调用模型的进程持有。
 
 ```bash
 export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
 export KERNEL_MANIFEST=/absolute/path/to/cases/tasks.json
 export KERNEL_EVAL_PLACEHOLDER=unused-local-evaluation
-pnpm build
-ember-evaluator run playbook/kernel/existing.yaml --dry-run
-ember-evaluator run playbook/kernel/existing.yaml
+cp playbook/kernel/existing.yaml experiment.yaml
+ember-evaluator run experiment.yaml
 ```
 
 示例 YAML 中的 service 是框架必填字段占位，地址不可用。现有配置加载器要求 `api_key` 引用非空环境变量，因此设置 `KERNEL_EVAL_PLACEHOLDER` 为上述普通文本即可，不要填写真实模型密钥。模型用量为零；离线 `report` 不需要该变量。
+
+## 选择操作
+
+所有操作均通过同一个实验 YAML 运行：
+
+```bash
+ember-evaluator run experiment.yaml
+```
+
+使用 `benchmark.config.operation` 选择执行内容：
+
+| 操作 | 行为 |
+| --- | --- |
+| `evaluate`（默认） | 检查正确性，通过后测量参考与候选耗时并计算加速比；可随后采集详细 profiling |
+| `precision` | 只检查正确性，任务声明严格契约时保留严格 assessment；不计时或采集 profiling |
+| `bench` | 只测量候选耗时，不检查正确性、不测量参考、不计算加速比或候选分数；计时范围仅包含 Triton kernel |
+| `profile` | 独立采集全新详细诊断，不检查正确性、不执行标准计时、不产生候选分数；详见下文 |
+
+例如，在完整实验中使用以下 Benchmark 配置：
+
+```yaml
+benchmark:
+  name: kernel
+  config:
+    operation: bench
+    manifest: ${KERNEL_MANIFEST}
+    python: ${KERNEL_EVAL_PYTHON}
+    device: 0
+    seeds: [0]
+    warmup: 25
+    repeat: 100
+```
+
+`bench` 默认 seed 为 `[0]`、warmup 为 `25`、repeat 为 `100`，并且只接受一个 seed。`precision` 与 `evaluate` 默认 seeds 为 `[0, 1, 2]`，共用默认容差 `atol: 0.001`、`rtol: 0.001`，不按张量 dtype 切换默认值。`evaluate` 默认 warmup 为 `5`、repeat 为 `20`；`precision` 不使用这些计时设置。`precision` 与 `bench` 拒绝 `profiling.enabled: true`；单独诊断请使用 `profile`。
+
+四种操作均支持清单任务选择、声明的多文件候选目录和来源锁，并使用下文的进程限制。严格 `precision` 结果保留正确性 assessment 和实际环境，但不含计时证据。`bench` 结果只证明候选耗时，不能证明数值正确性或严格契约检查通过。
 
 ## 任务文件
 
 参考、候选及依赖均使用清单目录内的相对路径。每个任务都要声明候选导入目录 `candidateRoot`，单文件任务也是如此。候选入口放在该目录内，参考放在目录外。`candidate` 指定入口，`files` 列出其余所需文件，包括包初始化文件、参考依赖和候选资源。候选源文件必须是普通文件，路径中不得包含符号链接。
 
-精度检查、严格计时和 profiling 均保留声明的包结构。例如，入口 `candidate/kernels/kernel.py` 可以从 `.tiling` 导入函数，清单需列出 `candidate/kernels/__init__.py` 和 `candidate/kernels/tiling.py`。参考从清单目录导入模块。参考与候选运行在同一 Python 进程，顶层辅助模块应使用不同名称。
+四种操作均保留声明的包结构。例如，入口 `candidate/kernels/kernel.py` 可以从 `.tiling` 导入函数，清单需列出 `candidate/kernels/__init__.py` 和 `candidate/kernels/tiling.py`。参考从清单目录导入模块。参考与候选运行在同一 Python 进程，顶层辅助模块应使用不同名称。
 
-Profiling 将声明的候选文件复制到独立目录。`profiling.metadata.sources.candidateFiles` 按相对候选根的路径排序，记录每个文件及其 SHA-256。缓存标识包含入口路径、所有候选文件和内核选择策略。SDK 的缓存标识还包含参考路径、锁定的参考依赖和运行时文件。任何辅助文件变化都会使缓存失效。直接调用 `kernelProfile` 时必须提供绝对路径 `candidateRoot` 和完整的 `candidateFiles: {path: string; sha256: string}[]` 清单。独立命令 `kernel profile --kernel` 会按输入路径构造单文件清单。
+Profiling 将声明的候选文件复制到独立目录。`profiling.metadata.sources.candidateFiles` 按相对候选根的路径排序，记录每个文件及其 SHA-256。缓存标识包含入口路径、所有候选文件和内核选择策略。SDK 的缓存标识还包含参考路径、锁定的参考依赖和运行时文件。任何辅助文件变化都会使缓存失效。所有操作均使用清单声明的完整来源清单。
 
 Profiling 优先选择入口中的第一个 Triton `@jit` 函数，再按路径顺序检查已声明的 Python 辅助模块。如果都没有定义该函数，则使用入口文件的主文件名。`metadata.kernelSelection` 记录选择策略、源路径和选中的名称。
 
@@ -77,7 +112,7 @@ Manifest 的任务可提供 `contract`，包含 caseId、输入张量契约、�
 }
 ```
 
-严格成功要求所有检查通过，并取得 Python、torch、torch_npu、Triton、CANN、驱动、设备与可见设备的实际身份。缺少环境身份属于无效测量。`verdict.details.assessment` 保存检查和实际设置；Benchmark 会与请求的 seeds、容差、warmup 和 repeat 核对。
+严格成功要求所有检查通过，并取得 Python、torch、torch_npu、Triton、CANN、驱动、设备与可见设备的实际身份。缺少环境身份属于无效测量。`verdict.details.assessment` 保存检查和实际设置；Benchmark 会核对请求的 seeds 和容差；`evaluate` 还会核对 warmup、repeat 和计时证据。
 
 严格计时保存 schemaVersion 2 / `profiler-flow/v1` 证据，通过 CPU→NPU flow 关联分配设备 kernel 到 profiler Step。原 CSV Step Id 原样保留，不改写，也不作为唯一关联依据。审计拒绝缺失或歧义证据并排除 warmup Step。均值包含每次调用的全部设备 kernel，不包含主机发射时延；CSV 与 trace 随结果保存。公共 SDK 导出契约、assessment、计时证据解析和逐样本审计接口。
 
@@ -128,7 +163,7 @@ run:
 
 `benchmark.config.timeoutSeconds` 限制整个验证阶段，包括正确性、计时和 profiling。开启 profiling 时默认 `maxAttempts * attemptTimeoutSeconds + 300`，否则为 `300`。`run.timeoutSeconds` 可设置更短的任务期限。外层超时会停止采集并等待进程清理，本次采样不会形成有效测量。配置期限时需计入重试退避和解析所需时间。
 
-`benchmark.config.seeds` 接受任意非空、无重复的无符号 32 位整数列表。计时 `warmup`、`repeat`、profiling 预热、尝试次数和超时均由调用方配置为正整数，不额外限制 seed 数量或迭代次数。独立 profiling 的采集回执仍要求单个 seed。 独立 precision 的 seed 列表同样须非空、无重复且为无符号 32 位整数。CLI 会拒绝包含非法项的完整列表，防止遗漏测试种子。
+`benchmark.config.seeds` 接受任意非空、无重复的无符号 32 位整数列表。计时 `warmup`、`repeat`、profiling 预热、尝试次数和超时均由调用方配置为正整数，不额外限制 seed 数量或迭代次数。`bench` 和独立 profiling 只接受一个 seed，`precision` 与 `evaluate` 可使用多个 seed。非法 seed 会在执行前被拒绝。
 
 以下进程控制字段直接放在 `benchmark.config`：
 
@@ -155,7 +190,7 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 
 发布已完成的独立诊断前，Benchmark 核对有效 case/seed/warmup/collection、trace 可用状态、冻结候选与参考哈希、完整候选树证据，以及 replay 逻辑设备 0；不匹配属于验证失败。采集失败返回 `verdict.details.status: unavailable`、`verdict.passed: null`，不包含候选分数，与完整评测中的候选不正确区分。
 
-指标解析沿用 ngo-agent 的 block 表、末行选择和数值保留三位小数。空白、非数值和非有限 CSV 单元格不进入逐 block 指标，真实零值保留。Roofline 缺少的输入保持 null。依赖硬编码硬件规格推导的 UB 占比与核利用率标为不可用；硬件事实来自已核实上下文。Roofline 分类只提供方向，不能证明加速。Profiler 耗时不替代 referenceMs/candidateMs。
+指标解析沿用 ngo-agent 的 block 表、末行选择和数值保留三位小数。空白、非数值和非有限 CSV 单元格不进入逐 block 指标，真实零值保留。Roofline 缺少的输入保持 null。依赖硬编码硬件规格推导的 UB 占比与核利用率标为不可用；硬件事实来自已核实上下文。Roofline 优先检查欠利用：最高管道利用率低于 0.8 时判为 `no`；否则利用率不低于 0.4 的管道按 scalar → vec → mte2 → mte3 顺序归类。Roofline 分类只提供方向，不能证明加速。Profiler 耗时不替代 referenceMs/candidateMs。
 
 | 指标字段 | 单位与含义 |
 | --- | --- |
@@ -172,29 +207,29 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 
 ## 指标与结果
 
-常规评测类型为 `quality`，独立诊断为 `performance`。`passed/score` 只表示输出等价性，通过为 1，候选错误或不正确为 0。正确但更慢的候选仍为通过，`speedup < 1`。
+`evaluate` 与 `precision` 使用 `quality` 类型，`bench` 与 `profile` 使用 `performance` 类型。Quality 结果的 `passed/score` 只表示输出等价性，通过为 1，候选错误或不正确为 0。正确但更慢的候选仍为通过，`speedup < 1`。Performance 操作的 `verdict.passed: null`，不带候选分数；不能用其结果证明正确性或加速比。
 
-评测使用随包发布的 NPU 计时器，并将计时模块纳入来源锁。参考与候选均使用 `triton_only=False`，统计整个调用中所有设备 kernel 的耗时，不含 CPU 发射开销。内置计时器保留真实 ReduceSum 等归约耗时，逐行验证 CSV 耗时是否为有限非负数；缺列、空数据、记录数不完整或非正总耗时均视为无效测量。预热在有效样本之外，耗时单位为 ms。当前计时使用最后一个测试种子的输入；多种 shape 应拆成独立任务。
+评测使用随包发布的 NPU 计时器，并将计时模块纳入来源锁。`evaluate` 的参考与候选均使用 `triton_only=False`，统计整个调用中所有设备 kernel 的耗时，不含 CPU 发射开销。`bench` 使用 `triton_only=True`，保留候选 Triton kernel 的纯计时范围。`precision` 不调用计时器。内置计时器保留真实 ReduceSum 等归约耗时，逐行验证 CSV 耗时是否为有限非负数；缺列、空数据、记录数不完整或非正总耗时均视为无效测量。预热在有效样本之外，耗时单位为 ms。`evaluate` 计时使用最后一个测试种子的输入，`bench` 使用唯一 seed 的输入；多种 shape 应拆成独立任务。
 
 `metrics.json` 的 `metrics["kernel"]` 字段包含：
 
 | 字段 | 含义 |
 | --- | --- |
 | `selected / valid / invalid / pending` | 所选、已判定、无效和未完成任务数 |
-| `passed / measured / faster` | 正确、有完整计时、正确且加速的任务数 |
+| `passed / measured / faster` | 正确、有计时、正确且加速的任务数 |
 | `passRateValid` | 正确数 / 有效判定数 |
 | `passCoverage / fasterCoverage` | 正确数或加速数 / 全部所选任务数 |
 | `geometricMeanSpeedup` | 仅正确且完整计时任务的加速比几何均值 |
 | `profilingRequested` | 已保存结果中明确请求详细采集的任务数 |
 | `profiled / profilingErrors / profilingUncollected` | 详细采集完成、失败、已请求但未采集的任务数 |
 | `profilingCoverage` | 详细采集完成数 / 全部所选任务数 |
-| `rows` | 各任务参考种类、状态、两种耗时、加速比、详细采集摘要与证据路径 |
+| `rows` | 各任务操作、计时范围、参考种类、状态、耗时、加速比、详细采集摘要与证据路径 |
 
 缺少 NPU、参考失败、计时缺失或非法、worker 协议错误以及验证超时属于无效评测，不当作候选零分。无数据的指标为 null，不写 NaN/Infinity。不要只看成功样本的平均加速比而忽略覆盖率。
 
 `faster` 按加速比严格大于 1 计数，不代表统计显著提升；接近 1 的差异需要重复实验判断。运行前保持驱动和 Python 依赖版本一致，来源锁不替代环境版本管理。
 
-评测 attempt 保存 `verifier/kernel-result.json`；独立 profiling 将校验后的诊断回执保存为 `verifier/kernel-profile-result.json`。Profiling 保存 `verifier/kernel-profile.json`、`kernel-profile.raw.json` 和 `kernel-profile_profiling_root/` 产物树，包含 replay 元数据、原始 CSV、请求的 trace、`profiling/original-result.json` 和日志。通过 `profiling.artifacts` 获取相对 verifier 的实际路径。每次采集都有独立的 replay 结果、profiler 输出和 Triton 缓存。kernel 的产物列表指向选中的采集，顶层列表另保留失败尝试以供排查。失败时查看 `profiling.error` 和 `profiling/logs/profiler.log`。同一日志目录中的 `console.log` 对应首次尝试，`console-attempt-N.log` 对应第 N 次尝试。超时没有完整结果时查看 attempt 的 `errors`；框架负责停止 worker 进程组。已保存结果支持离线报告重建。
+`evaluate`、`precision` 和 `bench` 的 attempt 保存 `verifier/kernel-result.json`；独立 profiling 将校验后的诊断回执保存为 `verifier/kernel-profile-result.json`。Profiling 保存 `verifier/kernel-profile.json`、`kernel-profile.raw.json` 和 `kernel-profile_profiling_root/` 产物树，包含 replay 元数据、原始 CSV、请求的 trace、`profiling/original-result.json` 和日志。通过 `profiling.artifacts` 获取相对 verifier 的实际路径。每次采集都有独立的 replay 结果、profiler 输出和 Triton 缓存。kernel 的产物列表指向选中的采集，顶层列表另保留失败尝试以供排查。失败时查看 `profiling.error` 和 `profiling/logs/profiler.log`。同一日志目录中的 `console.log` 对应首次尝试，`console-attempt-N.log` 对应第 N 次尝试。超时没有完整结果时查看 attempt 的 `errors`；框架负责停止 worker 进程组。已保存结果支持离线报告重建。
 
 `report.md` 展示所选 block、指标、L2 结论、采集状态及证据链接。`metrics.json` 记录总体覆盖率与逐题摘要。RSI 需要性能反馈时读取 `tasks/<task-key>/attempts/<attempt-id>/result.json` 的 `verdict.details.profiling`：
 
@@ -223,45 +258,13 @@ profiling.artifacts                        # 相对 verifier/ 的原始证据路
 # 使用 run 输出的结果目录；无需模型凭证或重新执行算子。
 ember-evaluator report /absolute/path/to/results/run-id
 # 沿用同一配置续跑；仍须设置配置引用的环境变量。
-ember-evaluator run playbook/kernel/existing.yaml --resume
+ember-evaluator run experiment.yaml --resume
 ```
 
 `--dry-run` 通过只表示配置和任务来源可解析，不检查 NPU 是否可用。实际 `run` 缺少 torch、torch_npu 或 NPU 时会返回非零退出码，并留下无效评测记录；不能据此判断候选算子的正确性。
 
-## 独立测量原子
-
-除完整 `run` 外，Evaluator 提供三个可单独调用的测量原子，供外部编排（如 RSI）或人工逐项使用：
-
-```bash
-# 精度门：多 seed 双跑，对照 problem.Model 参照（默认容差 atol=1e-5 / rtol=1e-3）
-ember-evaluator kernel precision --problem <problem.py> --kernel <kernel.py> \
-  --out <precision.json> [--seeds 0 1] [--python /usr/bin/python3]
-# 纯计时：与基准走同一 timing 模块（口径见上文"指标与结果"），不校验精度
-ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
-  --out <bench.json> [--warmup 25] [--repeat 100] [--python /usr/bin/python3]
-# msprof 采集：attach 重放脚本采集硬件指标，带缓存与重试；roofline 分类一体返回
-ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
-  --out <profile.json> [--round 0] [--seed 42] [--warmup 25] [--python /usr/bin/python3]
-```
-
-三个命令均支持 `--timeout-ms` 与 `--output-limit-bytes`。Bench/precision 默认总超时为 900000 ms；`--timeout-ms 0` 关闭该总超时。Profile 默认不另设总超时，`--max-attempts`（默认 2）与 `--attempt-timeout-seconds`（默认 300）分别控制采集尝试。Profile 还支持 `--retry-delay-ms`、`--cache-max-entries`、`--cleanup-grace-ms` 与 `--cleanup-timeout-ms`。
-
-输出均为单份 JSON：
-
-| 原子 | 输出字段 |
-| --- | --- |
-| `precision` | `passed`（bool）、`error`、`seeds`、`tolerance` |
-| `bench` | `time_ms`（ms）、`error` |
-| `profile` | `round`、`measured_by`、`metrics`（按 block 的管道利用率/L2/带宽表）、`trace_analysis`（流水线 trace 分析：最长核/overlap/空泡/Double Buffer，无 trace 数据时缺省）、`roofline`（`bottleneck`/`efficiency_rate`/各管道利用率/`warnings`）、`artifacts`、`error` |
-
-roofline 判定：最高管道利用率低于 0.8 直接判 `no`（欠利用优先）；否则利用率不低于 0.4 的管道按 scalar→vec→mte2→mte3 顺序归类为瓶颈。
-
-退出码契约：业务失败（候选编译不过、精度不过等）时 `error` 字段非空、`--out` 照常落盘、进程以 0 退出；解释器缺失、超时、被取消等执行环境故障以非零退出。环境旋钮：`--python` 缺省 `python`，NPU 环境应传带 torch_npu 的解释器；`KERNEL_ATOM_DIR` 可显式指定执行体目录（缺省从安装位置自动定位）。
-
-多卡选卡：三个原子均支持 `--device <n>` 指定 NPU 逻辑卡号（缺省 0 卡），等价于在执行体环境设置 `KERNEL_NPU_DEVICE`；完整 `run` 则通过 `benchmark.config.device` 配置。目标卡须在 `ASCEND_RT_VISIBLE_DEVICES` 允许的可见集合内，`profile` 的采集缓存按可见卡集合与目标卡号区分，不同卡的证据不互换复用。
-
 ## 与 RSI 框架对接
 
-RSI 的 `application.kernel` 封存候选源码，`proposer.operator` 生成改动，`evaluator.operatorbench` 通过完整 `Evaluator.run()` SDK 调用 kernel Benchmark 与 kernel-replay Solver。RSI 安装固定提交的 `ember-evaluator`，不查找相邻源码仓库，也不依赖单独的 CLI 桥接。评测和独立诊断是两个 SDK 操作。Measurement 证据链接原生结果与 verifier 产物；证据可用性及校准用于标记可信度，与候选生成区分。
+RSI 的 `application.kernel` 封存候选源码，`proposer.operator` 生成改动，`evaluator.operatorbench` 通过完整 `Evaluator.run()` SDK 调用 kernel Benchmark 与 kernel-replay Solver。RSI 安装固定提交的 `ember-evaluator`，通过实验配置选择相同的 Benchmark 操作。Measurement 证据链接原生结果与 verifier 产物；证据可用性及校准用于标记可信度，与候选生成区分。
 
 SDK 拥有运行资产、依赖和 prepare/build 生命周期。契约与计时验证通过公共导出消费。独立安装包测试只能证明打包和软件链路，真实精度与性能仍须在 NPU 验证。

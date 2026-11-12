@@ -66,7 +66,7 @@ test("many-seed assessment validation preserves check order with linear seed loo
 const protocol = { seeds: [42], rtol: 0, atol: 0, warmup: 5, repeat: 20 };
 
 test("strict verdict binds the worker's effective protocol to the requested settings", () => {
-  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch",
+  const value = { operation: "evaluate", candidateSha256: "a".repeat(64), referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2,
     assessment: assessment() };
   const strict = { contract: parsed, protocol: { ...protocol, repeat: 21 } };
@@ -74,7 +74,7 @@ test("strict verdict binds the worker's effective protocol to the requested sett
 });
 
 test("strict verdict refuses not-run checks and unattributed candidate defects", () => {
-  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { operation: "evaluate", candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: assessment() };
   expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/timing evidence/i);
   value.assessment.checks[0]!.status = "not-run";
@@ -85,7 +85,7 @@ test("strict verdict refuses not-run checks and unattributed candidate defects",
 
 test("strict performance verdict requires the observed environment identity", () => {
   const checks = { ...assessment(), environment: { ...assessment().environment, driver: null } };
-  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { operation: "evaluate", candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: checks };
   expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/environment/);
 });
@@ -96,7 +96,7 @@ test.each([true, false])("strict timing matches both timers to the input policy 
   checks.contractSha256 = kernelContractDigest(taskContract);
   checks.effectiveProtocol.warmup = 1;
   checks.effectiveProtocol.repeat = 1;
-  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { operation: "evaluate", candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 0.001, candidateMs: 0.001, speedup: 1, assessment: checks };
   const sample = (side: string) => ({
     csvPath: `profile-${side}/kernel_details.csv`, csvSha256: "0".repeat(64),

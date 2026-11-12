@@ -64,12 +64,13 @@ export function parseKernelProfiling(value: unknown, candidateFiles: { path: str
 /** Accept only complete, finite positive timings; infrastructure errors do not become candidate zero scores. */
 export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string,
   candidateFiles: { path: string; sha256: string }[], profilingRequested = false,
-  strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> }): VerifyResult {
+  strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> },
+  operation: "evaluate" | "precision" = "evaluate"): VerifyResult {
   const contract = strict?.contract;
   const r = expectRecord(value, "kernel result");
-  if (r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
+  if (r.operation !== operation || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
-  const details: { [key: string]: JsonValue } = { protocol: "kernel-v1", candidateSha256, referenceKind,
+  const details: { [key: string]: JsonValue } = { protocol: "kernel-v1", operation, candidateSha256, referenceKind,
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
     referenceMs: null, candidateMs: null, speedup: null,
     ...(profilingRequested ? { profilingRequested: true } : {}) };
@@ -104,6 +105,11 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     return { passed: false, score: 0, details };
   }
   if (r.status !== "passed") throw new Error("Unknown kernel evaluation status");
+  if (operation === "precision") {
+    if (r.referenceMs !== null || r.candidateMs !== null || r.speedup !== null || r.timingEvidence !== undefined)
+      throw new VerificationError("Precision result must not carry timing measurements", details);
+    return { passed: true, score: 1, details };
+  }
   for (const name of ["referenceMs", "candidateMs", "speedup"] as const) {
     const measured = r[name];
     if (typeof measured !== "number" || !Number.isFinite(measured) || measured <= 0)
@@ -121,6 +127,20 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
   const reference = details.referenceMs as number, candidate = details.candidateMs as number, speedup = details.speedup as number;
   if (Math.abs(reference / candidate - speedup) > 1e-8 * Math.max(1, speedup)) throw new Error("Inconsistent kernel speedup");
   return { passed: true, score: 1, details };
+}
+
+/** Timing-only measurements never imply correctness or a candidate score. */
+export function kernelBenchVerdict(value: unknown, candidateSha256: string, referenceKind: string): VerifyResult {
+  const r = expectRecord(value, "kernel bench result");
+  if (r.operation !== "bench" || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
+      r.timingScope !== "triton-kernels" || typeof r.error !== "string")
+    throw new VerificationError("Invalid kernel bench identity", {});
+  const details = { protocol: "kernel-bench/v1", operation: "bench", candidateSha256, referenceKind,
+    timingScope: "triton-kernels", status: "unavailable", error: r.error };
+  if (r.status !== "completed" || typeof r.candidateMs !== "number" || !Number.isFinite(r.candidateMs) || r.candidateMs <= 0 ||
+      r.referenceMs !== null || r.speedup !== null)
+    throw new VerificationError("Invalid kernel bench measurement", details);
+  return { passed: null, details: { ...details, status: "completed", candidateMs: r.candidateMs, referenceMs: null, speedup: null } };
 }
 
 /** Validate independent capture receipts at the Benchmark boundary before publishing a diagnostic verdict. */

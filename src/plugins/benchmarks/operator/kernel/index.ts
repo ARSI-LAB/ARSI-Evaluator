@@ -11,9 +11,9 @@ import type { HardwareKind } from "../../../../core/contracts/hardware.js";
 import { lockedCandidateFiles, type KernelRequest } from "./runtime/request.js";
 import { assertKernelHardware, createKernelBackend, type KernelBackend } from "./runtime/backend.js";
 import { parseKernelSeeds } from "./runtime/seeds.js";
-import { MAX_KERNEL_TIMER_MS } from "./runtime/cli.js";
+import { MAX_KERNEL_TIMER_MS } from "./runtime/execution.js";
 import { parseKernelContract, kernelContractDigest } from "./strict.js";
-import { kernelVerdict, kernelProfileVerdict } from "./result.js";
+import { kernelBenchVerdict, kernelVerdict, kernelProfileVerdict } from "./result.js";
 
 export function relativeFile(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
@@ -38,9 +38,12 @@ export function parseKernelConfig(value: unknown) {
   if (p.roundNum !== undefined && !Number.isSafeInteger(p.roundNum)) throw new TypeError("profiling.roundNum must be an integer");
   if (p.retryDelayMs !== undefined && (!Number.isSafeInteger(p.retryDelayMs) || Number(p.retryDelayMs) < 0))
     throw new TypeError("profiling.retryDelayMs must be a non-negative integer");
-  const operation = c.operation ?? "evaluate";
-  if (operation !== "evaluate" && operation !== "profile") throw new TypeError("kernel.operation must be evaluate or profile");
+  const operations = ["evaluate", "precision", "bench", "profile"] as const;
+  const operation = operations.find(value => value === (c.operation ?? "evaluate"));
+  if (operation === undefined)
+    throw new TypeError("kernel.operation must be evaluate, precision, bench or profile");
   const independentProfile = operation === "profile";
+  const independentBench = operation === "bench";
   const collection = p.collection === undefined ? "PipeTimeline,Default" : p.collection;
   if (collection !== "Default" && collection !== "PipeTimeline,Default")
     throw new TypeError("profiling.collection must be Default or PipeTimeline,Default");
@@ -71,7 +74,10 @@ export function parseKernelConfig(value: unknown) {
   };
   const device = nonnegative(c.device ?? 0, "device");
   if (!Number.isSafeInteger(device)) throw new TypeError("device must be an integer");
-  const seeds = parseKernelSeeds(c.seeds ?? (independentProfile ? [0] : [0, 1, 2]));
+  const seeds = parseKernelSeeds(c.seeds ?? (independentProfile || independentBench ? [0] : [0, 1, 2]));
+  if (independentBench && seeds.length !== 1) throw new TypeError("Independent bench requires a single seed");
+  if ((independentBench || operation === "precision") && profiling.enabled)
+    throw new TypeError(`kernel.operation=${operation} requires profiling.enabled=false; use operation=profile for diagnostics`);
   if (independentProfile) {
     if (seeds.length !== 1) throw new TypeError("Independent profile requires a single seed");
     if (!profiling.enabled) throw new TypeError("Independent profile requires profiling.enabled=true");
@@ -80,7 +86,8 @@ export function parseKernelConfig(value: unknown) {
   return { operation, manifest: expectNonEmptyString(c.manifest, "manifest"),
     python: expectNonEmptyString(c.python ?? "python3", "python"), device, seeds,
     rtol: nonnegative(c.rtol ?? 0.001, "rtol"), atol: nonnegative(c.atol ?? 0.001, "atol"),
-    warmup: expectPositiveInteger(c.warmup ?? 5, "warmup"), repeat: expectPositiveInteger(c.repeat ?? 20, "repeat"),
+    warmup: expectPositiveInteger(c.warmup ?? (independentBench ? 25 : 5), "warmup"),
+    repeat: expectPositiveInteger(c.repeat ?? (independentBench ? 100 : 20), "repeat"),
     ...processOptions,
     timeoutSeconds, profiling };
 }
@@ -123,7 +130,7 @@ export class KernelBenchmark implements Benchmark {
   private readonly backend: KernelBackend;
   constructor(private readonly config: KernelConfig, hardware: HardwareKind = "npu") {
     this.backend = createKernelBackend(hardware, config);
-    this.evaluationKind = config.operation === "profile" ? "performance" : "quality";
+    this.evaluationKind = (config.operation === "profile" || config.operation === "bench") ? "performance" : "quality";
   }
 
   validateRun(config: EffectiveConfig): void {
@@ -238,7 +245,9 @@ export class KernelBenchmark implements Benchmark {
       await writeFile(join(session.verifierOutputDir, "kernel-profile-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
       return verdict;
     }
+    if (this.config.operation === "bench")
+      return kernelBenchVerdict(value, String(request.candidateSha256), String(request.referenceKind));
     return kernelVerdict(value, String(request.candidateSha256), String(request.referenceKind), candidateFiles, this.config.profiling.enabled,
-      request.contract === undefined ? undefined : { contract: parseKernelContract(request.contract), protocol: this.config });
+      request.contract === undefined ? undefined : { contract: parseKernelContract(request.contract), protocol: this.config }, this.config.operation);
   }
 }

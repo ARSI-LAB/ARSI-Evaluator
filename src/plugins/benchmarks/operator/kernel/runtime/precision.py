@@ -1,4 +1,4 @@
-"""Evaluate a fixed kernel from stdin and write finite JSON results to stdout and the requested file."""
+"""Run locked kernel evaluation, correctness checks or timing from the stdin protocol."""
 
 from __future__ import annotations
 
@@ -167,8 +167,55 @@ def positive_measurement(value):
     return float(value)
 
 
+def bench(request, profile_root):
+    """Time candidate Triton kernels with seeded inputs, without reference execution."""
+    verify_hashes(request["hashes"])
+    import torch
+    import torch_npu  # noqa: F401
+
+    if not torch.npu.is_available():
+        raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
+    device = npu_device_id()
+    torch.npu.set_device(device)
+    problem = load_task_module(request["problem"], request["dataRoot"])
+    try:
+        candidate = load_task_module(request["candidate"], request["candidateRoot"]).kernel_function
+        if not callable(candidate):
+            raise TypeError("kernel_function must be callable")
+    except Exception as exc:
+        raise CandidateError(f"{type(exc).__name__}: {exc}") from exc
+    timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
+    with torch.inference_mode():
+        seed = request["seeds"][0]
+        random.seed(seed)
+        torch.manual_seed(seed)
+        torch.npu.manual_seed_all(seed)
+        inputs = problem.get_inputs()
+        if not isinstance(inputs, (list, tuple)):
+            raise TypeError("get_inputs must return a positional argument list")
+        inputs = clone_tree(inputs, torch)
+        options = dict(warmup=request["warmup"], active=request["repeat"],
+                       prof_dir=str(profile_root / "profile-candidate"), keep_res=True, triton_only=True)
+        if request.get("contract", {}).get("inputUnmodified", True):
+            ms = timer.bench_kernel_ms(lambda: candidate_call(candidate, inputs), **options)
+        else:
+            audit = {}
+            ms = timer.bench_prepared_kernel_ms(lambda trial: candidate_call(candidate, trial),
+                lambda: clone_tree(inputs, torch), audit=audit, **options)
+            if audit.get("stepLayout") != "prepare-then-run":
+                raise RuntimeError("Mutable-input timer must emit prepare-then-run timing evidence")
+        candidate_ms = positive_measurement(ms)
+    verify_hashes(request["hashes"])
+    return {"status": "completed", "error": "", "candidateMs": candidate_ms}
+
+
 def evaluate(request, profile_root=Path(".")):
-    """Return correctness and device timings with matching scopes, without calling a model service."""
+    """Run evaluation by default, correctness only, or candidate-only timing."""
+    operation = request.get("operation", "evaluate")
+    if operation == "bench":
+        return bench(request, profile_root)
+    if operation not in ("evaluate", "precision"):
+        raise ValueError(f"Unsupported kernel operation: {operation}")
     if "contract" in request:
         strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
         return strict.evaluate(request, profile_root, globals())
@@ -181,7 +228,6 @@ def evaluate(request, profile_root=Path(".")):
     # The environment binds visible devices; --device / KERNEL_NPU_DEVICE selects a logical device within that set.
     device = npu_device_id()
     torch.npu.set_device(device)
-    timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
     problem = load_task_module(request["problem"], request["dataRoot"])
     candidate_root = request["candidateRoot"]
     try:
@@ -225,6 +271,10 @@ def evaluate(request, profile_root=Path(".")):
 
         if reference is None or timing_inputs is None:
             raise RuntimeError("No correctness cases executed")
+        if operation == "precision":
+            verify_hashes(request["hashes"])
+            return {"status": "passed", "error": ""}
+        timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
         reference_ms = positive_measurement(timer.bench_kernel_ms(
             lambda: reference(*timing_inputs), warmup=request["warmup"], active=request["repeat"],
             prof_dir=str(profile_root / "profile-reference"), keep_res=True, triton_only=False,
@@ -261,129 +311,20 @@ def native_output(log):
 
 
 
-# ---------------- Precision worker entry point: precision --problem --kernel --out ----------------
-# Kernel tolerances match rsi/validator.py: fixed ATOL and dtype-specific rtol.
-ATOL = 1e-5
-RTOL_BY_DTYPE = {"torch.float32": 1.3e-6, "torch.float16": 1e-3, "torch.bfloat16": 1.6e-2}
-RTOL_DEFAULT = 1.3e-6
-
-
-def _rtol_for(dtype, override):
-    """Kernel rtol values match rsi/validator.py; explicit CLI overrides take precedence."""
-    return override if override is not None else RTOL_BY_DTYPE.get(str(dtype), RTOL_DEFAULT)
-
-
-def _dtype_of(value):
-    """Use a tensor dtype, the first tensor dtype in a container, or the default tolerance key."""
-    import torch
-
-    if torch.is_tensor(value):
-        return str(value.dtype)
-    if isinstance(value, (list, tuple)):
-        for item in value:
-            if torch.is_tensor(item):
-                return str(item.dtype)
-    return "default"
-
-
-def run_precision_atom(problem_path, kernel_path, seeds, rtol, atol):
-    """Check two runs per seed against the reference and detect input mutation."""
-    if (not isinstance(seeds, list) or not seeds
-            or any(type(seed) is not int or not 0 <= seed <= 0xffffffff for seed in seeds)
-            or len(set(seeds)) != len(seeds)):
-        raise ValueError("seeds must contain unique unsigned 32-bit integers")
-    import random
-
-    import torch
-    import torch_npu  # noqa: F401
-
-    payload = {"problem": problem_path, "kernel": kernel_path, "passed": False,
-               "error": "", "seeds": seeds, "tolerance": {"atol": atol}}
-    try:
-        if not torch.npu.is_available():
-            raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
-        device = npu_device_id()
-        torch.npu.set_device(device)
-        problem = load_task_module(problem_path, Path(problem_path).resolve().parent)
-        candidate = load_task_module(kernel_path, Path(kernel_path).resolve().parent).kernel_function
-        if not callable(candidate):
-            raise CandidateError("kernel_function must be callable")
-        with torch.inference_mode():
-            for seed in seeds:
-                random.seed(seed)
-                torch.manual_seed(seed)
-                torch.npu.manual_seed_all(seed)
-                init = problem.get_init_inputs() if hasattr(problem, "get_init_inputs") else []
-                reference = problem.Model(*init).to(f"npu:{device}").eval()
-                inputs = problem.get_inputs()
-                if not isinstance(inputs, (list, tuple)):
-                    raise TypeError("get_inputs must return a positional argument list")
-                ref_inputs = clone_tree(inputs, torch)
-                expected = clone_tree(select_outputs(reference(*ref_inputs), None), torch)
-                torch.npu.synchronize()
-                validate_reference(expected, torch)
-                compare_tree(inputs, ref_inputs, torch, 0, 0)
-                rtol_used = _rtol_for(_dtype_of(expected), rtol)
-                payload["tolerance"]["rtol"] = rtol_used
-                # Repeat each seed to catch autotune filling outputs once but leaving subsequent runs incomplete.
-                for _ in range(2):
-                    trial = clone_tree(inputs, torch)
-                    actual = candidate(*trial)
-                    torch.npu.synchronize()
-                    try:
-                        compare_tree(expected, select_outputs(actual, None), torch, rtol_used, atol)
-                        compare_tree(inputs, trial, torch, 0, 0)
-                    except (AssertionError, ValueError, IndexError) as exc:
-                        payload["error"] = f"numeric check failed (seed={seed}): {exc}"
-                        return payload
-                del reference
-        payload["passed"] = True
-    except CandidateError as exc:
-        payload["error"] = str(exc)
-    except Exception as exc:  # noqa: BLE001 - record evaluation failure evidence without a nonzero exit
-        payload["error"] = f"{type(exc).__name__}: {exc}"
-    return payload
-
-
-def _emit(out_path, payload):
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-
-
 def main():
-    """Run the precision worker for precision arguments, otherwise evaluate the protocol request from stdin."""
-    if len(sys.argv) > 1 and sys.argv[1] == "precision":
-        parser = argparse.ArgumentParser(prog="precision", add_help=False)
-        parser.add_argument("--problem", required=True)
-        parser.add_argument("--kernel", required=True)
-        parser.add_argument("--out", required=True)
-        parser.add_argument("--seeds", type=int, nargs="*", default=[0, 1])
-        parser.add_argument("--rtol", type=float, default=None)
-        parser.add_argument("--atol", type=float, default=ATOL)
-        atom_args = parser.parse_args(sys.argv[2:])
-        try:
-            payload = run_precision_atom(atom_args.problem, atom_args.kernel,
-                                         atom_args.seeds, atom_args.rtol, atom_args.atol)
-        except Exception as exc:  # noqa: BLE001 - environment failures exit 2 for TypeScript infrastructure handling
-            traceback.print_exc()
-            payload = {"problem": atom_args.problem, "kernel": atom_args.kernel,
-                       "passed": False, "error": f"{type(exc).__name__}: {exc}"}
-            _emit(Path(atom_args.out), payload)
-            return 2
-        _emit(Path(atom_args.out), payload)
-        return 0
+    """Run the requested kernel operation and emit one finite JSON result."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     request = json.load(sys.stdin)
-    result = {"candidateSha256": request["candidateSha256"],
-              "referenceKind": request["referenceKind"], "timingScope": "all-device-kernels",
+    operation = request.get("operation", "evaluate")
+    result = {"operation": operation, "candidateSha256": request["candidateSha256"],
+              "referenceKind": request["referenceKind"],
+              "timingScope": "triton-kernels" if operation == "bench" else "all-device-kernels",
               "referenceMs": None, "candidateMs": None, "speedup": None}
-    if "contract" in request:
+    if "contract" in request and operation != "bench":
         strict = load_module(Path(__file__).with_name("strict.py"), "kernel_strict")
         result["assessment"] = strict.new_assessment(request)
         request["_assessment"] = result["assessment"]

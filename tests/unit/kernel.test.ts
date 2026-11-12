@@ -90,7 +90,7 @@ test("parseKernelProfiling rejects traversal and absolute artifact paths", () =>
 });
 
 test("kernelVerdict accepts consistent passed timing and rejects mismatches", () => {
-  const payload = { candidateSha256: sha, referenceKind: "pytorch",
+  const payload = { operation: "evaluate", candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "",
     referenceMs: 0.1, candidateMs: 0.05, speedup: 2, profiling: validProfiling };
   const verdict = kernelVerdict(payload, sha, "pytorch", singleFile, true);
@@ -107,7 +107,7 @@ test("kernelVerdict accepts consistent passed timing and rejects mismatches", ()
 
 test("kernelVerdict rejects failed results carrying scores and maps infra errors", () => {
   // Reject timing scores on failed results, including omitted fields (undefined !== null).
-  const base = { candidateSha256: sha, referenceKind: "pytorch",
+  const base = { operation: "evaluate", candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "incorrect", error: "mismatch",
     referenceMs: null, candidateMs: null, speedup: null };
   expect(() => kernelVerdict({ ...base, referenceMs: 0.1, candidateMs: 0.05, speedup: 2 }, sha, "pytorch", singleFile))
@@ -120,7 +120,7 @@ test("kernelVerdict rejects failed results carrying scores and maps infra errors
 });
 
 test("kernelVerdict adapts unparseable profiling instead of failing the run", () => {
-  const payload = { candidateSha256: sha, referenceKind: "pytorch",
+  const payload = { operation: "evaluate", candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "",
     referenceMs: 0.1, candidateMs: 0.1, speedup: 1, profiling: {} };
   const verdict = kernelVerdict(payload, sha, "pytorch", singleFile);
@@ -131,7 +131,7 @@ test("kernelVerdict adapts unparseable profiling instead of failing the run", ()
 
 test("evaluation profiling cannot publish a completed receipt without its declared candidate tree", () => {
   const candidateFiles = [{ path: "kernel.py", sha256: sha }, { path: "helper.py", sha256: "b".repeat(64) }];
-  const value = { candidateSha256: sha, referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { operation: "evaluate", candidateSha256: sha, referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 1, candidateMs: 1, speedup: 1, profiling: validProfiling };
   expect(kernelVerdict(value, sha, "pytorch", candidateFiles, true)).toMatchObject({ passed: true,
     details: { profiling: { status: "failed" } } });
@@ -219,24 +219,8 @@ test("analyzeTraceEvents ports the original trace analyzer semantics", () => {
   expect(analyzeTraceEvents([{ pid: "c", ts: 1, dur: 2 }])).toBeNull();
 });
 
-test("kernel atom --device parses card id and rejects invalid values", async () => {
+test.each(["bench", "precision", "profile"])("standalone kernel %s command is rejected", async operation => {
   const { parseArgs } = await import("../../src/cli.js");
-  expect(parseArgs(["kernel", "bench", "--problem", "p.py", "--kernel", "k.py", "--out", "o.json", "--device", "2"]))
-    .toMatchObject({ kind: "kernel-bench", device: 2 });
-  expect(parseArgs(["kernel", "profile", "--problem", "p.py", "--kernel", "k.py", "--out", "o.json"]))
-    .toMatchObject({ kind: "kernel-profile", device: 0 });
-  expect(() => parseArgs(["kernel", "precision", "--problem", "p.py", "--kernel", "k.py",
-    "--out", "o.json", "--device", "-1"])).toThrow(/non-negative/);
-  expect(() => parseArgs(["kernel", "bench", "--problem", "p.py", "--kernel", "k.py",
-    "--out", "o.json", "--device", "x"])).toThrow(/non-negative/);
-});
-
-
-test("profile CLI forwards replay seed and warmup through the current command parser", async () => {
-  const { parseArgs } = await import("../../src/cli.js");
-  const base = ["kernel", "profile", "--problem", "p.py", "--kernel", "k.py", "--out", "o.json"];
-  expect(parseArgs(base)).toMatchObject({ kind: "kernel-profile", seed: 0, warmup: 25 });
-  expect(parseArgs([...base, "--seed", "42", "--warmup", "7"]))
-    .toMatchObject({ kind: "kernel-profile", seed: 42, warmup: 7 });
-  expect(() => parseArgs([...base, "--seed", "-1"])).toThrow(/non-negative/);
+  expect(() => parseArgs(["kernel", operation, "--problem", "p.py", "--kernel", "k.py", "--out", "o.json"]))
+    .toThrow(/unknown command 'kernel'/);
 });

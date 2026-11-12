@@ -1,7 +1,7 @@
-# 在已安装 CANN、torch_npu 和 triton-ascend 的 Linux NPU 主机运行。
-# KERNEL_MANIFEST 指向任务清单，各任务的 candidateRoot 指定候选导入目录。
-# KERNEL_EVAL_PYTHON 指向该 NPU 环境的 Python。
-# KERNEL_EVAL_PLACEHOLDER 只需设置为 unused-local-evaluation，不调用模型。
+# Run on a Linux NPU host with CANN, torch_npu and triton-ascend installed.
+# KERNEL_MANIFEST points to tasks whose candidateRoot declares the candidate import directory.
+# KERNEL_EVAL_PYTHON points to Python in that NPU environment.
+# Set KERNEL_EVAL_PLACEHOLDER to unused-local-evaluation; no model is called.
 hardware: npu
 services:
   default:
@@ -11,6 +11,8 @@ services:
 benchmark:
   name: kernel
   config:
+    # Supported modes: evaluate, precision, bench, profile.
+    operation: evaluate
     manifest: ${KERNEL_MANIFEST}
     python: ${KERNEL_EVAL_PYTHON}
     device: 0

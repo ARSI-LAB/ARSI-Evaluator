@@ -7,14 +7,14 @@ import { KERNEL_PROFILE_OUTPUT_POLICY, parseMsprofMetricsTable, rowsToMetrics, m
 import { analyzeL2Cache, analyzeTraceEvents, findTritonKernelName } from "../msprof-analysis.js";
 import { analyzeRoofline } from "../roofline.js";
 import { MsProfCache } from "../msprof-cache.js";
-import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions } from "./cli.js";
+import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions } from "./execution.js";
 
 import type { CommandSpec, EnvironmentSession } from "../../../../../core/contracts/environment.js";
 import { startLocalProcess } from "../../../../../infrastructure/process/local.js";
 import { readProcess } from "../../../../../infrastructure/process/output.js";
 import { kernelProcessEnvironment } from "./environment.js";
 
-/** The SDK session owns all profiler children; standalone CLI calls own a process group. */
+/** The SDK session owns all profiler children; direct profiling calls own a process group. */
 export type KernelProfileExecution = {
   session: Pick<EnvironmentSession, "start" | "workdir">;
   atomDirectory: string;
@@ -525,11 +525,4 @@ async function appendFileSafe(path: string, text: string): Promise<void> {
   } catch {
     // Failure to persist console.log output must not interrupt capture.
   }
-}
-
-export async function profileSingleKernel(args: Omit<KernelProfileArgs, "candidateRoot" | "candidateFiles">,
-  options: KernelExecOptions = {}): Promise<KernelProfileResult> {
-  const kernel = resolve(args.kernel);
-  const sha256 = createHash("sha256").update(await readFile(kernel)).digest("hex");
-  return kernelProfile({ ...args, candidateRoot: dirname(kernel), candidateFiles: [{ path: basename(kernel), sha256 }] }, options);
 }

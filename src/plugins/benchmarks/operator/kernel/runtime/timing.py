@@ -21,13 +21,11 @@ Measure device execution time without CPU launch latency.
 """
 
 import builtins
-import json
+import csv
+import math
 import os
 import shutil
-import sys
-import traceback
 from datetime import datetime, timezone
-from pathlib import Path
 
 import torch
 
@@ -129,6 +127,19 @@ def _bench_npu_profiler(fn, warmup=5, active=20, prof_dir=None, keep_res=False,
     if audit is not None:
         from timing_evidence import collect_flow_timing
         audit.update(collect_flow_timing(prof_dir, warmup, active, prepared=prepare is not None))
+        if triton_only:
+            # Attribute every row before filtering so preparation and framework work
+            # cannot be mistaken for candidate Triton kernels.
+            with open(os.path.join(prof_dir, '..', audit['csvPath']), newline='', encoding='utf-8-sig') as source:
+                reductions = {row['Name'] for row in csv.DictReader(source)
+                              if row.get('Type', '').lower() == 'reducesum'}
+            audit['rows'] = [row for row in audit['rows']
+                             if not row['name'].startswith('aclnn') and row['name'] not in reductions]
+            if {row['step'] for row in audit['rows']} != set(range(total)):
+                raise ValueError('Incomplete Triton timing iterations')
+            audit['meanMs'] = math.fsum(row['durationUs'] for row in audit['rows'] if row['step'] >= warmup) / active / 1000
+            if not math.isfinite(audit['meanMs']) or audit['meanMs'] <= 0:
+                raise ValueError('Invalid Triton mean duration')
         time_cost_ms = audit['meanMs']
     elif triton_only:
         time_cost_ms = _collect_npu_prof_triton_only(prof_dir, warmup, active)
@@ -257,57 +268,3 @@ def bench_prepared_kernel_ms(fn, prepare, **kwargs):
 def bench_kernel_us(fn, **kwargs):
     """Return the benchmark result in microseconds."""
     return bench_kernel(fn, **kwargs) * 1000
-
-
-# ---------------- Benchmark worker entry point: timing --problem --kernel --out ----------------
-# Measure warmup and active device executions; the precision worker owns correctness checks.
-def _bench_atom_main():
-    import argparse
-
-    import torch
-    import torch_npu  # noqa: F401
-
-    parser = argparse.ArgumentParser(prog="timing")
-    parser.add_argument("--problem", required=True)
-    parser.add_argument("--kernel", required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--warmup", type=int, default=25)
-    parser.add_argument("--repeat", type=int, default=100)
-    args = parser.parse_args()
-    payload = {"problem": args.problem, "kernel": args.kernel, "time_ms": None, "error": ""}
-    out_path = Path(args.out)
-    try:
-        if not torch.npu.is_available():
-            raise RuntimeError("NPU is required; CPU/GPU fallback is disabled")
-        torch.npu.set_device(_logical_npu_device_id())
-        from precision import CandidateError, clone_tree, load_task_module
-
-        problem = load_task_module(args.problem, Path(args.problem).resolve().parent)
-        candidate = load_task_module(args.kernel, Path(args.kernel).resolve().parent).kernel_function
-        if not callable(candidate):
-            raise CandidateError("kernel_function must be callable")
-        inputs = problem.get_inputs()
-        if not isinstance(inputs, (list, tuple)):
-            raise TypeError("get_inputs must return a positional argument list")
-        inputs = tuple(clone_tree(inputs, torch))
-        with torch.inference_mode():
-            ms = bench_kernel_ms(
-                lambda: candidate(*inputs), warmup=args.warmup, active=args.repeat,
-                prof_dir=None, keep_res=False, triton_only=True,
-            )
-        if ms is None or ms != ms or ms == float("inf") or ms <= 0:
-            payload["error"] = "bench did not produce a finite positive duration"
-        else:
-            payload["time_ms"] = float(ms)
-    except CandidateError as exc:
-        payload["error"] = str(exc)
-    except Exception as exc:  # noqa: BLE001 - record evaluation failure evidence without a nonzero exit
-        traceback.print_exc()
-        payload["error"] = f"{type(exc).__name__}: {exc}"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-
-if __name__ == "__main__":
-    _bench_atom_main()
