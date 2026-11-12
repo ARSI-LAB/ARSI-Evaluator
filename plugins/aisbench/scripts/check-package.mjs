@@ -91,7 +91,7 @@ try {
   delete env.AISBENCH_OFFLINE_KEY;
   const result = execFileSync(process.execPath, [
     "--import", pathToFileURL(join(consumer, "no-external.mjs")).href,
-    join(consumer, "consumer.mjs"), "all", consumer, join(installedPlugin, "cordis.patch.yaml"),
+    join(consumer, "consumer.mjs"), "all", consumer,
   ], { cwd: consumer, env, encoding: "utf8", timeout: 100000, maxBuffer: 4 * 1024 * 1024 });
   assert.equal(JSON.parse(result).passed, true);
   console.log(JSON.stringify({ passed: true, isolated: true, host: host.version, plugin: plugin.version,

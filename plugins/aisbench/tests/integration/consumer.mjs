@@ -5,8 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootstrap, fingerprintConfig, loadConfig, rebuildReport } from "ember-evaluator";
 
-const [scenario, directory, patchPath] = process.argv.slice(2);
-assert(directory && patchPath, "usage: consumer.mjs <scenario> <directory> <patch>");
+const [scenario, directory] = process.argv.slice(2);
+assert(directory, "usage: consumer.mjs <scenario> <directory>");
 process.env.EVALUATOR_RUN_INDEX_DIR = join(directory, "run-index");
 const experiment = join(directory, "experiment.yaml");
 const networkConfigPath = join(directory, "network.json");
@@ -66,17 +66,17 @@ async function checkAbsence() {
 }
 
 async function checkConfig() {
-  const listed = await cli(["benchmark", "list", "--patch", patchPath]);
+  const listed = await cli(["benchmark", "list"]);
   assert.match(listed, /aisbench/iu);
-  assert.match(await cli(["benchmark", "info", "aisbench", "--patch", patchPath]), /aisbench/iu);
+  assert.match(await cli(["benchmark", "info", "aisbench"]), /aisbench/iu);
   // Dry-run resolves credentials and validates configuration without network probes.
   process.env.AISBENCH_OFFLINE_KEY = "fixture-secret";
-  await cli(["run", experiment, "--dry-run", "--patch", patchPath]);
-  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true, patchPath });
+  await cli(["run", experiment, "--dry-run"]);
+  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true });
   assert.equal(loaded.experiment.solver.name, "aisbench-ssh");
   assert.equal(loaded.experiment.reporter.name, "aisbench-markdown");
   assert.deepEqual(loaded.experiment.metrics.map(item => item.name), ["aisbench-performance", "duration", "usage"]);
-  const components = await bootstrap(loaded, directory, patchPath);
+  const components = await bootstrap(loaded, directory);
   try {
     assert.equal(typeof components.benchmark.resolveSource, "function");
     assert.equal(typeof components.solver.solve, "function");
@@ -87,14 +87,14 @@ async function checkConfig() {
     });
   } finally { await components.dispose(); }
   await writeFile(experiment, JSON.stringify({ ...config, scheduler: { name: "local", concurrency: 2 } }));
-  assert.match(await cli(["run", experiment, "--dry-run", "--patch", patchPath], false), /concurrency=1/iu);
+  assert.match(await cli(["run", experiment, "--dry-run"], false), /concurrency=1/iu);
   delete process.env.AISBENCH_OFFLINE_KEY;
 }
 
 async function checkReport() {
   // Persist only public contracts through the store returned by public bootstrap().
-  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true, patchPath });
-  const components = await bootstrap(loaded, directory, patchPath);
+  const loaded = await loadConfig(experiment, {}, {}, { networkConfigPath, allowMissingAuth: true });
+  const components = await bootstrap(loaded, directory);
   const signal = new AbortController().signal;
   const source = await components.benchmark.resolveSource(null, signal);
   const refs = [];
@@ -115,7 +115,7 @@ async function checkReport() {
   const record = {
     key: { runId: manifest.runId, taskId: refs[0].id, attemptId: "attempt-1" },
     evaluationKind: "performance", executionStatus: "completed", scoreStatus: "not-applicable", cleanupStatus: "cleaned",
-    solve, verdict, errors: [], collection: { trajectory: "not-produced", artifacts: "not-produced" },
+    solve, verdict, errors: [], collection: { trajectory: "not-produced", artifacts: "complete" },
     environments: { solve: {}, verify: null }, startedAt: now, finishedAt: now, durationMs: 1000, phaseDurationMs: { solve: 1000 },
   };
   const runDirectory = join(directory, manifest.runId);

@@ -11,7 +11,7 @@ const guard = new URL("./no-external.mjs", import.meta.url).href;
 
 test.each([
   ["absence", "host exposes the bundled AISBench without an explicit patch"],
-  ["config", "patch loads all providers and CLI validates configuration without SSH"],
+  ["config", "bundled providers load and CLI validates configuration without SSH"],
   ["report", "persisted results rebuild offline through public API and CLI with provider version checks"],
 ])("%s: %s", async scenario => {
   const scratch = join(pluginRoot, ".scratch");
@@ -21,7 +21,7 @@ test.each([
   delete env.AISBENCH_OFFLINE_KEY;
   try {
     const result = await promisify(execFile)(process.execPath,
-      ["--import", guard, consumer, scenario, directory, join(pluginRoot, "cordis.patch.yaml")],
+      ["--import", guard, consumer, scenario, directory],
       { env, encoding: "utf8", timeout: 90000 });
     expect(JSON.parse(result.stdout)).toMatchObject({ passed: true, scenario });
   } finally { await rm(directory, { recursive: true, force: true }); }
