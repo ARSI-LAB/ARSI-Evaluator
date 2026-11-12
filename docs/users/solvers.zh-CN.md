@@ -10,8 +10,11 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | --- | --- | --- |
 | `simpleagent` | 内置 Pi Agent，普通质量题与需要工具/文件操作的任务 | 支持工具调用的模型 API；可选 Pi Bundle |
 | `agentbundle` | 运行已打包的 DSH、deepagents、Hermes、Jiuwenswarm、pi 或 Dify Agent | 可读取且格式正确的 Bundle，满足对应 Harness 运行条件 |
-| `codex` | 用 Codex CLI 解文本题、执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
-| `claudecode` | 用 Claude Code 解文本题、编辑任务文件，在本机和 Docker 中执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
+| `codex` | 用 Codex CLI 处理文本、图片和 PDF 页图，执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
+| `claudecode` | 用 Claude Code 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
+| `zcode` | 用 ZCode CLI 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Chat Completions、Responses 或 Messages 和工具调用的模型服务 |
+| `trae` | 用 TRAE CLI 2.0 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Responses API 和工具调用的模型服务 |
+| `codebuddy` | 用 CodeBuddy Code 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Chat Completions 或 Responses 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
 
@@ -117,7 +120,7 @@ output:
 
 - `base_url` 填 API 基址，例如 `https://api.openai.com/v1`，Codex 在该地址下请求 `/responses`。可用 `contextWindow` 指定自动压缩阈值。此 Solver 不支持服务字段 `maxTokens` 和 `retry`。
 - 本机使用 Codex 的 `workspace-write` 沙箱。Windows 沙箱拒绝任务的 shell 命令时，可在 Docker 或 WSL 中运行需要写文件的评测。TerminalBench 等容器任务选择 `environment: docker`。
-- 此 Solver 接收文本任务。显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。每次 attempt 的 `agent/` 保存 Codex 事件、Evaluator 轨迹和 stderr，评分仍由所选 Benchmark 或 Verifier 执行。
+- 使用图片或 `pages` 模式的 PDF 时，在模型服务中设置 `inputModalities: [text, image]`。Codex 会把两种附件都作为图片发送。任务技能目录和任务 MCP 配置会报能力不支持。每次 attempt 的 `agent/` 保存 Codex 事件、Evaluator 轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
 
 ## 使用 Claude Code
 
@@ -145,8 +148,104 @@ output:
 - `base_url` 填 API 基址。Claude Code 会在该地址下请求 `/v1/messages`，通过 `x-api-key` 传递认证。Anthropic 原生服务可填 `https://api.anthropic.com`，DeepSeek 兼容服务可填 `https://api.deepseek.com/anthropic`。
 - 内置文件工具仍限于任务目录，CLI 可以用 `Edit` 新建文件。本机和 Docker 都开放 Bash，命令按宿主机或容器进程的权限执行。Windows 需要安装 Git for Windows。如果 Claude Code 找不到 Git Bash，将 `CLAUDE_CODE_GIT_BASH_PATH` 设置为对应的 `bash.exe` 路径。
 - Linux 运行时通过仅供当前 attempt 使用的本地转发器访问模型，Bash 启动时会清除转发凭据。
-- Solver 接收文本任务，显式图片、PDF、任务技能目录和 MCP 配置会报能力不支持。
+- 图片和 PDF 页图需要在模型服务的 `inputModalities` 声明 `image`。原生 PDF 需要声明 `pdf`，并使用接收 `document` 内容块的 Messages 服务。任务技能目录和任务 MCP 配置会报能力不支持。见[图片与 PDF 评测](multimodal.zh-CN.md)。
 - 服务字段 `maxTokens` 传给 Claude Code 的输出用量设置，`contextWindow` 设置自动压缩阈值，允许 100000 到 1000000 token。此 Solver 不接受 `retry`。事件、轨迹和 stderr 保存在每次 attempt 的 `agent/` 目录。
+
+## 使用 ZCode
+
+Evaluator 在准备运行时时从固定源码归档构建 ZCode CLI `0.17.1`。首次运行或预热需要访问 GitHub 和 npm registry，后续运行复用构建缓存。预热无需模型密钥。镜像源配置见[网络配置指南](network.zh-CN.md)。
+
+```yaml
+services:
+  zcode:
+    model: ${ZCODE_MODEL}
+    base_url: ${ZCODE_ENDPOINT}
+    api: openai-completions
+    api_key: ${ZCODE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: zcode
+    service: zcode
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 1800
+    roundTimeoutSeconds: 1800
+output:
+  directory: ./results/zcode
+```
+
+示例给首次构建预留 30 分钟，可按网络情况调整。
+
+`base_url` 使用接口基地址。Chat Completions 或 Responses 通常填写以 `/v1` 结尾的地址。还可设置 `api: openai-responses` 或 `api: anthropic-messages`。使用此 Solver 时省略 `maxTokens`、`contextWindow` 和 `retry`。
+
+本机和 Docker 都开放 Bash。本机 Bash 具有宿主进程权限，只用于可信任务。Windows 下使用 Bash 工具需要安装 Git Bash。任务需要容器隔离时使用 Docker。
+
+图片和 PDF 页图需要在模型服务的 `inputModalities` 声明 `image`。原生 PDF 需要声明 `pdf`，并使用接收 PDF 的模型服务。任务技能目录和任务 MCP 配置会报能力不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
+
+## 使用 TRAE CLI
+
+Evaluator 在 x64 Windows、WSL 和 Linux Docker 中下载并缓存官方 `traecli` 版本 `0.214.1`。首次运行或预热需要访问 TRAE 发布 CDN，预热无需模型密钥。下载代理使用现有的[网络配置](network.zh-CN.md)。
+
+设置 `TRAE_MODEL`、`TRAE_ENDPOINT` 和 `TRAE_API_KEY` 后运行以下实验。
+
+```yaml
+services:
+  trae:
+    model: ${TRAE_MODEL}
+    base_url: ${TRAE_ENDPOINT}
+    api: openai-responses
+    api_key: ${TRAE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: trae
+    service: trae
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 900
+    roundTimeoutSeconds: 900
+output:
+  directory: ./results/trae
+```
+
+- `base_url` 填 API 基址，例如 `https://api.openai.com/v1`。TRAE 会在该地址下请求 `/responses`。`solver.config` 可省略或填 `{}`，服务字段 `maxTokens`、`contextWindow` 和 `retry` 须省略。
+- WSL 本机使用 Bash，Windows 原生使用 PowerShell，两者都使用 `workspace-write` 沙箱。Windows 原生可能需要先完成 [TRAE 沙箱初始化](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh)。需要 Bash 的任务用 WSL 或 Docker，Docker 中的 Bash 在任务容器内运行。
+- 使用图片或 PDF `pages` 附件时，在服务中设置 `inputModalities: [text, image]`。原生 PDF、任务技能和任务 MCP 配置会报能力不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、Evaluator 轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
+
+## 使用 CodeBuddy Code
+
+Evaluator 在 x64 Windows、WSL 和 Linux Docker 中安装并缓存独立发布的 `@tencent-ai/codebuddy-code` 版本 `2.183.0`。首次预热或运行使用配置的 npm registry，预热无需模型密钥。设置 `CODEBUDDY_MODEL`、`CODEBUDDY_ENDPOINT` 和 `CODEBUDDY_API_KEY` 后运行以下实验。
+
+```yaml
+services:
+  codebuddy:
+    model: ${CODEBUDDY_MODEL}
+    base_url: ${CODEBUDDY_ENDPOINT}
+    api: openai-completions
+    api_key: ${CODEBUDDY_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: codebuddy
+    service: codebuddy
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 900
+    roundTimeoutSeconds: 900
+output:
+  directory: ./results/codebuddy
+```
+
+- `base_url` 填 API 基址，例如 `https://api.openai.com/v1`。也可选 `api: openai-responses`。`maxTokens` 指定模型输出上限，省略 `contextWindow` 和 `retry`。`solver.config` 可省略或填 `{}`。
+- Windows 原生开放 PowerShell，WSL 和 Docker 开放 Bash。本机命令按宿主进程权限运行，只用于可信任务。Docker 命令在任务容器内执行。
+- 工作区的 `.codebuddy/models.json` 会覆盖实验指定的模型端点，发现该文件时 Solver 会在启动 CLI 前报错。使用图片或 PDF `pages` 附件时，设置 `inputModalities: [text, image]`。原生 PDF、任务技能和任务 MCP 配置暂不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
 
 ## 使用 AgentBundle
 

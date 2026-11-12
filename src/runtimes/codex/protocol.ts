@@ -21,7 +21,7 @@ export function consumeCodex(handle: ProcessHandle, context: AttemptContext, sec
   let terminal: "turn.completed" | "turn.failed" | undefined;
   let usage = usageFrom(undefined);
   let diagnostic = "";
-  return consumeCliJsonl(handle, context, secret, {
+  return consumeCliJsonl(handle, context, [secret], {
     solver: "codex",
     label: "Codex",
     accept(event) {

@@ -10,8 +10,11 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 | --- | --- | --- |
 | `simpleagent` | Built-in Pi Agent for quality tasks and tool/file operations | Model API with tool calling; optional Pi Bundle |
 | `agentbundle` | Packaged DSH, deepagents, Hermes, Jiuwenswarm, pi, or Dify agents | Readable, valid bundle and harness requirements |
-| `codex` | Codex CLI for text tasks, commands, and workspace files | Model service with streaming Responses API and tool calling |
-| `claudecode` | Claude Code for text, workspace files, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
+| `codex` | Codex CLI for text, images, PDF pages, commands, and workspace files | Model service with streaming Responses API and tool calling |
+| `claudecode` | Claude Code for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
+| `zcode` | ZCode CLI for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
+| `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Responses and tool calling |
+| `codebuddy` | CodeBuddy Code for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions or Responses and tool calling |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
 
@@ -117,7 +120,7 @@ output:
 
 - Set `base_url` to the API base, for example `https://api.openai.com/v1`. Codex sends requests to `/responses` under that base. `contextWindow` sets the automatic compaction threshold. The solver rejects the `maxTokens` and `retry` service fields.
 - Local runs use the Codex `workspace-write` sandbox. If the Windows sandbox blocks task commands, use Docker or WSL for evaluations that write files. Select `environment: docker` for container-based benchmarks such as TerminalBench.
-- The solver accepts text tasks. It rejects explicit images, PDFs, task skills directories, and task MCP configuration. Each attempt saves Codex events, the Evaluator trajectory, and stderr under `agent/`. The selected benchmark or verifier scores the result.
+- For images and PDF attachments in `pages` mode, set `inputModalities: [text, image]` on the service. Codex passes both as images. Task skills directories and task MCP configuration are unsupported. Each attempt saves Codex events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## Claude Code
 
@@ -145,8 +148,104 @@ output:
 - Set `base_url` to the API base. Claude Code sends requests to `/v1/messages` under that base and authenticates via `x-api-key`. Use `https://api.anthropic.com` for Anthropic or `https://api.deepseek.com/anthropic` for DeepSeek's compatible API.
 - The built-in file tools are limited to the task workspace. The restricted CLI may use `Edit` to create files. Bash is available locally and in Docker, and it runs with the permissions of the host or container process. On Windows, install Git for Windows and set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` if Claude Code cannot find it.
 - On Linux, the runtime sends model requests through an attempt-local relay and clears its temporary credentials from Bash's environment.
-- The solver accepts text and rejects explicit images, PDFs, task skills directories, and task MCP configuration.
+- For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use a Messages endpoint that accepts document content blocks. Task skills directories and task MCP configuration are unsupported. See [image and PDF evaluations](multimodal.md).
 - `maxTokens` sets Claude Code's output token setting, and `contextWindow` sets the auto-compaction window between 100000 and 1000000 tokens. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
+
+## ZCode
+
+Evaluator builds ZCode CLI `0.17.1` from a pinned source archive during runtime preparation. The first run or `warmup` needs access to GitHub and the npm registry. Later runs reuse the build. Warmup requires no model credentials. See [network configuration](network.md) for mirror settings.
+
+```yaml
+services:
+  zcode:
+    model: ${ZCODE_MODEL}
+    base_url: ${ZCODE_ENDPOINT}
+    api: openai-completions
+    api_key: ${ZCODE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: zcode
+    service: zcode
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 1800
+    roundTimeoutSeconds: 1800
+output:
+  directory: ./results/zcode
+```
+
+The preparation timeouts allow up to 30 minutes for the initial build and can be adjusted for your network.
+
+Use the API base URL. Chat Completions and Responses usually use a URL ending in `/v1`. The solver also accepts `api: openai-responses` and `api: anthropic-messages`. Omit `maxTokens`, `contextWindow`, and `retry`.
+
+ZCode enables Bash in local and Docker runs. Use local mode for trusted tasks since Bash runs with the host process's permissions. Install Git Bash for Bash tools on Windows. Use Docker for tasks that need container isolation.
+
+For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use an endpoint that accepts PDF input. Task skills and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+
+## TRAE CLI
+
+Evaluator downloads and caches the official `traecli` version `0.214.1` on x64 Windows, WSL, and Linux Docker. The first run or `warmup` needs access to the TRAE release CDN. Warmup requires no model key. Download proxies use the [network configuration](network.md).
+
+Set `TRAE_MODEL`, `TRAE_ENDPOINT`, and `TRAE_API_KEY` before running this experiment.
+
+```yaml
+services:
+  trae:
+    model: ${TRAE_MODEL}
+    base_url: ${TRAE_ENDPOINT}
+    api: openai-responses
+    api_key: ${TRAE_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: trae
+    service: trae
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 900
+    roundTimeoutSeconds: 900
+output:
+  directory: ./results/trae
+```
+
+- Set `base_url` to the API base, such as `https://api.openai.com/v1`. TRAE sends requests to `/responses` under that base. Omit `solver.config` or use `{}`, and omit the service fields `maxTokens`, `contextWindow`, and `retry`.
+- WSL uses Bash and native Windows uses PowerShell. Both run in the `workspace-write` sandbox. Native Windows may need [TRAE sandbox initialization](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh). Use WSL or Docker for tasks that require Bash. Docker runs Bash within the task container.
+- Set `inputModalities: [text, image]` for images and PDF `pages` attachments. Native PDFs, task skills, and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+
+## CodeBuddy Code
+
+Evaluator installs and caches the standalone `@tencent-ai/codebuddy-code` version `2.183.0` on x64 Windows, WSL, and Linux Docker. The first `warmup` or run uses the configured npm registry. Warmup requires no model key. Set `CODEBUDDY_MODEL`, `CODEBUDDY_ENDPOINT`, and `CODEBUDDY_API_KEY` to run this example.
+
+```yaml
+services:
+  codebuddy:
+    model: ${CODEBUDDY_MODEL}
+    base_url: ${CODEBUDDY_ENDPOINT}
+    api: openai-completions
+    api_key: ${CODEBUDDY_API_KEY}
+benchmark:
+  name: gsm8k
+  solver:
+    name: codebuddy
+    service: codebuddy
+environment: local
+run:
+  maxTasks: 1
+  preparation:
+    environmentTimeoutSeconds: 900
+    roundTimeoutSeconds: 900
+output:
+  directory: ./results/codebuddy
+```
+
+- Set `base_url` to the API base, such as `https://api.openai.com/v1`. You can also select `api: openai-responses`. The solver uses `maxTokens` as the model output limit. Omit `contextWindow` and `retry`, and omit `solver.config` or use `{}`.
+- Native Windows exposes PowerShell. WSL and Docker expose Bash. Local commands run with the host process's permissions, so use local mode for trusted tasks. Docker commands run in the task container.
+- A workspace `.codebuddy/models.json` can override the selected endpoint. The solver reports an error before starting CodeBuddy when the file is present. For images and PDF `pages` attachments, declare `inputModalities: [text, image]`. Native PDF, task skills, and task MCP configuration are unsupported. Each attempt saves redacted events, trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## AgentBundle
 

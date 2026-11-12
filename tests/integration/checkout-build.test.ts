@@ -20,11 +20,13 @@ async function fixture(): Promise<string> {
   await writeFile(join(root, "src/cli.ts"), "fixture");
   await writeFile(join(root, "src/plugins/benchmarks/agent-harness/profiles/fixture.yaml"), "id: fixture\n");
   await writeFile(join(root, "src/runtimes/dify/assets/runner.mjs"), "export {};\n");
-  for (const runtime of ["codex", "claudecode"]) {
+  for (const runtime of ["codex", "claudecode", "zcode", "trae", "codebuddy"]) {
     const assets = join(root, "src/runtimes", runtime, "assets");
     await mkdir(assets, { recursive: true });
     await writeFile(join(assets, "launch.mjs"), "export {};\n");
   }
+  await mkdir(join(root, "src/runtimes/shared/assets"), { recursive: true });
+  await writeFile(join(root, "src/runtimes/shared/assets/stage-attachments.mjs"), "export {};\n");
   await writeFile(join(root, "src/runtimes/pi/model-defaults.json"), "{}\n");
   await mkdir(join(root, "src/runtimes/agentx/assets"), { recursive: true });
   await writeFile(join(root, "src/runtimes/agentx/assets/runner.py"), "# AgentX bridge fixture\n");
@@ -84,6 +86,7 @@ test.skipIf(process.platform === "win32")("concurrent stale-checkout CLI starts 
   expect(await readFile(join(root, "dist/cli-runtime.js"), "utf8")).not.toContain('await import("./cli-runtime.js")');
   expect(await readFile(join(root, "dist/plugins/benchmarks/agent-harness/profiles/fixture.yaml"), "utf8")).toBe("id: fixture\n");
   expect(await readFile(join(root, "dist/runtimes/dify/assets/runner.mjs"), "utf8")).toBe("export {};\n");
+  expect(await readFile(join(root, "dist/runtimes/shared/assets/stage-attachments.mjs"), "utf8")).toBe("export {};\n");
   expect(await readFile(join(root, "dist/runtimes/agentx/assets/runner.py"), "utf8")).toBe("# AgentX bridge fixture\n");
   expect(await readFile(join(root, "dist/runtimes/hermes/assets/runner.py"), "utf8")).toBe("# Hermes output capture fixture\n");
   expect((await launch(root)).code).toBe(0);

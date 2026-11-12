@@ -1,0 +1,8 @@
+{
+  "name": "ember-evaluator-codebuddy-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@tencent-ai/codebuddy-code": "2.183.0"
+  }
+}

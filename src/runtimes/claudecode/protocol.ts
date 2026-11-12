@@ -20,7 +20,7 @@ function usageFrom(value: JsonValue | undefined): Usage {
 
 export function consumeClaudeCode(handle: ProcessHandle, context: AttemptContext, secret: string): Promise<SolveResult> {
   let result: CliEvent | undefined;
-  return consumeCliJsonl(handle, context, secret, {
+  return consumeCliJsonl(handle, context, [secret], {
     solver: "claudecode",
     label: "Claude Code",
     accept(event) {

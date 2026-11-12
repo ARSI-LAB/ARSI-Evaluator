@@ -9,10 +9,12 @@ export async function codexRuntimeInstallation(signal: AbortSignal): Promise<Run
   return {
     id: `codex:${CODEX_VERSION}`,
     cacheName: `codex-${CODEX_VERSION}`,
-    files: ["package.json", "package-lock.json", "launch.mjs"].map(target => ({
-      source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)),
-      target,
-    })),
+    files: [
+      ...["package.json", "package-lock.json", "launch.mjs"].map(target => ({
+        source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
+      })),
+      { source: fileURLToPath(new URL("../shared/assets/stage-attachments.mjs", import.meta.url)), target: "stage-attachments.mjs" },
+    ],
     commands: [{ executable: "npm", args: ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"] }],
     probes: [{
       executable: "node",
