@@ -30,6 +30,7 @@ async function fixture() {
     else if (args[0] === "info") stdout = daemon;
     else if (args[0] === "image" && args[1] === "inspect") {
       if (format?.includes("RepoTags")) stdout = JSON.stringify([digest, [], []]);
+      else if (format?.includes("json .Architecture")) stdout = JSON.stringify([digest, "linux", "amd64"]);
       else stdout = format === "{{.Os}}/{{.Architecture}}" ? "linux/amd64" : digest;
     }
     else if (args[0] === "create") stdout = id;

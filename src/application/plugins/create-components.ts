@@ -30,6 +30,7 @@ export function createPluginRuntime(config: LoadedConfig, experimentDir: string,
   return {
     network,
     benchmarkName: config.benchmarkName ?? config.experiment.benchmark.name,
+    solverName: config.experiment.solver.name,
     hardware: config.experiment.hardware ?? "npu",
     phaseTimeouts: {
       ...(config.experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: config.experiment.run.solveTimeoutSeconds }),

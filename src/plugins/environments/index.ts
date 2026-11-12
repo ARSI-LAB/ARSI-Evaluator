@@ -43,7 +43,8 @@ export function apply(ctx: Context): void {
         ...(config.image === undefined ? {} : { image: expectNonEmptyString(config.image, "image") }),
       };
     },
-    (config, runtime) => new DockerEnvironment({ ...config, network: runtime.network, benchmarkName: runtime.benchmarkName, ...(runtime.imageConfigFingerprint ? { imageConfigFingerprint: runtime.imageConfigFingerprint } : {}), modelEndpoint: runtime.services[runtime.solverService]?.model.endpoint ?? null,
+    (config, runtime) => new DockerEnvironment({ ...config, network: runtime.network, benchmarkName: runtime.benchmarkName,
+      ...(runtime.solverName ? { solverName: runtime.solverName } : {}), ...(runtime.imageConfigFingerprint ? { imageConfigFingerprint: runtime.imageConfigFingerprint } : {}), modelEndpoint: runtime.services[runtime.solverService]?.model.endpoint ?? null,
       ...(runtime.onWarning === undefined ? {} : { onWarning: runtime.onWarning }) }),
     { nodeLocal: { dockerExecutable: "docker" } },
   );

@@ -138,9 +138,11 @@ See the opening [ModelScope example](#download-task-images-from-modelscope) for 
 
 Archive URLs combine `baseUrl`, task path, platform, and phase. For `terminal-bench/vf2-speedup-networkx`, the solve image is `<baseUrl>/vf2-speedup-networkx/linux/amd64/solve.tar.gz`; verification uses `verify.tar.gz`. Service images use `<phase>/services/<service>.tar.gz`. For publishing your own archives, follow the [file layout](../development/image-archives.md#文件布局) (Chinese).
 
-Docker loads the downloaded archive with `docker load`; loading errors stop preparation. Loading can restore or overwrite original image tags. Evaluator does not establish whether an archive matches the original registry image; compare image IDs below when needed.
+For a solve archive, a local tag such as `ember-evaluator/terminalbench4.0/vf2-speedup-networkx:linux-amd64-base` maps to `vf2-speedup-networkx/linux/amd64/solve.tar.gz`. Evaluator assigns local tags from the image ID and reuses any existing reference. Solver images are built on the execution node.
 
-Select the archive platform with `environment.platform`; `auto` uses the execution node's native platform. Existing local images for the same download URL are reused. After replacing a remote file at the same URL, use a new version URL or remove the corresponding local image before running `warmup` again.
+Evaluator checks the archive platform and image ID, then imports it under a temporary reference so publisher tags are never restored. Archives with the same image ID reuse one local reference. To compare an archive with the original registry image, follow the steps below.
+
+Select the archive platform with `environment.platform`; `auto` uses the execution node's native platform. An existing image is reused for the same URL. After cleanup, Evaluator can import the cached archive again. Each URL has its own download record. Use a new version URL when publishing an update.
 
 The officially maintained ModelScope repository, [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator), hosts official task image archives for selected benchmarks. Check its file tree for available images. To publish your own archives, see the [single-file and batch upload guide](../development/image-archives.md#上传到-modelscope) (Chinese).
 

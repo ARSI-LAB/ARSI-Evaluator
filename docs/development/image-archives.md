@@ -51,11 +51,14 @@ terminalbench4.0/
 在 Linux/WSL 中导出一个镜像：
 
 ```bash
-docker image save --output solve.tar <本机镜像引用>
+docker image save --platform linux/amd64 --output solve.tar \
+  ember-evaluator/terminalbench4.0/vf2-speedup-networkx:linux-amd64-base
 gzip solve.tar
 ```
 
-分别导出解题、验证及任务服务镜像。一个文件只放一个镜像；使用 `docker save`，不使用 `docker export`。文件名必须与上述路径相符。无需额外生成下载清单或校验文件。
+本地 `linux-amd64-base` 对应远端 `linux/amd64/solve.tar.gz`。验证源镜像对应 `verify.tar.gz`，Sidecar 对应 `<阶段>/services/<服务名>.tar.gz`。上传时选用题库提供的基础或验证源镜像。Evaluator 在执行节点构建 Solver 成品和所需的验证 Runtime。
+
+分别导出解题、验证及任务服务镜像。每个文件只导出一个目标镜像及目标平台，使用 `docker image save`。Docker 版本不支持 `--platform` 时，先确认本机该引用只有目标平台，再省略这个参数。文件名必须与上述路径相符。无需额外生成下载清单或校验文件。
 
 ## 上传到 ModelScope
 
@@ -120,7 +123,7 @@ ember-evaluator warmup experiment.yaml --network network.yaml
 ember-evaluator run experiment.yaml --network network.yaml
 ```
 
-下载后由 `docker load --input` 加载归档，加载失败会停止本次准备。归档中的原始镜像标签可能被恢复或覆盖。Evaluator 不确认归档是否与原仓库镜像相同；需要确认时，按[镜像 ID 核验方法](../users/image-downloads.zh-CN.md#核验-modelscope-镜像)检查。
+Evaluator 检查归档中镜像的平台和 ID，替换归档标签后通过临时引用加载。相同 Docker 镜像 ID 共用一个本地引用。不同下载地址分别缓存归档，重新发布时使用新的版本路径。需要确认归档是否和原仓库一致时，按[镜像 ID 核验方法](../users/image-downloads.zh-CN.md#核验-modelscope-镜像)检查。
 
 相同下载地址对应的本地镜像仍在时会复用，不重新下载。覆盖远端同名文件后，清理对应本地镜像或换用新版本地址，再执行 `warmup`。
 

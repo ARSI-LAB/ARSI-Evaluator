@@ -22,8 +22,8 @@ test("environment rejects a foreign requirement before runtime installation or e
   const ensure = vi.spyOn(PlatformCapabilityDetector.prototype, "ensure");
   try {
     const environment = new DockerEnvironment({ allowEmulation: false, dockerExecutable: "must-not-run" });
-    await expect(environment.installRuntime({ id: "test", files: [], commands: [], probes: [] },
-      new AbortController().signal, { platform: "linux/amd64", workdir: "/app", image: "base", initialFiles: [], runtime: [] }))
+    await expect(environment.materialize({ platform: "linux/amd64", workdir: "/app", image: "base", initialFiles: [], runtime: [],
+      installation: { id: "test", files: [], commands: [], probes: [] } }, new AbortController().signal))
       .rejects.toMatchObject({ code: "ENV_ARCH_UNSUPPORTED" });
     expect(ensure).not.toHaveBeenCalled();
   } finally { native.mockRestore(); ensure.mockRestore(); }

@@ -36,7 +36,7 @@ See [Docker FAQ](docker.md#will-restarting-redownload-or-rebuild-every-image) fo
 
 ### How can I distinguish solve, verify, and shared images for each task?
 
-Names include a short task name, `solve`/`verify` purpose, and image kind. See [Docker image names](docker.md#identify-and-inspect-task-images) for names, inspection commands, and legacy tags.
+Shared image tags identify the `solve` or `verify` phase and image kind. See [Docker image names](docker.md#identify-and-inspect-task-images) for inspection commands and legacy tags.
 
 ### What about amd64 emulation crashes, CPU counts, or cleanup failures?
 

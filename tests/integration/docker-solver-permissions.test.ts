@@ -6,7 +6,6 @@ import { expect, test } from "vitest";
 import type { RuntimeInstallation } from "../../src/core/contracts/environment.js";
 import { DockerRuntime } from "../../src/infrastructure/containers/runtime.js";
 import { PINNED_NODE_IMAGE, type DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
-import { DockerSolverRuntime } from "../../src/infrastructure/containers/solver-runtime.js";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";
 
 test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
@@ -15,13 +14,13 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
     const directory = await mkdtemp(join(tmpdir(), "evaluator-solver-permissions-"));
     const name = `evaluator-permissions-${randomUUID()}`;
     const images: string[] = [];
-    let installations = 0;
+    let solverBuilds = 0;
     const signal = AbortSignal.timeout(180_000);
     const command: DockerCommand = async (args, options) => {
       if (args[0] === "build") {
         const image = args[args.indexOf("--tag") + 1]!;
         images.push(image);
-        if (image.includes(":solver-install-")) installations++;
+        if (image.includes(":solve-agent-")) solverBuilds++;
       }
       if (args[0] === "image" && args[1] === "tag") images.push(args[3]!);
       return runDockerCommand("docker", args, options);
@@ -44,14 +43,12 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
       probes: [{ executable: "node", args: ["-e", probe] }],
     };
     const node = new DockerRuntime(command);
-    const solver = new DockerSolverRuntime(command, node);
     try {
       for (const user of ["1001:1002", "2001:2002"]) {
         const base = `${name}:${user.replace(":", "-")}`;
         await writeFile(join(directory, "Dockerfile"), `FROM ${PINNED_NODE_IMAGE}\nUSER ${user}\n`);
         await command(["build", "--platform", "linux/amd64", "--tag", base, directory], { signal });
-        const runtime = await node.prepare(base, [], signal);
-        const prepared = await solver.prepare(runtime.image, runtime.digest, installation, signal);
+        const prepared = await node.prepare(base, [], signal, undefined, undefined, installation);
         const check = [
           "const fs = require('node:fs');",
           `if (process.getuid() !== ${user.split(":")[0]}) throw Error('wrong user');`,
@@ -71,7 +68,7 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
         ], { signal });
         expect(result.stdout.trim()).toBe("permissions passed");
       }
-      expect(installations).toBe(1);
+      expect(solverBuilds).toBe(2);
     } finally {
       if (images.length) await runDockerCommand("docker", ["image", "rm", "--force", ...new Set(images.reverse())], { signal: AbortSignal.timeout(30_000) });
       await rm(directory, { recursive: true, force: true });

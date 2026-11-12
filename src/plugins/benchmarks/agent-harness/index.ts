@@ -19,7 +19,7 @@ export async function apply(ctx: Context): Promise<void> {
   for (const profile of await readProfileDirectory(new URL("./profiles/", import.meta.url))) ctx.evaluator.registerProfile(profile);
   ctx.evaluator.register("benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
     new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
-      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network),
+      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network, runtime.imageConfigFingerprint),
     { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport });
   ctx.evaluator.register("benchmark", "drop", value => {
     const config = expectRecord(value, "drop");

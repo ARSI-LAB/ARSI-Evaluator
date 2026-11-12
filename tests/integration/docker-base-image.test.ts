@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";
+import { createDockerImagePuller } from "../../src/infrastructure/containers/image-pull.js";
 import type { DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
-import { resolvePinnedTaskImage } from "../../src/infrastructure/containers/base-image.js";
+import { acquireBaseImage } from "../../src/infrastructure/containers/base-image.js";
+import { DockerImageInventory } from "../../src/infrastructure/containers/image-inventory.js";
 
 test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
-  "pinned sources disappear and Evaluator names remain usable with the registry offline",
+  "a native pinned source keeps its reference and remains usable with the registry offline",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "evaluator-base-image-smoke-"));
     const name = `evaluator-base-source-${randomUUID()}`;
@@ -48,23 +50,18 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
       const repository = `127.0.0.1:${address.port}/${name}`;
       const source = `${repository}@${digest}`;
       images.add(source);
-      const scope = { taskId: `fixture/${name}`, phase: "solve" as const };
       const signal = AbortSignal.timeout(45_000);
-      const first = await resolvePinnedTaskImage(command, source, "linux/amd64", scope, signal);
-      if (!first) throw new Error("Missing pinned image");
-      images.add(first.pinnedReference);
-      expect(first).toMatchObject({ reference: source,
-        pinnedReference: expect.stringMatching(/^ember-evaluator\/.+:solve-base-/u) });
-      await expect(runDockerCommand("docker", ["image", "inspect", source], { signal })).rejects.toThrow();
-      expect((await runDockerCommand("docker", ["image", "ls", "--format", "{{.Repository}}", repository], { signal })).stdout.trim()).toBe("");
+      const inventory = new DockerImageInventory(command);
+      const pull = createDockerImagePuller(inventory.command);
+      const acquire = (phase: "solve" | "verify") => inventory.use(undefined, signal, () =>
+        acquireBaseImage(inventory, source, "linux/amd64", source, pull, signal, { taskId: name, phase }));
+      const first = await acquire("solve");
+      images.add(first.reference);
+      expect(first.reference).toBe(source);
       registry.closeAllConnections();
       await new Promise<void>((resolve, reject) => registry.close(error => error ? reject(error) : resolve()));
-      expect(await resolvePinnedTaskImage(command, source, "linux/amd64", scope, signal)).toEqual(first);
-      const other = await resolvePinnedTaskImage(command, source, "linux/amd64", { ...scope, phase: "verify" }, signal);
-      if (!other) throw new Error("Missing verifier image");
-      images.add(other.pinnedReference);
-      expect(other.id).toBe(first.id);
-      expect(other.pinnedReference).not.toBe(first.pinnedReference);
+      expect(await acquire("solve")).toEqual(first);
+      expect(await acquire("verify")).toEqual(first);
       expect(calls.filter(args => args[0] === "pull")).toHaveLength(1);
     } finally {
       vi.unstubAllEnvs();

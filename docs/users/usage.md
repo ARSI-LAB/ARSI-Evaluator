@@ -71,7 +71,7 @@ ember-evaluator warmup first-run.yaml --task-ids-file task-ids.json --patch cord
 ember-evaluator run first-run.yaml --task-ids-file task-ids.json --patch cordis.patch.yaml
 ```
 
-task-ids-file overrides selection exactly as run. Matching configuration/task versions/platform/daemon reuse caches in later evaluations; repeated warmup checks/reuses them. Model keys are unnecessary, but model names/endpoints/bundle paths must be valid. Unlike dry-run's data download/enumeration, warmup accepts neither dry-run nor resume.
+task-ids-file overrides selection exactly as run. Matching configuration, task versions, platform, and daemon reuse ready image IDs during later evaluations. Each attempt still starts its own container. If cleanup removes a prepared image, resuming triggers a new preparation round. Model keys are unnecessary, but model names/endpoints/bundle paths must be valid. Unlike dry-run's data download/enumeration, warmup accepts neither dry-run nor resume.
 
 Local Docker, Ray Client, and Ray Jobs use the same command. Ray allocates by node slots before image work; each task/node prepares only assigned tasks/dependencies. Unassigned nodes get no request. Coordinator prepares no task images. Jobs returns progress/cancellation/summaries through authenticated TLS gateways.
 
@@ -102,7 +102,9 @@ Supports local Docker/Ray Client/Jobs. Add --patch for external YAML plugins. Cl
 
 Evaluation/warmup save records on Docker nodes. YAML cleanup matches Benchmark/Environment/Solver/Verifier/selection, excluding output/authentication/scheduling concurrency. Changed selection/images/installation leave records under old config; use original YAML or --all. Shared images remain until their last configuration association is removed.
 
-Includes managed task bases/builds/runtime/Solver/final-agent/gateway/services. Recorded sources actually downloaded by Evaluator may be removed; preexisting references remain. `--all` handles historical ember-evaluator images; external history without download proof stays. Unrecorded third-party images are not guessed from YAML.
+Tasks with identical Docker build inputs reuse the final image. The inventory records each experiment configuration once per reference and removes duplicate associations when it next writes an older inventory.
+
+Cleanup covers managed solve bases, final images, separate verification images, Node, and sidecars. Solver installation stages are kept in BuildKit's cache. Recorded sources actually downloaded by Evaluator may be removed; preexisting references remain. `--all` handles historical ember-evaluator images; external history without download proof stays. Unrecorded third-party images are not guessed from YAML.
 
 Skip images referenced by running/stopped containers, occupied by preparation/evaluation, or with uncertain occupancy. Recheck IDs before deleting selected references only; no force/prune. Ray nodes sharing one daemon must share EVALUATOR_CACHE_DIR/records to combine deletion; mismatched records conflict/skip.
 

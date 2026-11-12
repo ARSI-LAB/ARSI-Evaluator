@@ -16,42 +16,47 @@ Registry API 支持内置 Node.js 下载器和用户预装的 skopeo。代理配
 
 任务镜像缺少系统 CA 时，Evaluator 会在构建派生 Runtime 镜像时，将固定 Node 版本自带的公共根证书写入 `/etc/ssl/certs/ca-certificates.crt`。已有 CA 证书和显式配置的证书路径会保留。Codex 等使用系统 CA 的客户端可以直接进行 HTTPS 证书校验。
 
-## 如何按任务区分和查看镜像？
+## 如何查看评测镜像？
 
-本地镜像名称采用 `ember-evaluator/<任务短名>:<用途>-<种类>-<hash>`。`solve` 表示解题，`verify` 表示验证；名称后缀用于区分不同任务和内容。可按任务短名或用途查找镜像：
+同一 Docker daemon 内，Evaluator 按实际镜像 ID 复用已有引用。新准备的镜像每个 ID 最多保留一个 Evaluator 管理的标签，已有来源引用可以直接复用。每次答题仍用成品镜像 ID 启动独立容器。
 
-以 `terminal-bench/atrx-vep-crispr` 为例：
+Evaluator 生成的引用采用 `ember-evaluator/<仓库路径>:<平台>-<用途>`。以 `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-solver-codex` 为例：
 
-| 镜像种类 | 名称示例 |
+- `ember-evaluator` 是 Evaluator 的镜像命名空间。
+- `terminalbench4.0/coq-block-bound` 是题库版本和题目路径。按题提供镜像的 Harbor 题库使用这个结构。题库共用一个镜像时，只写题库名，例如 `officeqa-pro-v2`。使用 Evaluator 默认基础环境时，仓库路径为 `base`。
+- `linux-amd64` 对应 Docker 平台 `linux/amd64`。ARM64 使用 `linux-arm64`。
+- `solver-codex` 表示用 Codex 求解时启动的成品镜像。`base` 表示基础镜像，`verify` 表示独立验证镜像，`solve-service-redis` 表示求解阶段的 Redis Sidecar，验证阶段使用 `verify-service-<服务名>`。
+
+| 保留的镜像 | 引用示例 |
 | --- | --- |
-| 官方解题镜像的本地固定引用 | `ember-evaluator/atrx-vep-crispr:solve-base-<hash>` |
-| 解题 Runtime | `ember-evaluator/atrx-vep-crispr:solve-runtime-<hash>` |
-| 安装 Agent 后的最终解题镜像 | `ember-evaluator/atrx-vep-crispr:solve-agent-<hash>` |
-| 官方验证镜像的本地固定引用 | `ember-evaluator/atrx-vep-crispr:verify-base-<hash>` |
-| 验证 Runtime | `ember-evaluator/atrx-vep-crispr:verify-runtime-<hash>` |
-| 从任务 Dockerfile 构建的镜像（按需生成） | `ember-evaluator/atrx-vep-crispr:solve-task-<hash>` 或 `verify-task-<hash>` |
-| Agent 构建所用的 Runtime 固定引用（按需生成） | `ember-evaluator/atrx-vep-crispr:solve-agent-base-<hash>` |
-| 任务 Sidecar（按需生成） | `ember-evaluator/atrx-vep-crispr:verify-service-redis-base-<hash>`；从 Dockerfile 构建时还会有 `verify-service-redis-task-<hash>` |
-| 所有任务共享的 Agent 安装镜像 | `ember-evaluator/shared:solver-install-<hash>` |
-| 内部网关的固定引用（按需生成） | `ember-evaluator/shared:gateway-base-<hash>` |
+| 默认解题基础镜像 | `ember-evaluator/base:linux-amd64-base` |
+| Harbor 题目基础镜像 | `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-base` |
+| Solver 成品 | `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-solver-codex` |
+| OfficeQA Pro V2 共享语料镜像 | `ember-evaluator/officeqa-pro-v2:linux-amd64-base` |
+| 独立验证镜像 | `ember-evaluator/officeqa-pro-v2:linux-amd64-verify` |
+| Sidecar | `ember-evaluator/terminalbench4.0/example:linux-amd64-solve-service-redis` |
+| 单独获取的共享 Node 镜像 | `ember-evaluator/node:linux-amd64-base` |
 
-固定摘要的官方任务镜像在本地会使用 Evaluator 名称，原官方标签可能被移除，但镜像内容和结果中的官方来源不变。只有需要安装 Agent 时才生成 Agent 镜像，因此表中的种类不一定每题都有。
+同名标签已指向另一镜像时，后续镜像使用 `-2`、`-3` 等序号。序号只用于区分同名镜像。多个任务或用途命中同一镜像 ID 时，沿用已登记的引用。例如两道题共用验证镜像时，可能只看到其中一道题的仓库路径。
 
-查看某一道题、所有任务的验证镜像或共享镜像：
+ModelScope 上的文件路径沿用归档规则。题目基础镜像的本地标签 `linux-amd64-base` 对应远端的 `linux/amd64/solve.tar.gz`。验证和 Sidecar 文件路径见[任务镜像归档](../../development/image-archives.md#文件布局)。
+
+Solver 安装和 Runtime 辅助程序在一次多阶段构建中加入最终解题镜像。安装阶段可在不同基础镜像之间复用 BuildKit 缓存，构建用的临时标签在准备结束时释放。独立验证只保留实际用于启动验证容器的镜像，以及其他任务仍在使用的来源引用。
+
+按题库列出镜像。
 
 ```bash
-docker image ls --filter 'reference=ember-evaluator/atrx-vep-crispr:*'
-docker image ls --filter 'reference=ember-evaluator/*:verify-*'
-docker image ls --filter 'reference=ember-evaluator/shared:*'
+docker image ls --filter 'reference=ember-evaluator/terminalbench4.0/*:*'
+docker image ls --filter 'reference=ember-evaluator/officeqa-pro-v2:*'
 ```
 
-相同任务、用途和内容可以复用已有镜像。多个标签可能指向同一个 IMAGE ID，不会因此复制整份镜像；不同镜像也可能共享镜像层。查看磁盘占用请执行 `docker system df`，不要直接累加 `docker image ls` 的 SIZE。
+不同镜像可能共享镜像层。查看磁盘占用请执行 `docker system df`。
 
 除 Docker 中的镜像外，Evaluator 还会保存复用所需的本地记录，位于 `EVALUATOR_CACHE_DIR/docker-images/`；未设置该变量时使用应用缓存目录，管理容器中通常为 `/toolbox-home/.cache/ember-evaluator/docker-images/`。只复制镜像、没有对应记录时，仍可能重新下载。
 
 本地镜像标签被替换或平台不符时，准备会报错。先确认 Docker context、目标平台和缓存目录是否正确；需要清理后重新准备时，按[删除评测镜像](../usage.zh-CN.md#删除评测镜像)操作，再执行 `warmup`。
 
-升级后若镜像名称发生变化，首次准备可能重新构建，但 Docker 仍可复用已有构建层。旧镜像和正在使用它们的容器不会自动删除；改名本身不会释放磁盘空间。
+预热或运行命中旧标签时，Evaluator 会在容器和其他准备任务未占用该镜像时换成可读标签。缓存仍按构建输入和镜像 ID 查找。旧标签也可以用 `cleanup images --all` 预览。
 
 ## 中断后重跑会重新下载或构建全部镜像吗？
 
@@ -62,7 +67,7 @@ docker image ls --filter 'reference=ember-evaluator/shared:*'
 | 官方任务镜像、服务镜像和 Node 镜像 | 本地内容仍可用时复用；缺少所需镜像时下载 |
 | 从 Dockerfile 构建的任务镜像 | 构建文件、参数和平台未变时复用 |
 | Runtime 镜像 | 任务镜像、Node 镜像、运行时代码和平台未变时复用 |
-| Agent 安装镜像和最终解题镜像 | 相关基础镜像、Agent 文件、安装命令和参数未变时复用 |
+| 带 Agent 的最终解题镜像 | 相关基础镜像、Agent 文件、安装命令和参数未变时复用 |
 
 重新运行仍会检查所选任务的环境，因此会再次输出 `Preparing solve image and runtime environment`、`Task image ready` 等日志。这些日志不代表重新下载或构建；`source=explicit image reference` 只说明配置提供了镜像地址，也不区分本地命中和实际拉取。镜像就绪后还可能继续准备 Runtime 和 Solver，详见[并发与环境准备](../concurrency.zh-CN.md)。
 
@@ -74,7 +79,7 @@ docker image ls --filter 'reference=ember-evaluator/shared:*'
 - 镜像或对应标签被删除，或改用了另一个 Docker context / daemon；例如本地与 Ray 节点不会自动共享镜像缓存。
 - 任务镜像、Node 镜像、目标平台、Runtime 程序、Solver 安装文件、依赖或构建参数等发生变化。
 - 切换 Docker 后端，导致之前的镜像或构建缓存不可用。
-- 从旧命名版本升级，或任务 ID、解题／验证用途改变，导致程序查找不同标签。
+- 从旧命名版本升级，或解题／验证用途改变，导致程序查找不同标签。
 
 即使需要重新构建，Docker 仍可能复用已有构建层；是否完整执行每一步，由 Docker 的构建缓存决定。
 

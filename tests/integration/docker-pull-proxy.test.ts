@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";
 import { createDockerImagePuller } from "../../src/infrastructure/containers/image-pull.js";
 import { platformImageCommand } from "../../src/infrastructure/containers/image-inspect.js";
-import { resolvePinnedTaskImage } from "../../src/infrastructure/containers/base-image.js";
+import { acquireBaseImage } from "../../src/infrastructure/containers/base-image.js";
+import { DockerImageInventory } from "../../src/infrastructure/containers/image-inventory.js";
 import type { DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
 import { registryProxyFixture } from "../fixtures/registry-proxy.js";
 
@@ -25,19 +26,21 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")("proxy-only registry imag
   const signal = AbortSignal.timeout(45_000);
   try {
     const pull = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
-    const scope = { taskId: "fixture/proxy-import", phase: "solve" as const };
-    const first = await resolvePinnedTaskImage(command, f.reference, "linux/amd64", scope, signal, undefined, pull);
+    const inventory = new DockerImageInventory(command);
+    const acquire = (pullImage: typeof pull) => inventory.use(undefined, signal, () =>
+      acquireBaseImage(inventory, f.reference, "linux/amd64", f.reference, pullImage, signal));
+    const first = await acquire(pull);
     expect(first).not.toBeNull();
     if (!first) throw new Error("Missing imported image");
-    images.add(first.pinnedReference);
+    images.add(first.reference);
     const imported = await pull(f.reference, "linux/amd64", signal);
     images.add(imported.reference);
-    expect([f.configDigest, f.manifestDigest]).toContain(first.id);
+    expect([f.configDigest, f.manifestDigest]).toContain(first.digest);
     expect(imported.verifiedDigest).toBe(f.indexDigest);
     const offline = createDockerImagePuller(command, { network: new NetworkRuntime(networkDocument({ proxy: { http: "http://127.0.0.1:1", https: "http://127.0.0.1:1" }, docker: { pull: { method: "registry-client" } } }, {})) });
     const requestCount = f.requests.length;
     expect(await offline(f.reference, "linux/amd64", signal)).toEqual(imported);
-    expect(await resolvePinnedTaskImage(command, f.reference, "linux/amd64", scope, signal, undefined, offline)).toEqual(first);
+    expect(await acquire(offline)).toEqual(first);
     expect(f.requests).toHaveLength(requestCount);
     expect(calls.filter(args => args[0] === "load")).toHaveLength(1);
   } finally {

@@ -8,7 +8,8 @@ import { list } from "tar";
 import { pullDockerImage, createDockerImagePuller } from "../../src/infrastructure/containers/image-pull.js";
 import type { DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
 import { registryProxyFixture } from "../fixtures/registry-proxy.js";
-import { resolvePinnedTaskImage } from "../../src/infrastructure/containers/base-image.js";
+import { acquireBaseImage } from "../../src/infrastructure/containers/base-image.js";
+import { DockerImageInventory } from "../../src/infrastructure/containers/image-inventory.js";
 import { DockerRuntime } from "../../src/infrastructure/containers/runtime.js";
 import { PINNED_NODE_IMAGE } from "../../src/infrastructure/containers/runtime-contract.js";
 
@@ -27,6 +28,7 @@ async function fixture() {
   const archives: string[] = [];
   const command: DockerCommand = async args => {
     calls.push(args);
+    if (args[0] === "info") return { stdout: "fixture", stderr: "" };
     if (args[0] === "load") {
       const path = args[2]!;
       archives.push(path);
@@ -40,10 +42,11 @@ async function fixture() {
       return { stdout: "loaded", stderr: "" };
     }
     if (args[0] === "image" && args[1] === "inspect") {
-      const name = args[args.indexOf("--platform") + 2]!;
+      const name = args[args.includes("--platform") ? 4 : 2]!;
       const id = images.get(name);
       if (!id) throw new Error("No such image");
       const format = args.at(-1)!;
+      if (format.includes("RepoTags")) return { stdout: JSON.stringify([id, [name], []]), stderr: "" };
       if (format.includes("RepoDigests")) return { stdout: JSON.stringify([id, [], "linux", "amd64"]), stderr: "" };
       if (format.includes(".Os")) return { stdout: JSON.stringify([id, "linux", "amd64"]), stderr: "" };
       return { stdout: id, stderr: "" };
@@ -91,11 +94,13 @@ test("configured proxy downloads once, imports verified content and reuses persi
 test("proxy-imported classic images with no RepoDigests retain verified pinned task provenance", async () => {
   const f = await fixture();
   const pull = createDockerImagePuller(f.command, { network: new NetworkRuntime(networkDocument({ proxy: { http: f.proxy, https: f.proxy }, docker: { pull: { method: "registry-client" } } }, {})) });
-  const scope = { taskId: "fixture/task", phase: "solve" as const };
-  const first = await resolvePinnedTaskImage(f.command, f.reference, "linux/amd64", scope, AbortSignal.timeout(5000), undefined, pull);
-  expect(first).toMatchObject({ reference: f.reference, id: f.configDigest });
+  const inventory = new DockerImageInventory(f.command);
+  const acquire = () => inventory.use(undefined, AbortSignal.timeout(5000), () =>
+    acquireBaseImage(inventory, f.reference, "linux/amd64", f.reference, pull, AbortSignal.timeout(5000)));
+  const first = await acquire();
+  expect(first).toMatchObject({ digest: f.configDigest });
   const requests = f.requests.length;
-  expect(await resolvePinnedTaskImage(f.command, f.reference, "linux/amd64", scope, AbortSignal.timeout(5000), undefined, pull)).toEqual(first);
+  expect(await acquire()).toEqual(first);
   expect(f.requests).toHaveLength(requests);
 });
 

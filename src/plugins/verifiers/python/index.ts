@@ -6,7 +6,8 @@ import type { JsonValue } from "../../../core/contracts/task.js";
 import type { EnvironmentSession } from "../../../core/contracts/environment.js";
 import { preparePythonVerifier } from "./runtime/bridge.js";
 import { createPythonVerifierImage } from "./runtime/image.js";
-import { materializeVerifierImage, recoverVerifierContainers } from "../shared/container.js";
+import type { EnvironmentSpec } from "../../../core/contracts/environment.js";
+import { materializeVerifierImage, recoverVerifierContainers, verifierImageInventory } from "../shared/container.js";
 import type { VerificationRuntime } from "../../../core/contracts/verification-runtime.js";
 
 export type PythonVerifierConfig = { importPath: string; dockerExecutable: string; requireService: boolean; runtimeImage?: string; serviceEnv: { baseUrl: string; key: string; model: string } };
@@ -24,10 +25,14 @@ export function parsePythonVerifierConfig(value: unknown): PythonVerifierConfig 
   return { importPath, serviceEnv: { baseUrl: String(serviceEnv.baseUrl), key: String(serviceEnv.key), model: String(serviceEnv.model) }, ...(runtimeImage === undefined ? {} : { runtimeImage }), dockerExecutable: expectNonEmptyString(config.dockerExecutable ?? "docker", "verifier.dockerExecutable"), requireService: config.requireService === true };
 }
 export class HarborPythonVerifier implements Verifier {
-  private readonly image: (signal: AbortSignal) => Promise<string>;
+  private readonly image: (signal: AbortSignal, scope?: EnvironmentSpec["imageScope"]) => Promise<string>;
+  private readonly imageInventory: ReturnType<typeof verifierImageInventory> | undefined;
   constructor(private readonly config: PythonVerifierConfig, private readonly factoryRuntime: PluginFactoryContext) {
     if (config.requireService && !factoryRuntime.verifierService) throw new TypeError("This verifier requires an explicit verifier.service binding");
-    this.image = createPythonVerifierImage(config.dockerExecutable, undefined, factoryRuntime.network);
+    this.imageInventory = factoryRuntime.imageConfigFingerprint ? verifierImageInventory(config.dockerExecutable) : undefined;
+    const command = this.imageInventory?.command;
+    this.image = createPythonVerifierImage(config.dockerExecutable, command ? (args, signal, env) =>
+      command(args, { signal, ...(env ? { env } : {}), maxBuffer: 8 * 1024 * 1024 }) : undefined, factoryRuntime.network, this.imageInventory);
   }
   async prepare(task: VerificationTask, signal: AbortSignal): Promise<JsonValue> {
     signal.throwIfAborted();
@@ -38,9 +43,23 @@ export class HarborPythonVerifier implements Verifier {
     throw new Error("Python verifier must be opened through its runtime lifecycle");
   }
   readonly runtime: VerificationRuntime<JsonValue, VerificationEvidence> = {
-    materialize: async (_descriptor, signal) => {
-      const image = this.config.runtimeImage ?? await this.image(signal);
-      return { image: await materializeVerifierImage(this.config.dockerExecutable, image, signal, this.factoryRuntime.network) };
+    materialize: async (value, signal) => {
+      const inventory = this.imageInventory;
+      const configFingerprint = this.factoryRuntime.imageConfigFingerprint;
+      const acquire = async (imageScope?: EnvironmentSpec["imageScope"]) => {
+        const image = this.config.runtimeImage ?? await this.image(signal, imageScope);
+        return { image: await materializeVerifierImage(this.config.dockerExecutable, image, signal, this.factoryRuntime.network, inventory, imageScope) };
+      };
+      if (!inventory || !configFingerprint) return acquire();
+      const verification = expectRecord(value, "verification");
+      const descriptor = expectRecord(verification.descriptor, "verification.descriptor");
+      const taskId = expectNonEmptyString(descriptor.id, "verification.descriptor.id");
+      const [namespace, ...path] = taskId.split("/");
+      const scope = verification.imageScope === undefined ? undefined : expectRecord(verification.imageScope, "verification.imageScope");
+      const dataset = scope?.dataset ?? this.factoryRuntime.benchmarkName ?? namespace;
+      const taskPath = scope?.taskPath ?? (path.join("/") || taskId);
+      return inventory.use({ configFingerprint, taskId, phase: "verify" }, signal,
+        () => acquire({ dataset: expectNonEmptyString(dataset, "image dataset"), taskPath: expectNonEmptyString(taskPath, "image task path") }));
     },
     recoverAttempts: (keys, signal) => recoverVerifierContainers(this.config.dockerExecutable, keys, signal),
     prepare: async (value, receipt, { key, signal }) => {
@@ -62,7 +81,7 @@ export class HarborPythonVerifier implements Verifier {
       }
       return preparePythonVerifier({ id: descriptor.id, taskDir: descriptor.taskDir, datasetDir: descriptor.datasetDir,
         workdir: descriptor.workdir, ...(descriptor.timeoutSeconds === undefined ? {} : { timeoutSeconds: descriptor.timeoutSeconds }) }, typeof descriptor.importPath === "string" ? descriptor.importPath : this.config.importPath, env,
-        this.config.dockerExecutable, image, key, signal, Object.values(this.factoryRuntime.services).map(binding => binding.auth.value));
+        this.config.dockerExecutable, image, key, signal, Object.values(this.factoryRuntime.services).map(binding => binding.auth.value), this.imageInventory);
     },
   };
 }

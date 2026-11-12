@@ -1,178 +1,123 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { PINNED_NODE_IMAGE, type DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
-import { resolvePinnedTaskImage } from "../../src/infrastructure/containers/base-image.js";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import type { ContainerPlatform } from "../../src/core/contracts/environment.js";
+import type { DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
+import { acquireBaseImage } from "../../src/infrastructure/containers/base-image.js";
+import { DockerImageInventory } from "../../src/infrastructure/containers/image-inventory.js";
 
 const digest = `sha256:${"d".repeat(64)}`;
 const id = `sha256:${"a".repeat(64)}`;
 const reference = `registry.example.test/bench:task-v1@${digest}`;
-const source = `registry.example.test/bench@${digest}`;
-const tag = "registry.example.test/bench:task-v1";
-const scope = { taskId: "benchmark/task-a", phase: "solve" as const };
+const imported = "ember-evaluator/pull:fixture";
+const external = "user/keep:latest";
 let directory: string;
+beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), "evaluator-base-image-test-")); });
+afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
-beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "evaluator-base-image-test-"));
-  vi.stubEnv("EVALUATOR_CACHE_DIR", directory);
-});
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  await rm(directory, { recursive: true, force: true });
-});
-
-type Image = { id: string; digests: string[]; os: string; architecture: string };
-function docker(present = true) {
+function docker() {
   const calls: string[][] = [];
-  const image: Image = { id, digests: [source], os: "linux", architecture: "amd64" };
-  const images = new Map<string, Image>();
-  let cleanupFails = false;
-  let abortOnTag: AbortController | undefined;
-  const addSource = () => {
-    image.digests = [source];
-    for (const name of [reference, source, tag, image.id]) images.set(name, image);
-  };
-  if (present) addSource();
+  const image = { id, digests: [reference], architecture: "amd64" };
+  const images = new Map<string, typeof image>();
   const command: DockerCommand = async (args, options) => {
     options?.signal?.throwIfAborted();
     calls.push([...args]);
+    if (args[0] === "info") return { stdout: "fixture", stderr: "" };
+    if (args[0] === "pull") { images.set(args.at(-1)!, image); return { stdout: "", stderr: "" }; }
     if (args[0] === "image" && args[1] === "inspect") {
-      const found = images.get(args[4]!);
-      if (!found) throw new Error(`No such image: ${args[4]}`);
-      return { stdout: JSON.stringify([found.id, found.digests, found.os, found.architecture]), stderr: "" };
+      const name = args[args.includes("--platform") ? 4 : 2]!;
+      const found = images.get(name);
+      if (!found) throw new Error(`No such image: ${name}`);
+      const format = args.at(-1);
+      const tags = [...images].filter(([ref, item]) => item === found && !ref.includes("@")).map(([ref]) => ref);
+      const stdout = format?.includes("RepoTags") ? JSON.stringify([found.id, tags, found.digests]) :
+        format?.includes("Architecture") ? JSON.stringify([found.id, "linux", found.architecture]) :
+        format?.includes("RepoDigests") ? found.id + " " + JSON.stringify(found.digests) : found.id;
+      return { stdout, stderr: "" };
     }
-    if (args[0] === "pull") {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      addSource();
-    } else if (args[0] === "image" && args[1] === "tag") {
-      const found = images.get(args[2]!);
-      if (!found) throw new Error("No such image");
-      images.set(args[3]!, found);
-      if (abortOnTag) { abortOnTag.abort(); abortOnTag.signal.throwIfAborted(); }
-    } else if (args[0] === "image" && args[1] === "rm") {
-      if (cleanupFails) throw new Error("image reference in use");
-      images.delete(args.at(-1)!);
-      if (args.at(-1) === source) {
-        images.delete(reference);
-        // Classic Docker may lose registry digests after untagging; retain only the receipt.
-        image.digests = [];
-      }
-    } else throw new Error(`Unexpected command: ${args.join(" ")}`);
-    return { stdout: "", stderr: "" };
+    if (args[0] === "image" && args[1] === "rm") { images.delete(args.at(-1)!); return { stdout: "", stderr: "" }; }
+    throw new Error(`Unexpected Docker operation: ${args.join(" ")}`);
   };
-  return { command, calls, images, image, failCleanup: (value: boolean) => { cleanupFails = value; },
-    abortOnTag: (controller?: AbortController) => { abortOnTag = controller; } };
+  const inventory = new DockerImageInventory(command, directory);
+  const signal = new AbortController().signal;
+  const pull = async () => {
+    images.set(imported, image);
+    return { reference: imported, verifiedDigest: digest };
+  };
+  const acquire = (platform: ContainerPlatform = "linux/amd64", scope?: { phase: "solve" | "verify"; taskId: string }) =>
+    inventory.use(undefined, signal, () => acquireBaseImage(inventory, reference, platform, platform, pull, signal, scope));
+  return { image, images, calls, acquire, inventory, signal };
 }
 
-const signal = () => new AbortController().signal;
-
-test("pinned task images keep one stable Evaluator name and reuse classic-store receipts without pulling", async () => {
+test("a preexisting pinned source reference is reused without retagging or removing user aliases", async () => {
   const fake = docker();
-  fake.images.set("other-user/keep:latest", fake.image);
-  const a = await resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal());
-  expect(a).toMatchObject({ reference, id, pinnedReference: expect.stringMatching(/\/task-a:solve-base-/u) });
-  expect(fake.images.has(source)).toBe(false);
-  expect(fake.images.has(tag)).toBe(false);
-  expect(fake.images.has("other-user/keep:latest")).toBe(true);
-  expect(fake.image.digests).toEqual([]);
-  const b = await resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal());
-  expect(b).toEqual(a);
-  expect(fake.calls.filter(args => args[1] === "tag")).toHaveLength(1);
-  expect(fake.calls.filter(args => args[0] === "pull")).toHaveLength(0);
-  expect(fake.calls.filter(args => args[1] === "rm")).toEqual([
-    ["image", "rm", "--no-prune", source], ["image", "rm", "--no-prune", tag],
-  ]);
-  expect((await readdir(join(directory, "docker-images"))).every(name => name.endsWith(".json"))).toBe(true);
+  fake.images.set(reference, fake.image);
+  fake.images.set(external, fake.image);
+  await expect(fake.acquire()).resolves.toMatchObject({ reference, id, digest: id });
+  expect([...fake.images.keys()]).toEqual([reference, external]);
+  expect(fake.calls.some(args => args[1] === "tag" || args[1] === "rm")).toBe(false);
 });
 
-test("concurrent tasks share one pinned download and recover the admitted image by ID", async () => {
-  const fake = docker(false);
-  const [a, b] = await Promise.all([
-    resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()),
-    resolvePinnedTaskImage(fake.command, reference, "linux/amd64", { ...scope, taskId: "benchmark/task-b" }, signal()),
-  ]);
-  expect(a?.id).toBe(id);
-  expect(b?.id).toBe(id);
-  expect(a?.pinnedReference).not.toBe(b?.pinnedReference);
-  expect(fake.calls.filter(args => args[0] === "pull")).toEqual([["pull", "--platform", "linux/amd64", reference]]);
-  expect(fake.calls.filter(args => args[1] === "tag")).toHaveLength(2);
-});
-
-test("a digest-addressed Evaluator image can be verified without an earlier receipt", async () => {
+test("an imported alias is released when the same image already has a user reference", async () => {
   const fake = docker();
-  fake.image.id = digest;
-  fake.images.set(digest, fake.image);
-  expect((await resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()))?.id).toBe(digest);
+  fake.images.set(external, fake.image);
+  await expect(fake.acquire()).resolves.toMatchObject({ reference: external, digest: id });
+  expect([...fake.images.keys()]).toEqual([external]);
+  await expect(fake.acquire()).resolves.toMatchObject({ reference: external, digest: id });
 });
 
-test("platforms have separate stable names and source records", async () => {
-  const amd = docker();
-  const arm = docker();
-  arm.image.architecture = "arm64";
-  arm.image.id = `sha256:${"b".repeat(64)}`;
-  arm.images.set(arm.image.id, arm.image);
-  const a = await resolvePinnedTaskImage(amd.command, reference, "linux/amd64", scope, signal());
-  const b = await resolvePinnedTaskImage(arm.command, reference, "linux/arm64", scope, signal());
-  expect(a?.pinnedReference).not.toBe(b?.pinnedReference);
-  expect(a?.id).not.toBe(b?.id);
-  expect((await readdir(join(directory, "docker-images"))).filter(name => name.endsWith(".json"))).toHaveLength(2);
-});
-
-test("a replaced Evaluator tag is rejected without deleting source references or overwriting it", async () => {
+test("verify-only imported input is released after use, and solve input stays retained", async () => {
   const fake = docker();
-  const a = await resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal());
-  const name = a!.pinnedReference;
-  const wrong = { ...fake.image, id: `sha256:${"b".repeat(64)}` };
-  fake.images.set(name, wrong);
-  const before = fake.calls.length;
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()))
-    .rejects.toMatchObject({ code: "ENV_IMAGE_REFERENCE_INVALID", message: expect.stringContaining("tag was replaced") });
-  expect(fake.images.get(name)).toBe(wrong);
-  expect(fake.calls.slice(before).every(args => args[1] === "inspect")).toBe(true);
+  await expect(fake.acquire("linux/amd64", { phase: "verify", taskId: "verify" })).resolves.toMatchObject({ reference: imported, id });
+  await fake.inventory.releaseBuildInput(imported, id, fake.signal);
+  expect(fake.images.has(imported)).toBe(false);
+  await fake.acquire("linux/amd64", { phase: "solve", taskId: "solve" });
+  await fake.acquire("linux/amd64", { phase: "verify", taskId: "verify" });
+  await fake.inventory.releaseBuildInput(imported, id, fake.signal);
+  expect(fake.images.has(imported)).toBe(true);
+});
+
+test("releasing a build-only registry digest preserves tags that could be removed with it", async () => {
+  const fake = docker();
+  await fake.inventory.use(undefined, fake.signal, () => fake.inventory.command(["pull", reference], { signal: fake.signal }));
+  await fake.inventory.retain(reference, "linux/amd64", fake.signal, { buildInput: true, acquiredInput: true });
+  fake.images.set(external, fake.image);
+  await fake.inventory.releaseBuildInput(reference, id, fake.signal);
+  expect([...fake.images.keys()]).toEqual([reference, external]);
+  expect(fake.calls.some(args => args[1] === "rm")).toBe(false);
+});
+
+test("two acquired registry digest names for the same image reuse the first retained reference", async () => {
+  const fake = docker();
+  const alternative = `registry.example.test/another@${digest}`;
+  fake.image.digests.push(alternative);
+  const acquire = (name: string) => fake.inventory.use(undefined, fake.signal, () =>
+    acquireBaseImage(fake.inventory, name, "linux/amd64", name, async (ref, _platform, signal) => {
+      await fake.inventory.command(["pull", ref], { signal });
+      return { reference: ref };
+    }, fake.signal));
+  await expect(acquire(reference)).resolves.toMatchObject({ reference, digest: id });
+  await expect(acquire(alternative)).resolves.toMatchObject({ reference, digest: id });
+  await expect(acquire(alternative)).resolves.toMatchObject({ reference, digest: id });
+  expect([...fake.images.keys()]).toEqual([reference]);
+  expect(fake.calls.filter(args => args[0] === "pull")).toHaveLength(2);
 });
 
 test("wrong source digests and platforms are rejected before references are removed", async () => {
   const fake = docker();
+  fake.images.set(reference, fake.image);
   fake.image.digests = [];
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()))
-    .rejects.toMatchObject({ code: "ENV_IMAGE_REFERENCE_INVALID" });
-  fake.image.digests = [source];
+  await expect(fake.acquire()).rejects.toMatchObject({ code: "ENV_IMAGE_REFERENCE_INVALID" });
+  fake.image.digests = [reference];
   fake.image.architecture = "arm64";
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()))
-    .rejects.toMatchObject({ code: "ENV_ARCH_UNSUPPORTED" });
+  await expect(fake.acquire()).rejects.toMatchObject({ code: "ENV_ARCH_UNSUPPORTED" });
   expect(fake.calls.some(args => args[1] === "tag" || args[1] === "rm")).toBe(false);
 });
 
-test("cleanup failure retains the Evaluator tag and receipt and can retry without downloading", async () => {
+test("an offline cached source is rejected when its retained reference changes identity", async () => {
   const fake = docker();
-  fake.failCleanup(true);
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal()))
-    .rejects.toMatchObject({ code: "CLEANUP_FAILED" });
-  expect([...fake.images.keys()].some(name => name.startsWith("ember-evaluator/"))).toBe(true);
-  expect(fake.images.has(source)).toBe(true);
-  fake.failCleanup(false);
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal())).resolves.toMatchObject({ id });
-  expect(fake.images.has(source)).toBe(false);
-  expect(fake.calls.some(args => args[0] === "pull")).toBe(false);
-});
-
-test("cancellation after tagging releases the source lock and leaves source content available", async () => {
-  const fake = docker();
-  const controller = new AbortController();
-  fake.abortOnTag(controller);
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, controller.signal)).rejects.toThrow();
-  expect(fake.images.has(source)).toBe(true);
-  expect((await readdir(join(directory, "docker-images"))).some(name => name.endsWith(".lock"))).toBe(false);
-  fake.abortOnTag();
-  await expect(resolvePinnedTaskImage(fake.command, reference, "linux/amd64", scope, signal())).resolves.toMatchObject({ id });
-});
-
-test("mutable references, internal images and calls without task identity retain the existing path", async () => {
-  const fake = docker();
-  expect(await resolvePinnedTaskImage(fake.command, tag, "linux/amd64", scope, signal())).toBeNull();
-  expect(await resolvePinnedTaskImage(fake.command, reference, "linux/amd64", undefined, signal())).toBeNull();
-  expect(await resolvePinnedTaskImage(fake.command, PINNED_NODE_IMAGE, "linux/amd64", scope, signal())).toBeNull();
-  expect(await resolvePinnedTaskImage(fake.command, `ember-evaluator/shared@${digest}`, "linux/amd64", scope, signal())).toBeNull();
-  expect(fake.calls).toEqual([]);
+  await fake.acquire();
+  fake.images.set(imported, { ...fake.image, id: "sha256:" + "f".repeat(64) });
+  await expect(fake.acquire()).rejects.toMatchObject({ code: "ENV_IMAGE_REFERENCE_INVALID" });
 });

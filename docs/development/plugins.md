@@ -10,7 +10,7 @@
 
 组件可选提供实时活动：Solver 通过 `AttemptContext.activity?.({ message, lines, activity })` 报告模型/工具活动；Environment 的 `materialize` 第四参数、`prepare` 第五参数和 `installRuntime` 第四参数提供相同回调。原 `onImageReady` 参数位置和语义不变；未实现回调的插件仍可运行。`ActivityListener`、`ComponentActivity` 从包根导出。
 
-`Environment.materialize` 第五参数为可选的 `EnvironmentPreparationContext`：`{ taskId, phase: "solve" | "verify" }`，类型从包根导出。整批准备、流水线及 Ray 节点传入该参数，Docker 用它生成带任务和用途的镜像名称；直接 `prepare` 从 attempt 及阶段取得身份。外部环境可以忽略此参数，装饰或代理 `materialize` 时应转发全部参数。该上下文不写入任务数据，不改变 Solver 与 Verifier 的访问边界；未提供上下文时 Docker 使用 `shared` 名称。命名及缓存行为见 [Docker FAQ](../users/faq/docker.zh-CN.md#如何按任务区分和查看镜像)。
+`Environment.materialize` 第五参数是可选的 `EnvironmentPreparationContext`（`{ taskId, phase: "solve" | "verify" }`），类型从包根导出。整批准备、流水线及 Ray 节点传入该参数。Docker 按题号选择任务专用构建配置，按阶段命名镜像。直接调用 `prepare` 时从 attempt 获取题号和阶段。外部环境可以忽略此参数，代理 `materialize` 时应转发全部参数。命名及缓存行为见 [Docker FAQ](../users/faq/docker.zh-CN.md#如何查看评测镜像)。
 
 提供上下文时，Docker 会把固定摘要的外部任务镜像迁移到稳定的 Evaluator 标签，核对内容并保存本地来源记录后移除对应官方本地引用。插件应使用返回的准备凭据，不假定 Docker 中始终存在原官方引用。原来源仍保留在环境声明及结果中；固定 Node、可变标签和无上下文调用不执行此迁移，见上述 FAQ。
 

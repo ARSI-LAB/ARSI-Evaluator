@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { VerificationRuntime } from "../../../../../../core/contracts/verification-runtime.js";
 import { expectNonEmptyString, expectRecord } from "../../../../../../core/validation/input.js";
-import { createVerifierContainer, materializeVerifierImage, recoverVerifierContainers } from "../../../../../verifiers/shared/container.js";
+import { createVerifierContainer, materializeVerifierImage, recoverVerifierContainers, verifierImageInventory } from "../../../../../verifiers/shared/container.js";
 
 export const OFFICEQA_REWARD_REVISION = "7b9a3c154ef9fb40215bb67934afc43e6799de16";
 export const OFFICEQA_REWARD_SHA256 = "0d91698c87df6d889339aac36f63ae0966607f169890b0bf8b472b26bfe8138f";
@@ -15,9 +15,16 @@ export async function officeQAScoringProgram(): Promise<string> {
   return `${source}\nimport json, sys\nrequest = json.load(sys.stdin)\nprint(json.dumps({"score": score_answer(request["answer"], request["prediction"], request["tolerance"])}))\n`;
 }
 
-export function officeQAVerificationRuntime(docker: string, network?: import("../../../../../../core/contracts/network.js").NetworkAccess): VerificationRuntime {
+export function officeQAVerificationRuntime(docker: string, network?: import("../../../../../../core/contracts/network.js").NetworkAccess,
+  configFingerprint?: string): VerificationRuntime {
+  const inventory = configFingerprint ? verifierImageInventory(docker) : undefined;
   return {
-    materialize: async (_task, signal) => ({ image: await materializeVerifierImage(docker, "python:3.12-slim", signal, network) }),
+    async materialize(task, signal) {
+      const acquire = () => materializeVerifierImage(docker, "python:3.12-slim", signal, network, inventory, { dataset: "officeqa-pro-v2" });
+      return { image: inventory && configFingerprint
+        ? await inventory.use({ configFingerprint, taskId: task.input.id, phase: "verify" }, signal, acquire)
+        : await acquire() };
+    },
     recoverAttempts: (keys, signal) => recoverVerifierContainers(docker, keys, signal),
     async prepare(task, receipt, { key, signal }) {
       const verification = expectRecord(task.verification, "OfficeQA verification");
@@ -29,7 +36,7 @@ export function officeQAVerificationRuntime(docker: string, network?: import("..
       const image = expectNonEmptyString(expectRecord(receipt, "OfficeQA runtime").image, "OfficeQA verifier image");
       const program = await officeQAScoringProgram();
       const container = await createVerifierContainer(docker, image, ["--network", "none", "--memory", "256m", "--cpus", "1",
-        "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp:size=16m", "--security-opt", "no-new-privileges"], ["python", "-c", program], key, signal);
+        "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp:size=16m", "--security-opt", "no-new-privileges"], ["python", "-c", program], key, signal, inventory);
       return {
         metadata: { ...container.metadata, scorerRevision: OFFICEQA_REWARD_REVISION, scorerSha256: OFFICEQA_REWARD_SHA256 },
         dispose: active => container.dispose(active),
