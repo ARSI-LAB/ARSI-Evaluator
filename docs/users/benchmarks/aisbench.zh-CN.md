@@ -20,3 +20,5 @@ SSH solver 检查成功请求数、零失败、实际输入输出 token 总量�
 取消未确认会留下 `cleanup-unconfirmed.json`，调用方必须先核对再重启。
 
 合成负载使用 `aisbench:synthetic` 来源标识。内置指标和报告支持该标识并保留实际测量行，不要求数据集实现哈希。RSI 调用方也需支持合成负载字段与来源标识。
+
+现有 `aisbench-performance` 指标结果在每个测量点提供 `workload` 和规范化标量 `metrics`：指标名对应 `{ value, unit, source }`，缺失值为 `null`，证据位置是相对该测量点的 JSON Pointer。原始 `measurement` 证据仍供报告使用。仅执行完成且产物收集完整的测量点输出指标。AISBench 解析、请求/token 完整性及来源验证由本插件负责，调用方无需再次解析 CSV。

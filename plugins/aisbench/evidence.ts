@@ -49,3 +49,24 @@ export function parseAisbenchSummary(value: unknown): AisbenchSummary {
   return { schemaVersion: 1, kind: "aisbench", workload, bundleDigest,
     aisbenchVersion: expectNonEmptyString(v.aisbenchVersion, "AISBench version"), rows };
 }
+
+/** Normalize the final measured row; evidence pointers are relative to the metric point. */
+export function normalizedMetrics(summary: AisbenchSummary): Record<string, { value: number | null; unit: string; source: string }> {
+  const fields = [
+    ["requestThroughput", "qps", "requests/sec"],
+    ["inputThroughput", "input_token_throughput", "tokens/sec"],
+    ["outputThroughput", "output_throughput", "tokens/sec"],
+    ["totalThroughput", "E2E_throughput", "tokens/sec"],
+    ["ttftP90", "TTFT P90", "ms"],
+    ["tpotP90", "TPOT SLO_P90", "ms"],
+    ["requestLatencyP90", "E2EL P90", "ms"],
+  ] as const;
+  const index = summary.rows.length - 1;
+  const row = summary.rows[index];
+  return Object.fromEntries(fields.map(([id, column, unit]) => {
+    const raw = row?.[column];
+    const value = raw?.trim() ? Number(raw) : NaN;
+    return [id, { value: Number.isFinite(value) && value >= 0 ? value : null, unit,
+      source: `/measurement/rows/${index}/${column.replaceAll("~", "~0").replaceAll("/", "~1")}` }];
+  }));
+}

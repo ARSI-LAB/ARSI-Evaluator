@@ -188,3 +188,21 @@ test("synthetic source produces measured points and a report without a dataset i
   expect(await compute(snapshot)).toMatchObject({ applicable: true, points: [{ status: "completed", measurement: summary }] });
   expect(await render(snapshot)).toContain("4096");
 });
+
+
+test("normalized metrics retain units and final-row evidence while missing values stay null", async () => {
+  const snapshot = aisbenchSnapshot();
+  expect(await compute(snapshot)).toMatchObject({ points: [{ workload: aisbenchSummary().workload,
+    metrics: {
+      requestThroughput: { value: 3.4, unit: "requests/sec", source: "/measurement/rows/0/qps" },
+      tpotP90: { value: null, unit: "ms" },
+    } }] });
+  recordOf(snapshot).collection.artifacts = "partial";
+  expect(await compute(snapshot)).toMatchObject({ points: [{ status: "incomplete", workload: null, metrics: {} }] });
+});
+
+test("rejects solver provenance mismatches before emitting normalized metrics", async () => {
+  const snapshot = aisbenchSnapshot();
+  snapshot.run.solverProvenance = { bundleDigest: "b".repeat(64), aisbenchVersion: "1.0.0" };
+  await expect(compute(snapshot)).rejects.toThrow(/solver provenance/);
+});

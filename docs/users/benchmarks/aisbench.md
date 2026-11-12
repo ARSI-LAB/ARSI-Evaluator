@@ -22,3 +22,5 @@ attempt cancellation even without local abort; unconfirmed cancellation leaves
 `cleanup-unconfirmed.json`, which callers must reconcile before restarting.
 
 Synthetic results use the `aisbench:synthetic` source identity. The built-in metrics and reporter accept that identity and retain the measured rows; a dataset implementation hash is not required. RSI consumers must support the synthetic workload fields and source identity as well.
+
+The existing `aisbench-performance` metrics result includes each point’s `workload` and normalized scalar `metrics`: metric ID maps to `{ value, unit, source }`, with `null` for unavailable values and a JSON evidence pointer relative to the point. Native `measurement` evidence remains available for reporting. Only completed points with complete artifact collection emit metrics. AISBench parsing, request/token completeness and source validation belong to this plugin; consumers should not reparse CSV rows.

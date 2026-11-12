@@ -1,6 +1,6 @@
 import { attemptStatus, fingerprintConfig } from "ember-evaluator";
 import type { AttemptRecord, JsonValue, Metrics, ResultSnapshot } from "ember-evaluator";
-import { parseAisbenchSummary } from "./evidence.js";
+import { normalizedMetrics, parseAisbenchSummary } from "./evidence.js";
 import type { AisbenchSummary } from "./evidence.js";
 import { expectRecord } from "./validation.js";
 
@@ -35,7 +35,7 @@ function recordsByTask(snapshot: ResultSnapshot): Map<string, AttemptRecord> {
 function pointStatus(record: AttemptRecord | undefined): string {
   if (!record) return "pending";
   if (record.executionStatus !== "completed") return attemptStatus(record);
-  return record.solve && record.verdict?.passed === null && record.solve.observations != null ? "completed" : "incomplete";
+  return record.collection.artifacts === "complete" && record.solve && record.verdict?.passed === null && record.solve.observations != null ? "completed" : "incomplete";
 }
 
 function sourceDigest(snapshot: ResultSnapshot): string {
@@ -62,7 +62,14 @@ export class AisbenchPerformanceMetrics implements Metrics {
     const digest = sourceDigest(snapshot);
     const points = snapshot.run.taskIds.map(taskId => {
       const record = records.get(taskId), status = pointStatus(record);
-      return { taskId, status, measurement: status === "completed" ? measurement(record?.solve?.observations, taskId, digest) : null };
+      const summary = status === "completed" ? measurement(record?.solve?.observations, taskId, digest) : null;
+      const provenance = snapshot.run.solverProvenance;
+      if (summary && provenance && (provenance.bundleDigest !== summary.bundleDigest || provenance.aisbenchVersion !== summary.aisbenchVersion))
+        throw new TypeError("AISBench measurement differs from solver provenance");
+      if (summary && snapshot.run.source?.source !== (summary.workload.dataset === "synthetic" ? "aisbench:synthetic" : "github:rayn-zzz/aisbench_auto_tools_prefix"))
+        throw new TypeError("AISBench workload differs from source");
+      return { taskId, status, measurement: summary, workload: summary?.workload ?? null,
+        metrics: summary ? normalizedMetrics(summary) : {} };
     });
     return { applicable: true, points };
   }
