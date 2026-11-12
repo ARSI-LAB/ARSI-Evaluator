@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { classifyError, EvaluatorError } from "ember-evaluator";
+import { classifyError, EvaluatorError, fingerprintConfig } from "ember-evaluator";
 import type { AttemptRecord, JsonValue, MetricResults, ResultSnapshot } from "ember-evaluator";
 import { AisbenchPerformanceMetrics } from "../../metrics.js";
 import { AisbenchMarkdownReporter } from "../../reporter.js";
@@ -168,4 +168,23 @@ test("report rejects forged metric points and malformed supplied CSV rather than
   await expect(new AisbenchMarkdownReporter().render(snapshot, { "aisbench-performance": forged })).rejects.toThrow();
   const malformed: JsonValue = { applicable: true, points: [{ taskId: recordOf(snapshot).key.taskId, status: "completed", measurement: { ...aisbenchSummary(), rows: [] } }] };
   await expect(new AisbenchMarkdownReporter().render(snapshot, { "aisbench-performance": malformed })).rejects.toThrow();
+});
+
+
+test("synthetic source produces measured points and a report without a dataset implementation hash", async () => {
+  const snapshot = aisbenchSnapshot();
+  const summary = aisbenchSummary();
+  summary.workload = { ...summary.workload, dataset: "synthetic", warmups: 8,
+    prefixCache: { ...summary.workload.prefixCache, enabled: false, warmup: false, prefixRatio: 0 } };
+  summary.rows = [{ total_req: "160", failed_req: "0", total_input_tokens: "327680", total_output_tokens: "81920",
+    qps: "2", output_throughput: "4096", "TTFT P90": "16", "TPOT SLO_P90": "68", "E2EL P90": "150000" }];
+  if (!snapshot.run.source) throw new Error("Missing fixture source");
+  snapshot.run.source.source = "aisbench:synthetic";
+  const record = recordOf(snapshot);
+  record.key.taskId = `aisbench-${fingerprintConfig(summary.workload).slice(-16)}`;
+  snapshot.run.taskIds = [record.key.taskId];
+  if (!record.solve) throw new Error("Missing fixture solve");
+  record.solve.observations = summary;
+  expect(await compute(snapshot)).toMatchObject({ applicable: true, points: [{ status: "completed", measurement: summary }] });
+  expect(await render(snapshot)).toContain("4096");
 });

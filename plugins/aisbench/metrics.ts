@@ -9,7 +9,7 @@ type AisbenchMetric = { applicable: boolean; taskSetKnown?: false; points: Aisbe
 
 function applicable(snapshot: ResultSnapshot): boolean {
   return snapshot.run.evaluationKind === "performance" &&
-    (!snapshot.run.source || snapshot.run.source.source === "github:rayn-zzz/aisbench_auto_tools_prefix");
+    (!snapshot.run.source || ["github:rayn-zzz/aisbench_auto_tools_prefix", "aisbench:synthetic"].includes(snapshot.run.source.source));
 }
 
 function recordsByTask(snapshot: ResultSnapshot): Map<string, AttemptRecord> {

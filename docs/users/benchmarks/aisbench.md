@@ -20,3 +20,5 @@ token totals, and millisecond latencies. A synthetic performance result is not a
 GSM8K/prefix workloads are unchanged when `dataset` is omitted. Remote failures
 attempt cancellation even without local abort; unconfirmed cancellation leaves
 `cleanup-unconfirmed.json`, which callers must reconcile before restarting.
+
+Synthetic results use the `aisbench:synthetic` source identity. The built-in metrics and reporter accept that identity and retain the measured rows; a dataset implementation hash is not required. RSI consumers must support the synthetic workload fields and source identity as well.
