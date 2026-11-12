@@ -4,7 +4,9 @@ import { expectRecord, expectNonEmptyString, rejectUnknown } from "../../../../c
 
 export const KERNEL_CHECK_IDS = ["entry", "shape", "dtype", "device", "layout", "independent-output", "input-unmodified", "numerical"] as const;
 export type KernelCheckId = typeof KERNEL_CHECK_IDS[number];
-type TensorContract = { shape: number[]; dtype: "float16"; contiguous: boolean };
+export const KERNEL_TENSOR_DTYPES = ["float16", "float32", "int64", "int32"] as const;
+export type KernelTensorDtype = typeof KERNEL_TENSOR_DTYPES[number];
+type TensorContract = { shape: number[]; dtype: KernelTensorDtype; contiguous: boolean };
 export type KernelContract = { schemaVersion: 1; caseId: string; inputs: TensorContract[];
   output: TensorContract & { independent: boolean }; inputUnmodified: boolean };
 export type KernelCheck = { id: KernelCheckId; seed: number; call: number;
@@ -16,11 +18,14 @@ export type KernelEnvironment = Record<typeof KERNEL_ENVIRONMENT_FIELDS[number],
 export type KernelAssessment = { schemaVersion: 1; contractSha256: string; checks: KernelCheck[];
   effectiveProtocol: KernelEffectiveProtocol; environment: KernelEnvironment; errorOwnership: "candidate" | "evaluation" | null };
 
+const isKernelTensorDtype = (value: unknown): value is KernelTensorDtype =>
+  typeof value === "string" && (KERNEL_TENSOR_DTYPES as readonly string[]).includes(value);
+
 function tensor(value: unknown, output = false): TensorContract & { independent?: boolean } {
   const r = expectRecord(value, "contract tensor");
   rejectUnknown(r, output ? ["shape", "dtype", "contiguous", "independent"] : ["shape", "dtype", "contiguous"], "contract tensor");
   if (!Array.isArray(r.shape) || !r.shape.length || r.shape.some(n => !Number.isSafeInteger(n) || n <= 0)) throw new TypeError("contract tensor.shape must contain positive integers");
-  if (r.dtype !== "float16" || typeof r.contiguous !== "boolean" || (output && typeof r.independent !== "boolean")) throw new TypeError("Invalid contract tensor dtype/layout");
+  if (!isKernelTensorDtype(r.dtype) || typeof r.contiguous !== "boolean" || (output && typeof r.independent !== "boolean")) throw new TypeError(`Invalid contract tensor dtype/layout: ${String(r.dtype)}`);
   return { shape: r.shape as number[], dtype: r.dtype, contiguous: r.contiguous,
     ...(output ? { independent: r.independent as boolean } : {}) };
 }

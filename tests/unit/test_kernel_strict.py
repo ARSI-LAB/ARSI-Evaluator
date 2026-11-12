@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import types
 import unittest
 from contextlib import contextmanager
 from types import ModuleType
@@ -26,6 +27,11 @@ path = Path(__file__).resolve().parents[2] / 'src/plugins/benchmarks/operator/ke
 spec = importlib.util.spec_from_file_location('kernel_strict', path)
 strict = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(strict)
+
+precision_path = Path(__file__).resolve().parents[2] / 'src/plugins/benchmarks/operator/kernel/runtime/precision.py'
+precision_spec = importlib.util.spec_from_file_location('kernel_precision', precision_path)
+precision = importlib.util.module_from_spec(precision_spec)
+precision_spec.loader.exec_module(precision)
 
 class Storage:
     def __init__(self, pointer): self.pointer = pointer
@@ -55,6 +61,38 @@ class StrictTests(unittest.TestCase):
                                  (Tensor([2, 2, 2], 2, device='cpu'), 'device')]:
             failed = strict.output_checks(output, [inp], contract, Torch)
             self.assertEqual(next(iter(failed), None), expected)
+
+    def test_output_checks_accept_every_contract_dtype(self):
+        inp = Tensor([2, 4], 1)
+        for dtype in ('float16', 'float32', 'int64', 'int32'):
+            contract = {'shape': [2, 2, 2], 'dtype': dtype, 'contiguous': True, 'independent': True}
+            output = Tensor([2, 2, 2], 2, dtype='torch.' + dtype)
+            self.assertEqual(strict.output_checks(output, [inp], contract, Torch), {}, dtype)
+
+    def test_output_checks_reject_mismatched_generalized_dtype(self):
+        contract = {'shape': [8], 'dtype': 'int64', 'contiguous': True, 'independent': True}
+        output = Tensor([8], 2, dtype='torch.float32')
+        failed = strict.output_checks(output, [Tensor([2, 4], 1)], contract, Torch)
+        self.assertEqual(failed.get('dtype'), 'Output dtype differs from contract')
+
+    def test_compare_tree_requires_exact_equality_for_integer_tensors(self):
+        class IntegerTensor:
+            def __init__(self, values): self.values = list(values)
+            def is_floating_point(self): return False
+            def is_complex(self): return False
+        class Finite:
+            @staticmethod
+            def all(): return True
+        def assert_close(actual, expected, rtol, atol, equal_nan):
+            # Integer outputs ignore the recipe tolerance and compare exactly.
+            self.assertEqual((rtol, atol), (0, 0))
+            if actual.values != expected.values:
+                raise AssertionError('Integer tensor values differ')
+        torch = types.SimpleNamespace(Tensor=IntegerTensor, isfinite=lambda _: Finite,
+            testing=types.SimpleNamespace(assert_close=assert_close))
+        precision.compare_tree(IntegerTensor([1, 2, 3]), IntegerTensor([1, 2, 3]), torch, 0.0005, 0.0005)
+        with self.assertRaises(AssertionError):
+            precision.compare_tree(IntegerTensor([1, 2, 3]), IntegerTensor([1, 2, 4]), torch, 0.0005, 0.0005)
 
     def test_triton_mlir_compilation_errors_are_candidate_owned_without_message_matching(self):
         with triton_errors() as errors:
