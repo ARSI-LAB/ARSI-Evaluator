@@ -13,10 +13,7 @@ export type Command = (
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
   | { kind: "report"; directory: string }
-  | { kind: "kernel-profile"; problem: string; kernel: string; out: string; round: number; seed: number; warmup: number; device: number; python?: string }
   | { kind: "plugin"; plugin: PluginCliCommand; argv: string[] }
-  | { kind: "kernel-precision"; problem: string; kernel: string; out: string; seeds: number[]; device: number; python?: string }
-  | { kind: "kernel-bench"; problem: string; kernel: string; out: string; device: number; python?: string }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
   | { kind: "warmup"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
   | { kind: "dry-run"; file: string; overrides: CliOverrides; taskIdsFile?: string; patchPath?: string }
@@ -30,8 +27,7 @@ interface Options extends Omit<CliOverrides, "plugins"> {
   patch?: string; taskIdsFile?: string; resume?: boolean | string; dryRun?: boolean;
   all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
-  problem?: string; kernel?: string; out?: string; round?: string; device?: string;
-  python?: string; seeds?: string; seed?: string; warmup?: string; network?: string;
+  network?: string;
 }
 
 export class CommandUsageError extends TypeError {
@@ -110,30 +106,6 @@ export function parseCommand(argv: string[], extensions: CliExtensions = { comma
       if (!file && opts.patch) throw new TypeError("--patch requires YAML");
       result = { kind: "cleanup-images", all: opts.all ?? false, execute: opts.yes ?? false, ...(file ? { file } : {}), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) };
     });
-  const kernel = program.command("kernel").description("Measure kernel performance, precision, or profiling data");
-  const integer = (raw: string | undefined, fallback: number, flag: string) => {
-    const value = raw === undefined ? fallback : Number(raw);
-    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${flag} must be a non-negative integer`);
-    return value;
-  };
-  for (const name of ["bench", "precision", "profile"] as const) {
-    const cmd = kernel.command(name).description(name === "bench" ? "Verify a kernel, then benchmark its performance" : name === "precision" ? "Check kernel correctness with selected random seeds" : "Collect kernel profiling metrics independently")
-      .requiredOption("--problem <path>", "Problem definition path")
-      .requiredOption("--kernel <path>", "Kernel implementation path")
-      .requiredOption("--out <json>", "Destination JSON result file")
-      .option("--device <n>", "NPU device index", "0")
-      .option("--python <executable>", "Python interpreter used by the kernel executor");
-    if (name === "profile") cmd.option("--round <n>", "Profiling round index", "0")
-      .option("--seed <n>", "Replay input seed", "0")
-      .option("--warmup <n>", "Warmup calls before capture", "25");
-    if (name === "precision") cmd.option("--seeds <list>", 'Space-separated random seeds; quote the list, e.g. --seeds "0 1"', "0 1");
-    cmd.action((opts: Options) => {
-      const base = { problem: resolve(String(opts.problem)), kernel: resolve(String(opts.kernel)), out: resolve(String(opts.out)), device: integer(opts.device, 0, "--device"), ...(opts.python === undefined ? {} : { python: opts.python }) };
-      result = name === "profile" ? { kind: "kernel-profile", ...base, round: integer(opts.round, 0, "--round"), seed: integer(opts.seed, 0, "--seed"), warmup: integer(opts.warmup, 25, "--warmup") }
-        : name === "precision" ? { kind: "kernel-precision", ...base, seeds: (opts.seeds ?? "0 1").split(/\s+/).map(Number).filter(seed => Number.isSafeInteger(seed) && seed >= 0) }
-        : { kind: "kernel-bench", ...base };
-    });
-  }
   const names = new Set(program.commands.map(command => command.name()));
   names.add("help");
   for (const plugin of plugins) {

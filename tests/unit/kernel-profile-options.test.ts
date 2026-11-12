@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "vitest";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,9 +9,13 @@ test("profiling records and applies explicit cache, retry and timeout options", 
   try {
     const problem = join(dir, "p.py"), kernel = join(dir, "k.py"), out = join(dir, "result.json");
     await writeFile(problem, "pass\n"); await writeFile(kernel, "def kernel_function(x): return x\n");
-    await kernelProfile({ problem, kernel, out, round: 1, msprofBin: join(dir, "absent-msprof"),
+    await kernelProfile({ problem, kernel, out, candidateRoot: dir,
+      candidateFiles: [{ path: "k.py", sha256: createHash("sha256").update(await readFile(kernel)).digest("hex") }], round: 1, msprofBin: join(dir, "absent-msprof"),
       cacheEnabled: false, maxAttempts: 1, attemptTimeoutSeconds: 7 });
     const raw = JSON.parse(await readFile(join(dir, "result.raw.json"), "utf8"));
+    expect(raw.metadata.sources.candidateFiles).toEqual([{ path: "k.py", sha256: raw.metadata.sources.candidate.sha256 }]);
+    const replay = JSON.parse(await readFile(join(dir, raw.metadata.artifactRoot, "profiling/request.json"), "utf8"));
+    expect(replay.candidate).toBe(join(replay.candidateRoot, "k.py"));
     expect(raw.metadata.cacheRequested).toBe(false);
     expect(raw.metadata.cacheEnabled).toBe(false);
     expect(raw.metadata.retryPolicy).toEqual({ maxAttempts: 1, attemptTimeoutSeconds: 7 });
@@ -29,7 +34,8 @@ test.skipIf(process.platform === 'win32')('cancelling profiling terminates the r
     await writeFile(msprof, `#!/usr/bin/env node\nconst {spawn}=require('node:child_process');const {writeFileSync}=require('node:fs');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});writeFileSync(${JSON.stringify(pidFile)},String(c.pid));setInterval(()=>{},1000);\n`);
     await chmod(msprof, 0o755);
     const controller = new AbortController();
-    const pending = kernelProfile({ problem, kernel, out: join(dir, 'out.json'), round: 1, msprofBin: msprof,
+    const pending = kernelProfile({ problem, kernel, candidateRoot: dir,
+      candidateFiles: [{ path: 'k.py', sha256: createHash('sha256').update(await readFile(kernel)).digest('hex') }], out: join(dir, 'out.json'), round: 1, msprofBin: msprof,
       cacheEnabled: false, maxAttempts: 1, attemptTimeoutSeconds: 5 }, { signal: controller.signal }).catch(error => error);
     for (let count = 0; count < 100; count++) {
       try { child = Number(await readFile(pidFile, 'utf8')); break; } catch { await delay(10); }
@@ -52,7 +58,7 @@ test.skipIf(process.platform === 'win32')('cancelling profiling terminates the r
 });
 
 test('published kernel atoms resolve from their packaged directory without a source checkout', async () => {
-  const { resolveAtomDir } = await import('../../src/plugins/benchmarks/operator/kernel/runtime/cli.js');
+  const { resolveAtomDir } = await import('../../src/plugins/benchmarks/operator/kernel/runtime/execution.js');
   const dir = await mkdtemp(join(tmpdir(), 'kernel-packaged-atoms-'));
   const previous = process.env.KERNEL_ATOM_DIR;
   delete process.env.KERNEL_ATOM_DIR;

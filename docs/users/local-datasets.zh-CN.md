@@ -67,7 +67,7 @@ benchmark:
 | AgentX | `benchmark.config.localPath` 指向 `traces.jsonl` 或包含该文件的目录，内容应匹配所选 `variant` |
 | OfficeQA Pro V2 | `benchmark.config.localPath` 指向包含 `officeqa_pro_v2.csv` 和完整语料的根目录；`parsed-json` 使用 `parsed_corpus/jsons/*.json`，`pdf` 使用 `pdfs/*.pdf`；保留官方题数和文档数校验 |
 | DROP | `benchmark.config.localPath` 指向发布的 `.zip`，或解压后的父目录（含 `drop_dataset/drop_dataset_train.json`、`drop_dataset/drop_dataset_dev.json`） |
-| Kernel | 原有 `benchmark.config.manifest` 指向本地题目清单，`kernelRoot` 指向候选代码目录；见 [Kernel 指南](benchmarks/kernel-npu.zh-CN.md) |
+| Kernel | `benchmark.config.manifest` 指向本地题目清单，清单中声明参考实现与候选文件；见 [Kernel 指南](benchmarks/kernel-npu.zh-CN.md) |
 
 AgentX 本地数据的 revision 记录为 `local:<内容摘要>`，不伪装成 Hugging Face commit。Tokenizer、Harness 和模型服务仍使用各自已有配置。
 

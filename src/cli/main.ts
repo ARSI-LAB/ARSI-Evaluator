@@ -264,15 +264,6 @@ async function runCliCommand(
       return 1;
     }
   }
-  if (command.kind === "kernel-profile" || command.kind === "kernel-precision" || command.kind === "kernel-bench") {
-    try {
-      const { executeKernelCommand } = await import("../application/kernel.js");
-      const result = await executeKernelCommand(command, signal);
-      if (result.kind === "evaluation-failed") { io.error(result.message); return 1; }
-      io.out(JSON.stringify(result.payload, null, 2));
-      return 0;
-    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  }
   if (command.kind === "inspect") {
     secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
     try {

@@ -46,6 +46,36 @@ class Torch:
     Tensor = Tensor
 
 class StrictTests(unittest.TestCase):
+    def test_clone_preserves_repeated_inputs_overlapping_views_and_per_call_isolation(self):
+        try:
+            import torch
+        except ModuleNotFoundError:
+            self.skipTest('CPU or device PyTorch required for storage semantics')
+        spec = importlib.util.spec_from_file_location('kernel_precision', path.with_name('precision.py'))
+        precision = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(precision)
+        with torch.inference_mode():
+            base = torch.arange(8, dtype=torch.float16)
+            left, right = base[1:7:2], base[3:6]
+            source = [left, left, {'right': right}]
+            first, same, nested = precision.clone_tree(source, torch)
+            self.assertIs(first, same)
+            self.assertEqual((first.storage_offset(), first.stride()), (1, (2,)))
+            self.assertEqual((nested['right'].storage_offset(), nested['right'].stride()), (3, (1,)))
+            first[1] = 42
+            self.assertEqual(nested['right'].tolist(), [42, 4, 5])
+            self.assertEqual(right.tolist(), [3, 4, 5])
+            next_left, _, _ = precision.clone_tree(source, torch)
+            self.assertEqual(next_left.tolist(), [1, 3, 5])
+            expanded = precision.clone_tree([base[3:4].expand(2), right], torch)
+            self.assertEqual(expanded[0].stride(), (0,))
+            expanded[1][0] = 17
+            self.assertEqual(expanded[0].tolist(), [17, 17])
+            # Some backends deepcopy each view individually, even with the shared memo.
+            with patch.object(torch.Tensor, '__deepcopy__', lambda tensor, memo: tensor.clone()):
+                with self.assertRaisesRegex(RuntimeError, 'shared storage'):
+                    precision.clone_tree([base, base.view_as(base)], torch)
+
     def test_output_contract_uses_original_storage_and_layout(self):
         contract = {'shape': [2, 2, 2], 'dtype': 'float16', 'contiguous': True, 'independent': True}
         inp = Tensor([2, 4], 1)
@@ -79,7 +109,7 @@ class StrictTests(unittest.TestCase):
 
 
 class WorkerCoreTests(unittest.TestCase):
-    def run_candidate(self, defect=None, candidate_error=None):
+    def run_candidate(self, defect=None, candidate_error=None, input_unmodified=True, emit_layout=True, seeds=None, operation='evaluate'):
         import copy, contextlib, types, sys
         # Device APIs are test doubles; this exercises the fixed checker, not NPU execution.
         sync_calls = []
@@ -93,12 +123,17 @@ class WorkerCoreTests(unittest.TestCase):
         class Model:
             def to(self, _): return self
             def eval(self): return self
-            def __call__(self, _):
+            def __call__(self, inputs):
                 value = output()
                 if defect == 'reference-shape': value.shape = [8]
+                if defect == 'reference-mutation': inputs.values[0] = 99
                 return value
+        self.candidate_inputs = []
         def candidate(value):
+            self.candidate_inputs.append(value.values[0])
             if candidate_error is not None: raise candidate_error
+            if defect == 'late-entry' and len(self.candidate_inputs) == 4:
+                raise TypeError('later invocation failed')
             actual = output()
             if defect == 'layout': actual.contiguous = False
             if defect == 'alias': actual.pointer = value.pointer
@@ -112,19 +147,32 @@ class WorkerCoreTests(unittest.TestCase):
                 for a, b in zip(left, right): compare(a, b)
             else:
                 if left.values != right.values: raise AssertionError('Tensor values changed')
-        request = {'hashes': {}, 'candidate': 'candidate.py', 'problem': 'problem.py', 'dataRoot': '.',
-            'contractSha256': 'test-fixture', 'seeds': [42], 'rtol': 0, 'atol': 0, 'warmup': 5, 'repeat': 20,
+        request = {'operation': operation, 'hashes': {}, 'candidate': 'candidate/kernel.py', 'candidateRoot': 'candidate', 'problem': 'problem.py', 'dataRoot': '.',
+            'contractSha256': 'test-fixture', 'seeds': [42] if seeds is None else seeds, 'rtol': 0, 'atol': 0, 'warmup': 5, 'repeat': 20,
             'contract': {'inputs': [{'shape': [2,4], 'dtype': 'float16', 'contiguous': True}],
-                'output': {'shape': [2,2,2], 'dtype': 'float16', 'contiguous': True, 'independent': True}, 'inputUnmodified': True}}
+                'output': {'shape': [2,2,2], 'dtype': 'float16', 'contiguous': True, 'independent': True}, 'inputUnmodified': input_unmodified}}
         request['_assessment'] = strict.new_assessment(request)
+        class Checks(list):
+            visits = 0
+            def __iter__(self):
+                for check in super().__iter__():
+                    self.visits += 1
+                    yield check
+        request['_assessment']['checks'] = Checks(request['_assessment']['checks'])
         problem = types.SimpleNamespace(Model=Model, get_inputs=lambda: [copy.deepcopy(inp)])
         timings = []
         def bench(function, **kwargs):
             before = len(sync_calls)
-            function(); timings.append({**kwargs, 'synchronizations': len(sync_calls) - before}); return 2 if len(timings) == 1 else 1
+            for _ in range(kwargs['warmup'] + kwargs['active']): function()
+            timings.append({**kwargs, 'synchronizations': len(sync_calls) - before}); return 2 if len(timings) == 1 else 1
+        def bench_prepared(function, prepare, **kwargs):
+            if emit_layout:
+                kwargs['audit']['stepLayout'] = 'prepare-then-run'
+            return bench(lambda: function(prepare()), **kwargs)
+        timer = types.SimpleNamespace(bench_kernel_ms=bench, bench_prepared_kernel_ms=bench_prepared)
         class CandidateError(Exception): pass
         api = {'verify_hashes': lambda _: None, 'npu_device_id': lambda: 0,
-            'load_module': lambda *_: types.SimpleNamespace(IS_NPU=True, bench_kernel_ms=bench),
+            'load_module': lambda *_: timer,
             'load_task_module': lambda path, *_: problem if path == 'problem.py' else types.SimpleNamespace(kernel_function=candidate),
             'clone_tree': lambda v, _: copy.deepcopy(v), 'validate_reference': lambda *_: None,
             'compare_tree': compare, 'positive_measurement': float, 'CandidateError': CandidateError}
@@ -144,6 +192,54 @@ class WorkerCoreTests(unittest.TestCase):
         self.assertEqual([t['active'] for t in timings], [20, 20])
         self.assertEqual([t['synchronizations'] for t in timings], [0, 0], 'The timer owns synchronization symmetrically')
         self.assertTrue(all(t['triton_only'] is False for t in timings))
+
+    def test_precision_retains_strict_failure_and_mutable_input_rules_without_timing(self):
+        for defect in ('mutation', 'numerical', 'alias', 'layout'):
+            with self.subTest(defect=defect):
+                result, assessment, timings = self.run_candidate(defect, operation='precision')
+                self.assertEqual(result['status'], 'incorrect')
+                self.assertEqual(assessment['errorOwnership'], 'candidate')
+                self.assertEqual(timings, [])
+        result, assessment, timings = self.run_candidate('mutation', input_unmodified=False, operation='precision')
+        self.assertEqual(result['status'], 'passed')
+        self.assertTrue(all(c['status'] == 'passed' for c in assessment['checks']))
+        self.assertEqual(self.candidate_inputs, [1, 1])
+        self.assertEqual(timings, [])
+        self.assertNotIn('timingEvidence', result)
+
+    def test_mutating_kernel_starts_from_seed_inputs_for_every_timed_call(self):
+        result, _, _ = self.run_candidate('mutation', input_unmodified=False)
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(self.candidate_inputs, [1] * 27)
+
+    def test_reference_mutation_follows_the_explicit_input_contract(self):
+        result, assessment, _ = self.run_candidate('reference-mutation', input_unmodified=False)
+        self.assertEqual(result['status'], 'passed')
+        self.assertTrue(all(c['status'] == 'passed' for c in assessment['checks']))
+        with self.assertRaisesRegex(AssertionError, 'Tensor values changed'):
+            self.run_candidate('reference-mutation', input_unmodified=True)
+
+    def test_mutable_input_requires_preparation_evidence(self):
+        with self.assertRaisesRegex(RuntimeError, 'prepare-then-run'):
+            self.run_candidate('mutation', input_unmodified=False, emit_layout=False)
+
+    def test_many_seed_check_updates_scale_with_emitted_evidence(self):
+        seeds = list(range(16))
+        _, assessment, _ = self.run_candidate(seeds=seeds)
+        checks = assessment['checks']
+        self.assertLessEqual(checks.visits, 3 * len(checks))
+        self.assertEqual([(c['seed'], c['call'], c['id']) for c in checks],
+            [(s, call, name) for s in seeds for call in range(2) for name in strict.CHECKS])
+        self.assertTrue(all(c['status'] == 'passed' for c in checks))
+
+    def test_late_entry_failure_keeps_prior_checks_and_future_not_run(self):
+        with self.assertRaisesRegex(Exception, 'later invocation failed'):
+            self.run_candidate('late-entry', seeds=[9, 7, 5])
+        checks = self.last_assessment['checks']
+        self.assertTrue(all(c['status'] == 'passed' for c in checks[:24]))
+        self.assertEqual(checks[24], {'id': 'entry', 'seed': 7, 'call': 1, 'status': 'failed',
+                                      'message': 'TypeError: later invocation failed'})
+        self.assertTrue(all(c['status'] == 'not-run' for c in checks[25:]))
 
     def test_side_effects_and_numerical_failures_do_not_reach_timing(self):
         for defect, check in [('mutation', 'input-unmodified'), ('input-storage', 'input-unmodified'), ('numerical', 'numerical'), ('alias', 'independent-output'), ('layout', 'layout')]:
@@ -166,6 +262,12 @@ class WorkerCoreTests(unittest.TestCase):
         self.assertEqual([(c['id'], c['seed'], c['call']) for c in self.last_assessment['checks'] if c['status'] == 'failed'], [('entry', 42, 0)])
         self.assertTrue(all(c['status'] == 'not-run' for c in self.last_assessment['checks'] if c['id'] != 'entry'))
         self.assertEqual(self.last_timings, [])
+
+    def test_native_candidate_failure_retains_the_complete_error(self):
+        message = 'x' * 5000
+        with self.assertRaises(Exception):
+            self.run_candidate(candidate_error=SyntaxError(message))
+        self.assertEqual(self.last_assessment['checks'][0]['message'], 'SyntaxError: ' + message)
 
     def test_reference_metadata_fault_is_an_evaluation_failure(self):
         with self.assertRaisesRegex(ValueError, 'Reference output'):

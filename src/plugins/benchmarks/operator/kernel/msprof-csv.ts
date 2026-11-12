@@ -6,6 +6,8 @@ import { join } from "node:path";
  * msprof_op_profiler.parse_msprof_dir and metrics_to_prompt without NPU or pandas dependencies.
  */
 
+export const KERNEL_PROFILE_OUTPUT_POLICY = "kernel-original-f542-v1";
+
 /** Operator metric columns retained from msprof output, grouped by pipeline utilization,
  * resource waits, memory traffic and bandwidth, and arithmetic utilization.
  * Exclude Task Duration(us), which differs from the authoritative timing scope, and Block Dim.

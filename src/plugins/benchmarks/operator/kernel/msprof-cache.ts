@@ -1,173 +1,74 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import { expectRecord } from "../../../../core/validation/input.js";
 
-/**
- * msprof 采集缓存（kernel 原版 msprof_cache.py 的 TS 语义移植）：
- * 同 kernel 文件字节 + 设备 id 幂等不重采（每次省约 40s 真机时间）。
- * key 算法与 py 版逐字节兼容（sha256(kernel bytes || JSON.stringify(deviceId))），
- * 历史条目继续命中。
- */
+type CachedCapture = { metrics: Record<string, Record<string, unknown>>; replay: Record<string, unknown> };
 
-const MAX_ENTRIES = 512;
-
-export interface CachedMsProfResult {
-  metrics: Record<string, unknown>;
-  metricsRecords: Record<string, unknown>[] | null;
-  profileDir: string;
-  originProfileDir: string;
-  metadata: Record<string, unknown>;
-  hits: number;
-}
-
-interface CacheEntry {
-  key: string;
-  hits: number;
-  created_ts: unknown;
-  metrics: Record<string, unknown>;
-  metrics_records?: Record<string, unknown>[] | null;
-  profile_dir?: string;
-  origin_profile_dir?: string;
-  metadata?: Record<string, unknown>;
-}
-
-function entryPath(cacheDir: string, keyHash: string): string {
-  return join(cacheDir, `${keyHash}.json`);
-}
-
-const isHexKey = (name: string): boolean => /^[0-9a-fA-F]{64}$/.test(name);
-
-/** py 版 _backup_profile_dir 语义：首次命中/落缓存时把 profile 目录备份进缓存区。 */
-async function backupProfileDir(cacheDir: string, keyHash: string, profileDir: string): Promise<string> {
-  if (profileDir === "" || !existsSync(profileDir)) return profileDir;
-  const dest = join(cacheDir, "profiles", keyHash);
-  try {
-    await rm(dest, { recursive: true, force: true });
-    await mkdir(dirname(dest), { recursive: true });
-    await cp(profileDir, dest, { recursive: true });
-    return dest;
-  } catch {
-    // 备份失败不致命：保留原 profile_dir（与原版一致）。
-    return profileDir;
-  }
-}
-
-async function cacheRoot(cacheDir?: string): Promise<string | null> {
-  if (process.env["KA_MSPROF_CACHE_DISABLED"] === "1") return null;
-  if (cacheDir !== undefined && cacheDir !== "") return cacheDir;
-  if (process.env["KA_MSPROF_CACHE_DIR"]) return process.env["KA_MSPROF_CACHE_DIR"];
-  return join(homedir(), ".kernel_agent", "msprof_cache");
-}
-
+/** The scope identifies the complete candidate tree, reference, device and capture protocol. */
 export class MsProfCache {
-  private readonly dir: string;
+  private constructor(private readonly directory: string, private readonly scope: string,
+    private readonly log?: (line: string) => void, private readonly maxEntries?: number) {}
 
-  private constructor(dir: string) {
-    this.dir = dir;
+  private get entry(): string {
+    return join(this.directory, createHash("sha256").update(this.scope).digest("hex"));
   }
 
-  /** 构建缓存；缓存被禁用时返回 null。device 缺失时与原版一致地禁用（key 不完整宁可重采）。 */
-  static async open(deviceId: string | undefined, cacheDir?: string, log?: (line: string) => void): Promise<MsProfCache | null> {
-    const root = await cacheRoot(cacheDir);
-    if (root === null) return null;
-    if (deviceId === undefined || deviceId === "") {
-      log?.(`MSProfCache skipped: no ASCEND_RT_VISIBLE_DEVICES device id`);
+  static async open(scope: string | undefined, cacheDir?: string, log?: (line: string) => void, maxEntries?: number): Promise<MsProfCache | null> {
+    if (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries <= 0))
+      throw new TypeError("cacheMaxEntries must be a positive integer");
+    if (!scope || process.env.KA_MSPROF_CACHE_DISABLED === "1") return null;
+    const directory = cacheDir || process.env.KA_MSPROF_CACHE_DIR || join(homedir(), ".kernel_agent", "msprof_cache");
+    await mkdir(directory, { recursive: true });
+    return new MsProfCache(directory, scope, log, maxEntries);
+  }
+
+  async restore(profileDir: string): Promise<CachedCapture | null> {
+    try {
+      const data = expectRecord(JSON.parse(await readFile(join(this.entry, "capture.json"), "utf8")), "cached capture");
+      if (data.scope !== this.scope) throw new TypeError("Profile cache receipt mismatch");
+      const metrics = Object.fromEntries(Object.entries(expectRecord(data.metrics, "cached metrics"))
+        .map(([block, values]) => [block, expectRecord(values, "cached block metrics")]));
+      const replay = expectRecord(data.replay, "cached replay");
+      await cp(join(this.entry, "profile"), profileDir, { recursive: true });
+      return { metrics, replay };
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof SyntaxError) await rm(this.entry, { recursive: true, force: true });
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.log?.(`MSProfCache miss: ${String(error)}`);
+      await rm(profileDir, { recursive: true, force: true });
       return null;
     }
-    await mkdir(root, { recursive: true });
-    return new MsProfCache(root);
   }
 
-  private async keyHash(kernelBytes: Buffer, deviceId: string): Promise<string> {
-    return createHash("sha256").update(kernelBytes).update(JSON.stringify(deviceId)).digest("hex");
-  }
-
-  async get(kernelBytes: Buffer, deviceId: string | undefined, log?: (line: string) => void): Promise<CachedMsProfResult | null> {
-    if (deviceId === undefined) return null;
-    const hash = await this.keyHash(kernelBytes, deviceId);
-    const path = entryPath(this.dir, hash);
-    if (!existsSync(path)) return null;
-    let data: CacheEntry;
+  async put(profileDir: string, capture: CachedCapture): Promise<void> {
+    const temporary = await mkdtemp(join(this.directory, ".capture-"));
     try {
-      data = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
-    } catch (error) {
-      log?.(`MSProfCache entry corrupted (${hash}): ${String(error)}`);
-      return null;
-    }
-    const hitsBefore = Number(data.hits ?? 0) || 0;
-    data.hits = hitsBefore + 1;
-    let profileDir = String(data.profile_dir ?? "");
-    if (data.origin_profile_dir === undefined && profileDir !== "") {
-      const origin = profileDir;
-      const backed = await backupProfileDir(this.dir, hash, profileDir);
-      data.origin_profile_dir = origin;
-      data.profile_dir = backed;
-      profileDir = backed;
-    }
-    try {
-      await writeFile(path, JSON.stringify(data, null, 2), "utf8");
-    } catch (error) {
-      log?.(`MSProfCache entry write failed (ignored): ${String(error)}`);
-    }
-    log?.(`MSProfCache HIT ${path} hits=${hitsBefore + 1}`);
-    return {
-      metrics: data.metrics ?? {},
-      metricsRecords: data.metrics_records ?? null,
-      profileDir,
-      originProfileDir: String(data.origin_profile_dir ?? ""),
-      metadata: data.metadata ?? {},
-      hits: hitsBefore + 1,
-    };
-  }
-
-  async put(kernelBytes: Buffer, deviceId: string | undefined, profileDir: string,
-    metrics: Record<string, unknown>, metadata: Record<string, unknown>,
-    metricsRecords: Record<string, unknown>[] | null): Promise<void> {
-    if (deviceId === undefined) return;
-    const hash = await this.keyHash(kernelBytes, deviceId);
-    const path = entryPath(this.dir, hash);
-    let existingHits = 0;
-    if (existsSync(path)) {
-      try {
-        existingHits = Number((JSON.parse(await readFile(path, "utf8")) as CacheEntry).hits ?? 0) || 0;
-      } catch {
-        existingHits = 0;
+      await cp(profileDir, join(temporary, "profile"), { recursive: true });
+      await writeFile(join(temporary, "capture.json"), JSON.stringify({ scope: this.scope, ...capture }));
+      // Publish the receipt and native artifacts together. A concurrent writer may have already published this scope.
+      try { await rename(temporary, this.entry); }
+      catch (error) {
+        if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
       }
-    }
-    const backedDir = await backupProfileDir(this.dir, hash, profileDir);
-    const data: CacheEntry = {
-      key: hash, hits: existingHits, created_ts: null, metrics,
-      metrics_records: metricsRecords, profile_dir: backedDir,
-      origin_profile_dir: profileDir, metadata,
-    };
-    try {
-      const tmp = `${path}.tmp.${process.pid}`;
-      await writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-      await rename(tmp, path);
       await this.prune();
     } catch (error) {
-      // 缓存写失败不影响本次剖析结果（与原版一致）。
-      console.warn(`MSProfCache store failed (ignored): ${String(error)}`);
+      this.log?.(`MSProfCache store failed: ${String(error)}`);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
     }
   }
 
-  /** 超容量时按 mtime 淘汰最旧条目及其 profile 备份目录。 */
   private async prune(): Promise<void> {
-    const names = (await readdir(this.dir)).filter(isHexKey);
-    if (names.length <= MAX_ENTRIES) return;
-    const entries = await Promise.all(names.map(async name => ({
-      name, mtime: (await stat(join(this.dir, name))).mtimeMs,
-    })));
+    if (this.maxEntries === undefined) return;
+    const names = (await readdir(this.directory, { withFileTypes: true }))
+      .filter(entry => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name));
+    if (names.length <= this.maxEntries) return;
+    const entries = await Promise.all(names.map(async ({ name }) => {
+      const path = join(this.directory, name);
+      return { path, mtime: (await stat(path)).mtimeMs };
+    }));
     entries.sort((a, b) => b.mtime - a.mtime);
-    for (const stale of entries.slice(MAX_ENTRIES)) {
-      try {
-        await rm(join(this.dir, stale.name));
-        await rm(join(this.dir, "profiles", stale.name), { recursive: true, force: true });
-      } catch {
-        // 淘汰失败留给下次。
-      }
-    }
+    for (const stale of entries.slice(this.maxEntries)) await rm(stale.path, { recursive: true, force: true });
   }
 }

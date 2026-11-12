@@ -24,7 +24,6 @@ sys.modules["torch_npu"] = types.ModuleType("torch_npu")
 spec = importlib.util.spec_from_file_location("npu_timing", sys.argv[1])
 timing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(timing)
-assert timing.IS_NPU is True  # precision.py and external timers share this contract.
 assert not calls, "Import must not select a device"
 
 def forbidden():
@@ -43,7 +42,7 @@ for key in ("ASCEND_RT_VISIBLE_DEVICES", "ASCEND_VISIBLE_DEVICES", "ASCEND_DEVIC
 os.environ["KERNEL_NPU_DEVICE"] = "5"
 os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "3,5"
 def profile(fn, **options):
-    assert options == dict(warmup=2, active=7, prof_dir=None, keep_res=False, triton_only=True, audit=None)
+    assert options == dict(warmup=2, active=7, prof_dir=None, keep_res=False, triton_only=True, audit=None, prepare=None)
     fn()
     return 1.25
 timing._bench_npu_profiler = profile
