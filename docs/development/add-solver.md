@@ -6,6 +6,8 @@
 
 需要改两处源码。新建 `src/plugins/solvers/fixed-answer.ts`，再在 `src/plugins/solvers/index.ts` 注册它。测试用的 CSV 和 YAML 都放在 `.scratch/solver-example/`。下文的命令在仓库根目录的 Bash 或 WSL 中运行，先按[安装指南](../users/installation.zh-CN.md)装好依赖。
 
+![在现有 Solver 角色下新增并注册内置实现，通过 YAML 中的 benchmark.solver.name 选择它](imgs/03-flowchart-add-solver.png)
+
 ## 最小示例
 
 ### 1. 写一个直接返回答案的 Solver

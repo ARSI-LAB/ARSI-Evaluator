@@ -10,6 +10,7 @@ import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
 import { consumeCodex } from "../../runtimes/codex/protocol.js";
 import { CODEX_ENTRY, CODEX_VERSION, codexRuntimeInstallation } from "../../runtimes/codex/runtime.js";
+import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
 export function parseCodexConfig(value: unknown): Record<string, never> {
   rejectUnknown(expectRecord(value, "codex config"), [], "codex config");
@@ -25,6 +26,7 @@ function responsesEndpoint(endpoint: string | null): string {
 }
 
 export class CodexSolver implements Solver {
+  readonly inputModalities = ["text", "image"] as const;
   private readonly endpoint: string;
 
   constructor(private readonly binding: ServiceBinding) {
@@ -55,9 +57,13 @@ export class CodexSolver implements Solver {
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "codex requires a non-empty, single-line API key on its selected service");
     }
-    if (input.attachments?.length || input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex supports text tasks without task skills or MCP servers");
+    if (input.skillsDirectories?.length || input.mcpServers?.length) {
+      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex does not support task skills or MCP servers");
     }
+    if (input.attachments?.some(attachment => attachment.kind === "pdf" && attachment.mode === "native")) {
+      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex requires PDF attachments in pages mode");
+    }
+    requireInputModalities(input, model.inputModalities ?? ["text"]);
     const runtime = session.runtime;
     if (runtime?.stateRoot === undefined) {
       throw new EvaluatorError("ENV_RUNTIME_INSTALL_FAILED", "codex requires an environment-prepared runtime with writable state");
@@ -84,6 +90,7 @@ export class CodexSolver implements Solver {
       'model_providers.ember.wire_api="responses"',
       ...(model.contextWindow === undefined ? [] : [`model_auto_compact_token_limit=${model.contextWindow}`]),
     ];
+    const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
@@ -94,7 +101,7 @@ export class CodexSolver implements Solver {
         cwd: session.workdir,
         env: {},
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt }), "utf8"),
+        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, media }), "utf8"),
       }, signal);
       return await consumeCodex(handle, context, auth.value);
     } finally {

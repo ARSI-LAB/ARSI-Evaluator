@@ -4,6 +4,8 @@ English | [中文](multimodal.zh-CN.md)
 
 Tasks declare public files in `attachments`. Model services declare accepted inputs in `inputModalities`. A file in the workspace alone is not a model image input.
 
+![Public attachments reach the model through a compatible Solver as image bytes, rendered PNG pages, or original PDF bytes](imgs/11-flowchart-multimodal-input.png)
+
 ## Image input configuration
 
 The source repository includes a development test fixture. Set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY`, then run from the source repository root:
@@ -47,9 +49,16 @@ The native example requires `DEEPAGENTS_BUNDLE_PATH` and a target service accept
 | Pinned Hermes | Native user image messages | Rejected | Candidate native tools |
 | Dify | File upload and variable binding | Original PDF bound as `document` | Workflow-defined |
 | JiuwenSwarm 0.2.5 (9b3706f) | Native image messages | Rejected | Native `read_file` |
+| Codex 0.167.0 | CLI `--image` | Use `pages` mode | Codex `view_image` |
+| Claude Code 2.1.322 | Messages `image` blocks | Messages `document` blocks | Claude Code `Read` |
+| ZCode 0.17.1 | CLI `--attach` | CLI `--attach` | ZCode `Read` |
+| TRAE CLI 0.214.1 | CLI `--image` | Use `pages` mode | CLI tools |
+| CodeBuddy Code 2.183.0 | `stream-json` image blocks | Use `pages` mode | CodeBuddy file tools |
 
 External Solvers default to text and must implement and declare their modalities before receiving attachments.
 
+- For Codex, Claude Code, ZCode, TRAE, and CodeBuddy, set the selected service's `inputModalities`. Declare `image` for images and PDF pages and `pdf` for native PDFs. Codex, TRAE, and CodeBuddy require PDF tasks to use `pages` mode.
+- ZCode sends native PDFs as Chat Completions `file.file_data`, Responses `input_file`, or Messages `document`. The endpoint must accept the corresponding format.
 - Pi rejects image tasks when `images.blockImages` is enabled.
 - Local DSH must resolve `@deepseek-ai/dsh-sdk-client` at the same pinned version. The Docker runtime includes it. The adapter preserves the candidate Profile and replaces its text ingress with SDK ingress.
 - DeepAgents currently uses OpenAI-compatible Chat Completions. Declaring image capability enables `view_image`, restricted to the public workspace. Its output reaches the same target model.

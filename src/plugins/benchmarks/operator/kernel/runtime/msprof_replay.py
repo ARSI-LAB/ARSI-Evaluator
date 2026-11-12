@@ -28,7 +28,7 @@ from pathlib import Path
 import random
 import sys
 
-from precision import load_module, load_task_module, verify_hashes
+from precision import clone_tree, load_task_module, verify_hashes
 from strict import observe_environment
 
 
@@ -39,6 +39,9 @@ def replay(request):
         raise ValueError("Diagnostic replay requires one unsigned 32-bit seed")
     if isinstance(request["warmup"], bool) or not isinstance(request["warmup"], int) or request["warmup"] < 1:
         raise ValueError("Diagnostic replay warmup must be a positive integer")
+    input_unmodified = request.get("inputUnmodified")
+    if not isinstance(input_unmodified, bool):
+        raise ValueError("inputUnmodified must be a boolean")
     verify_hashes(request["hashes"])
     try:
         import mstx
@@ -57,13 +60,8 @@ def replay(request):
     raw = os.environ.get("KERNEL_NPU_DEVICE", "")
     device = int(raw) if raw.isdigit() else 0
     torch.npu.set_device(device)
-    problem = load_task_module(request["problem"], request["dataRoot"], "problem")
-    try:
-        candidate = load_task_module(request["candidate"], request["dataRoot"], "kernel").kernel_function
-    except ValueError:
-        # Protocol-locked candidates must be under dataRoot. Standalone workers may use
-        # separate problem and kernel trees, so fall back to importing the candidate by file location.
-        candidate = load_module(request["candidate"], "kernel_msprof_kernel").kernel_function
+    problem = load_task_module(request["problem"], request["dataRoot"])
+    candidate = load_task_module(request["candidate"], request["candidateRoot"]).kernel_function
     if not callable(candidate):
         raise TypeError("kernel_function must be callable")
     seed = seeds[0]
@@ -77,17 +75,26 @@ def replay(request):
         inputs = problem.get_inputs()
         if not isinstance(inputs, (tuple, list)):
             raise TypeError("get_inputs must return a positional argument list")
+
+        def prepare_inputs(formal=False):
+            trial = inputs if input_unmodified else clone_tree(inputs, torch)
+            # Finish pending launches and any copy before using a fresh tree or opening MSTX.
+            if formal or not input_unmodified:
+                torch.npu.synchronize()
+            return trial
+
         warmup_completed = 0
         for _ in range(request["warmup"]):
-            candidate(*inputs)
+            trial = prepare_inputs()
+            candidate(*trial)
             warmup_completed += 1
-        torch.npu.synchronize()
+        trial = prepare_inputs(formal=True)
         range_id = mstx.range_start("rsi_operator_profile", None)
         if isinstance(range_id, bool) or not isinstance(range_id, int) or range_id < 0:
             raise RuntimeError("MSTX range start did not return a valid range ID")
         calls_in_range = 0
         try:
-            candidate(*inputs)
+            candidate(*trial)
             calls_in_range += 1
             torch.npu.synchronize()
         finally:
@@ -98,7 +105,7 @@ def replay(request):
     device_count = torch.npu.device_count()
     return {"seed": seed, "requestedLogicalDevice": device, "logicalDevice": observed_device,
             "deviceCount": device_count, "deviceName": torch.npu.get_device_name(observed_device),
-            "warmup": request["warmup"], "inputContract": "unchanged problem.get_inputs",
+            "warmup": request["warmup"], "inputContract": "unchanged problem.get_inputs", "inputUnmodified": input_unmodified,
             "capture": {"method": "mstx", "range": "rsi_operator_profile", "toolId": tool_id,
                         "rangeId": range_id, "warmupCompleted": warmup_completed, "callsInRange": calls_in_range},
             "environment": observe_environment(torch, torch_npu, observed_device)}

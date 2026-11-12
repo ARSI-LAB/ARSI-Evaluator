@@ -31,7 +31,7 @@ Ember Evaluator 用 YAML 选择任务和组件，用 `--patch` 加载自定义�
 
 支持多种评测场景，包括 Agent Harness 的终端、编程和办公任务评测，推理引擎性能测试，以及算子正确性和性能测试。
 
-![Evaluator 从 YAML 配置到任务执行、验证、结果保存和报告生成的整体架构](imgs/01-framework-project-overview-v2.png.png)
+![Ember Evaluator 手绘流程图，展示 Agent Harness 能力、推理服务性能和算子性能三类评测，以及八个基础组件、Cordis 插件和可选的 Tracer 分支](imgs/01-flowchart-evaluation-architecture.png)
 
 [源码架构与执行流程](docs/development/architecture.md)
 

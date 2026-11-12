@@ -60,7 +60,11 @@ test("CLI uses host sampling for doctor and waits for cleanup even when the task
 });
 
 test("unreachable host sampling preserves explicit unavailable diagnostics", async () => {
-  vi.stubEnv("EVALUATOR_HOST_TELEMETRY_ADDRESS", "127.0.0.1:1");
+  const server = createServer();
+  await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("Missing fixture port");
+  await new Promise<void>((done, fail) => server.close(error => error ? fail(error) : done()));
+  vi.stubEnv("EVALUATOR_HOST_TELEMETRY_ADDRESS", `127.0.0.1:${address.port}`);
   vi.stubEnv("EVALUATOR_HOST_TELEMETRY_TOKEN", "fixture-token");
   const session = await startHostTelemetry([{ deviceId: 4, chipId: 0 }], "unused-fixture-path", new AbortController().signal);
   expect(session.targets).toMatchObject([{ deviceId: 4, chipId: 0, endpoint: null }]);

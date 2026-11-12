@@ -2,6 +2,8 @@
 
 > [English](./config.md) | 中文
 
+字段路径、类型、默认值和插件参数入口见[实验 YAML 字段参考](reference/experiment-yaml.zh-CN.md)。
+
 实验 YAML 可以只声明模型服务和 Benchmark，框架通过插件 Profile 补齐其余参数：
 
 ```yaml

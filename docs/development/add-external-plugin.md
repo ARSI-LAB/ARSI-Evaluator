@@ -4,6 +4,8 @@
 
 这个例子用一个 JavaScript 文件新增指标 `external-completed-count`。准备三个文件即可。`completed-count.mjs` 写指标怎么计算，`cordis.patch.yaml` 告诉 Evaluator 加载哪个文件，`experiment.yaml` 选择要用的指标。
 
+![外部插件的开发、通过 --patch 加载及接入评测流程示意图](imgs/01-flowchart-external-plugin.png)
+
 三个文件都放在 `.scratch/external-plugin-example/`。下文的命令在仓库根目录的 Bash 或 WSL 中运行，先按[安装指南](../users/installation.zh-CN.md)构建 Evaluator。
 
 ## 最小示例

@@ -4,6 +4,8 @@
 
 This example adds a metric called `external-completed-count` using a single JavaScript file. You need three files. `completed-count.mjs` defines the calculation, `cordis.patch.yaml` tells Evaluator which file to load, and `experiment.yaml` selects the metric.
 
+![Overview of external plugin development, loading with --patch, and integration into the evaluation workflow](imgs/01-flowchart-external-plugin.png)
+
 Put all three files under `.scratch/external-plugin-example/`. Follow the [installation guide](../users/installation.md) to build Evaluator, then run the commands below from the repository root in Bash or WSL.
 
 ## Minimal example

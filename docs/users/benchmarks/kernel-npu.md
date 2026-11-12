@@ -4,41 +4,84 @@
 
 `kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. RSI generates candidates through its Proposer and evaluates frozen artifacts through the full SDK. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.
 
+![NPU kernel evaluation checks candidate output against a reference before timing, reports runtime and speedup, and can collect optional profiling](imgs/01-flowchart-kernel-npu.png)
+
 ## Hardware Selection
 
-Use top-level `hardware: npu` in experiment YAML; omission also means NPU. `hardware: gpu` fails with “Kernel GPU backend is not implemented” before reading candidates or starting Python. Built-in timing uses only the NPU profiler and fails without an NPU instead of falling back to CUDA or CPU. Existing `kernel precision/bench/profile` commands remain NPU entry points with unchanged arguments and result formats. See the [existing kernel example](../../../playbook/kernel/existing.yaml).
+Use top-level `hardware: npu` in experiment YAML; omission also means NPU. `hardware: gpu` fails with “Kernel GPU backend is not implemented” before reading candidates or starting Python. Built-in timing uses only the NPU profiler and fails without an NPU instead of falling back to CUDA or CPU. See the [existing kernel example](../../../playbook/kernel/existing.yaml).
 
 ## Environment and Execution
 
 Prepare dependencies through [installation](../installation.md). pnpm downloads and builds the AgentBundle SDK from GitHub automatically; no sibling source repository is required. Built-in plugin imports need this dependency even when that Solver is not selected.
 
-Requires Linux, NPU, CANN, torch, torch_npu, triton-ascend; detailed collection also pandas/NumPy/Jinja2. Use a verified operator-capable Python and load CANN first. Only `local` environment/scheduler, concurrency 1; no competing timing workloads on the device. Built-in workers verify, so no benchmark.verifier. Local workspaces do not isolate malicious Python; evaluate trusted code only.
+Requires Linux, NPU, CANN, torch, torch_npu, triton-ascend; detailed collection also pandas/NumPy/Jinja2. Use a verified operator-capable Python and load CANN first. Only `local` environment/scheduler, concurrency 1; no competing timing workloads on the device. Built-in workers verify, so no benchmark.verifier. Run only trusted candidates. Python executes as the local OS user and can access that user's files and processes. For model-generated code, use a dedicated evaluation account or host with no model credentials or private files available to it.
+
+Kernel workers inherit an explicit list of runtime settings, including the Python and CANN paths, compiler settings and device bindings. Keep API keys in the process that calls the model.
 
 ```bash
 export KERNEL_EVAL_PYTHON=/absolute/path/to/venv/bin/python
 export KERNEL_MANIFEST=/absolute/path/to/cases/tasks.json
 export KERNEL_EVAL_PLACEHOLDER=unused-local-evaluation
-pnpm build
-ember-evaluator run playbook/kernel/existing.yaml --dry-run
-ember-evaluator run playbook/kernel/existing.yaml
+cp playbook/kernel/existing.yaml experiment.yaml
+ember-evaluator run experiment.yaml
 ```
 
 Example services are required placeholders with unusable URLs. The loader requires `api_key` to reference a nonempty variable; set `KERNEL_EVAL_PLACEHOLDER` to the ordinary text above, never a real key. Model usage is zero; offline `report` needs no variable.
 
+## Choosing an Operation
+
+Run every operation through the same experiment YAML:
+
+```bash
+ember-evaluator run experiment.yaml
+```
+
+Set `benchmark.config.operation` to select the work:
+
+| Operation | Behavior |
+| --- | --- |
+| `evaluate` (default) | Check correctness, then time the reference and candidate and calculate speedup; optional detailed profiling follows successful evaluation |
+| `precision` | Check correctness only, including strict task-contract assessments when declared; no timing or profiling |
+| `bench` | Time the candidate only, without correctness checks, reference timing, speedup or candidate score; uses Triton-only timing |
+| `profile` | Collect fresh detailed diagnostics without correctness, standard timing or candidate score; see Detailed Profiling below |
+
+For example, use this benchmark configuration within the complete experiment:
+
+```yaml
+benchmark:
+  name: kernel
+  config:
+    operation: bench
+    manifest: ${KERNEL_MANIFEST}
+    python: ${KERNEL_EVAL_PYTHON}
+    device: 0
+    seeds: [0]
+    warmup: 25
+    repeat: 100
+```
+
+`bench` defaults to seed `[0]`, warmup `25` and repeat `100`, and requires exactly one seed. `precision` and `evaluate` default to seeds `[0, 1, 2]` and share default tolerances `atol: 0.001` and `rtol: 0.001`, independent of tensor dtype. `evaluate` defaults to warmup `5` and repeat `20`; these timing settings are unused in `precision`. `precision` and `bench` reject `profiling.enabled: true`; select `profile` for separate diagnostics.
+
+All operations use manifest task selection, declared multi-file candidate layouts and source locks, and the process limits described below. A strict `precision` result retains the correctness assessment and observed environment without timing evidence. A `bench` result establishes only candidate duration; it does not establish numerical correctness or strict assessment success.
+
 ## Task Files
 
-Manifest paths are relative to its directory and must list reference/candidate dependencies. Absolute paths/.. are invalid. Dependencies retain relative structure in verification workspaces. Candidates must be self-contained Python or depend only on listed public helpers.
+Use manifest-relative paths for the reference, candidate and dependencies. Every task declares a `candidateRoot` import directory, including tasks with a single candidate file. Place the candidate entry under that directory and the reference outside it. Declare the entry in `candidate` and list all other required files in `files`, including package initializers, reference dependencies and candidate resources. Paths must stay within the manifest directory. Candidate sources must be regular files, with no symbolic links in their paths.
 
-Reference/candidate remain under `data/<manifest-relative-path>`; candidates are not renamed/moved out. Same-directory helpers, relative package imports, and root-based packages are supported when all .py/__init__.py `files` are listed. Both run in one Python process; use distinct helpers and explicit package paths.
+All four operations preserve the declared package layout. For example, an entry at `candidate/kernels/kernel.py` can import `.tiling` when `candidate/kernels/__init__.py` and `candidate/kernels/tiling.py` are listed. The reference imports from the manifest directory. Both modules run in one Python process, so use distinct names for top-level helpers.
+
+Profiling stages the declared candidate files in a dedicated directory. `profiling.metadata.sources.candidateFiles` lists their root-relative paths and SHA-256 hashes in path order. The cache identity includes the entry path, every candidate file and the kernel selection policy. SDK captures also include the reference path and locked reference dependencies and runtime files. A change to a helper invalidates cached measurements. All operations use this declared source inventory.
+
+Profiling selects the first Triton `@jit` function in the entry, then checks declared Python helpers in path order. If none defines a Triton function, profiling uses the entry filename stem. `metadata.kernelSelection` records the policy, source path and selected name.
 
 ```json
 {
-  "schemaVersion": 1,
   "tasks": [
     {
       "id": "operator-example",
       "problem": "problem.py",
-      "candidate": "candidate.py",
+      "candidateRoot": "candidate",
+      "candidate": "candidate/kernel.py",
       "files": ["input.py"],
       "referenceKind": "original-kernel",
       "outputIndices": [0]
@@ -58,13 +101,12 @@ Source locks include SHA-256 for manifests, candidate/reference/dependencies, `p
 
 ## Strict Task Contracts and Audited Timing
 
-A manifest task may provide `contract` with schemaVersion 1, caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor specifies shape, dtype (`float16`) and contiguous; output also specifies independent. Contracts are optional for existing manifests. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference/infrastructure failures remain invalid evaluations; candidate failures remain candidate failures.
+A manifest task may provide `contract` with caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor declares its shape, dtype (`float16`, `bfloat16`, `float32`, `int64`, or `int32`) and contiguous flag. Use `[]` for a scalar and positive integer extents for other shapes. Set `contiguous: false` to permit strided tensors. The output also declares independent. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference or infrastructure failures invalidate an evaluation. Candidate failures are attributed to the candidate.
 
 For example, add this `contract` to a task whose actual inputs and output match these shapes:
 
 ```json
 {
-  "schemaVersion": 1,
   "caseId": "operator-example",
   "inputs": [{ "shape": [2, 4], "dtype": "float16", "contiguous": true }],
   "output": { "shape": [2, 2, 2], "dtype": "float16", "contiguous": true, "independent": true },
@@ -72,13 +114,15 @@ For example, add this `contract` to a task whose actual inputs and output match 
 }
 ```
 
-A strict success requires every check to pass and observed identities for Python, torch, torch_npu, Triton, CANN, driver, device and visible devices. Missing environment identity invalidates measurement. `verdict.details.assessment` retains the checks and effective settings; the benchmark verifies them against the requested seeds, tolerances, warmup and repeat.
+A strict success requires every check to pass and observed identities for Python, torch, torch_npu, Triton, CANN, driver, device and visible devices. Missing environment identity invalidates measurement. `verdict.details.assessment` retains the checks and effective settings; the benchmark verifies the requested seeds and tolerances; `evaluate` also verifies warmup, repeat and timing evidence.
 
 Strict timing uses schemaVersion 2 / `profiler-flow/v1` evidence and CPU-to-NPU flow associations to assign device kernels to profiler steps. Raw CSV Step Id values are retained, not rewritten or trusted as the sole association. The audit rejects incomplete/ambiguous evidence and excludes warmup steps. The reported iteration mean covers all device kernels, not host launch time. CSV and trace artifacts accompany timing results. Public SDK exports parse contracts, assessments and timing evidence, and audit each timing sample.
 
+Successful strict `evaluate` operations record schema version 2 timing evidence for both the reference and candidate, with the requested warmup and repeat counts. With `inputUnmodified: false`, warmup and measured calls each receive fresh inputs. The timer synchronizes input preparation before measuring the operator. Reference and candidate samples record `stepLayout: "prepare-then-run"`. To audit these samples, pass the locked task contract to `parseKernelTimingEvidence(value, contract)` and `auditKernelTimingSample(sample, csv, trace, contract)`. The raw trace retains preparation activity. Only execution steps contribute to the reported mean. Detailed profiling likewise prepares the formal input before opening the MSTX range.
+
 ## Detailed Profiling
 
-The NPU backend owns Python/msprof execution, device binding and cleanup. The benchmark owns task identity and verdict validation. Full evaluation (`operation: evaluate`, the default) can collect diagnostics after successful correctness/timing by enabling profiling. Independent `operation: profile` requires exactly one task, one seed, `profiling.enabled: true` and `cacheEnabled: false`; it skips precision/timing and returns a performance result with no candidate score.
+The NPU backend owns Python/msprof execution, device binding and cleanup. The benchmark owns task identity and verdict validation. Full evaluation (`operation: evaluate`, the default) can collect diagnostics after successful correctness/timing by enabling profiling. Independent `operation: profile` defaults to seed `[0]` and fresh capture, processing each selected manifest task serially. Explicit settings must retain one seed, `profiling.enabled: true` and `cacheEnabled: false`. It skips precision/timing and returns a performance result with no candidate score.
 
 ```yaml
 benchmark:
@@ -111,13 +155,29 @@ The following fields belong to `benchmark.config.profiling`:
 | `warmup` | `25` replay calls before capture; separate from `benchmark.config.warmup` used for timing |
 | `attemptTimeoutSeconds` | `300` seconds per profiler process |
 | `maxAttempts` | `2`, including the first attempt; structural omissions such as missing required CSVs are not retried |
+| `retryDelayMs` | Optional nonnegative integer before each retry; `0` skips waiting. Omitted: exponential 2s, 4s, …, split across valid Node timer intervals |
 | `roundNum` | `1`; labels artifacts and metadata, without repeating capture |
 | `msprofBin` | Optional existing executable path; otherwise try `/usr/local/Ascend/ascend-toolkit/latest/bin/msprof`, then `msprof` on PATH |
 | `cacheEnabled` | `true` for evaluation; independent `operation: profile` requires an explicit `false` |
 | `cacheDir` | Optional cache directory; use an absolute path because this field is not rebased to the experiment YAML |
+| `cacheMaxEntries` | Optional positive integer; evict the oldest cache entries after writes only when a capacity is configured |
 | `deviceName` | Accepted for existing configurations; it does not currently supply hardware denominators or enable UB/core-derived metrics |
 
-`benchmark.config.timeoutSeconds` caps the entire verification phase, including correctness, timing and profiling. It defaults to `maxAttempts * attemptTimeoutSeconds + 300` with profiling enabled, otherwise `300`. Set `run.timeoutSeconds` above that cap; the built-in profile's 360-second run default is insufficient when profiling uses its default 900-second verification cap. Allow time for retry backoff and parsing; an outer timeout can interrupt collection before a complete receipt exists.
+`benchmark.config.timeoutSeconds` caps the entire verification phase, including correctness, timing and profiling. It defaults to `maxAttempts * attemptTimeoutSeconds + 300` with profiling enabled, otherwise `300`. A shorter `run.timeoutSeconds` sets an earlier task deadline. It stops capture and waits for process cleanup, leaving the interrupted measurement invalid. Allow time for retry backoff and parsing when choosing deadlines.
+
+`benchmark.config.seeds` accepts any nonempty list of unique unsigned 32-bit integers. Timing `warmup` and `repeat`, profiling warmup, attempt count and timeouts are caller-controlled positive integers. There is no separate seed-count or iteration-count ceiling. `bench` and independent profiling require exactly one seed; `precision` and `evaluate` accept multiple seeds. Invalid seed entries are rejected before execution.
+
+These process controls belong directly to `benchmark.config`:
+
+| Field | Default and behavior |
+| --- | --- |
+| `outputLimitBytes` | Omitted: retain complete worker/profiler output. An explicit positive integer caps each stdout/stderr stream and fails collection if exceeded |
+| `cleanupGraceMs` | `100`; graceful-stop period used by the kernel result reader and profiler cleanup |
+| `cleanupTimeoutMs` | `3000`; wait to confirm profiler exit after stopping it; an unconfirmed exit remains an infrastructure failure |
+
+Complete protocol output is retained even when the child exits before output consumption begins. Native worker errors and strict-check messages are stored without character clipping. Profiler console logs are retained for unsuccessful process exits as well as successful captures. Cache entries are retained without automatic eviction when `cacheMaxEntries` is omitted.
+
+Timeouts and cleanup waits must fit the Node timer range of 2147483647 milliseconds; larger values are rejected before execution. Retry delays can exceed one timer interval because they are split without shortening the requested wait.
 
 Replay uses the unchanged `problem.get_inputs()` and the first configured seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates to those child processes; unconfirmed cleanup is an infrastructure failure.
 
@@ -128,11 +188,11 @@ Two explicit collection protocols are supported:
 
 Missing required evidence produces unavailable diagnostics, distinct from incorrect candidate code. Raw CSV, trace when available, replay metadata and process logs are retained. Source identity, case, seed, warmup, collection and device context identify reusable evidence. Independent profile runs disable disk cache so the caller owns reuse; evaluation-mode caching is optional.
 
-`KA_MSPROF_CACHE_DISABLED=1` disables disk caching even with an explicit `cacheDir`. Otherwise, the directory is `cacheDir`, then `KA_MSPROF_CACHE_DIR`, then `~/.kernel_agent/msprof_cache`. A hit requires matching candidate bytes, reference hash, case, seed, warmup, collection and device scope; cached replay metadata is validated and available cached profile evidence is copied into the current attempt. `profiling.metadata.cacheRequested`, `cacheEnabled` and `cacheHit` distinguish requested caching, actual availability and reuse.
+`KA_MSPROF_CACHE_DISABLED=1` disables disk caching even with an explicit `cacheDir`. Otherwise, the directory is `cacheDir`, then `KA_MSPROF_CACHE_DIR`, then `~/.kernel_agent/msprof_cache`. A hit requires matching candidate bytes, tree layout and member hashes, reference hash, case, seed, warmup, collection and device scope; cached replay metadata is validated and available cached profile evidence is copied into the current attempt. `profiling.metadata.cacheRequested`, `cacheEnabled` and `cacheHit` distinguish requested caching, actual availability and reuse.
 
-Before publishing a completed independent diagnostic, the benchmark checks the effective case/seed/warmup/collection, trace availability, frozen candidate/reference hashes and replay logical device 0. A mismatch fails verification. A failed collection produces `verdict.details.status: unavailable`, `verdict.passed: null` and no candidate score. This differs from an incorrect candidate in a full evaluation.
+Before publishing a completed independent diagnostic, the benchmark checks the effective case/seed/warmup/collection, trace availability, frozen candidate/reference hashes, the full declared candidate tree, and replay logical device 0. A mismatch fails verification. A failed collection produces `verdict.details.status: unavailable`, `verdict.passed: null` and no candidate score. This differs from an incorrect candidate in a full evaluation.
 
-Parsing retains ngo-agent-style block tables, final-row selection and three-decimal numeric rounding. Empty, nonnumeric and nonfinite CSV cells are omitted from per-block metrics; measured zero is preserved. Missing roofline inputs remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Diagnostic roofline classifications are hints, not proof of speedup. Profiler durations do not replace referenceMs/candidateMs.
+Parsing retains ngo-agent-style block tables, final-row selection and three-decimal numeric rounding. Empty, nonnumeric and nonfinite CSV cells are omitted from per-block metrics; measured zero is preserved. Missing roofline inputs remain null. UB ratio and core utilization derived from hardcoded hardware assumptions are unavailable; hardware facts must come from verified context. Roofline classification checks underutilization first: maximum pipeline utilization below 0.8 yields `no`; otherwise pipelines at or above 0.4 are classified in scalar → vec → mte2 → mte3 order. Diagnostic roofline classifications are hints, not proof of speedup. Profiler durations do not replace referenceMs/candidateMs.
 
 | Metric fields | Units and interpretation |
 | --- | --- |
@@ -149,38 +209,37 @@ Parsing retains ngo-agent-style block tables, final-row selection and three-deci
 
 ## Metrics and Results
 
-Evaluation type is quality; independent profiling uses performance. `passed/score` means output equivalence only:1 on pass,0 for candidate error/incorrectness. Correct slower candidates still pass with speedup<1.
+`evaluate` and `precision` use the quality evaluation type; `bench` and `profile` use performance. For quality results, `passed/score` means output equivalence only: 1 on pass, 0 for candidate error or incorrectness. Correct slower candidates still pass with `speedup < 1`. Performance operations have `verdict.passed: null` and no candidate score; their results do not contribute correctness or speedup evidence.
 
-Timing now ships as `timing.bench_kernel_ms` without external source access. Optional `benchmark.config.kernelRoot` retains external timing compatibility, locking external modules and their behavior. Both reference/candidate use `triton_only=False` for all device kernels per call, excluding CPU launch overhead. Built-in timing retains real reductions such as ReduceSum and validates finite nonnegative CSV rows. Missing columns/data, incomplete records, or nonpositive totals invalidate timing. Warmup is excluded; units ms. Timing uses the final seed's input; separate shapes into tasks.
+The benchmark locks and uses the packaged NPU timer. `evaluate` uses `triton_only=False` for both reference and candidate, covering all device kernels per call and excluding CPU launch overhead. `bench` uses `triton_only=True`, preserving the candidate-only Triton timing scope. `precision` does not invoke the timer. Built-in timing retains real reductions such as ReduceSum and validates finite nonnegative CSV rows. Missing columns/data, incomplete records, or nonpositive totals invalidate timing. Warmup is excluded; units ms. `evaluate` timing uses the final seed's input; `bench` uses its sole seed. Separate shapes into tasks.
 
 `metrics.json` `metrics["kernel"]` contains:
 
 | Field | Meaning |
 | --- | --- |
 | `selected / valid / invalid / pending` | Selected, judged, invalid, unfinished task counts |
-| `passed / measured / faster` | Correct, fully timed, correct-and-faster counts |
+| `passed / measured / faster` | Correct, timed, correct-and-faster counts |
 | `passRateValid` | Correct / valid judgments |
 | `passCoverage / fasterCoverage` | Correct or faster / all selected |
 | `geometricMeanSpeedup` | Geometric mean for correct, fully timed tasks only |
 | `profilingRequested` | Saved tasks explicitly requesting profiling |
 | `profiled / profilingErrors / profilingUncollected` | Completed, failed, requested-but-uncollected |
 | `profilingCoverage` | Profiled / all selected |
-| `rows` | Reference kind, status, durations, speedup, profile summary/evidence per task |
+| `rows` | Operation, timing scope, reference kind, status, durations, speedup, profile summary/evidence per task |
 
 Missing NPUs, reference failures, missing/invalid timing, worker protocol errors, and verification timeouts invalidate evaluation rather than candidate zero. No-data metrics are null, never NaN/Infinity. Consider coverage alongside average successful speedup.
 
 `faster` means strictly>1, not statistically significant improvement; repeat near1 differences. Keep drivers/Python versions consistent; source locks do not manage environments.
 
-Evaluation attempts save `verifier/kernel-result.json`; independent profiling saves the validated diagnostic receipt as `verifier/kernel-profile-result.json`. Profiling saves `verifier/kernel-profile.json`, `kernel-profile.raw.json` and a `kernel-profile_profiling_root/` artifact tree, including replay metadata, raw CSVs, trace when requested, `profiling/original-result.json` and logs. Use the saved `profiling.artifacts` list for verifier-relative paths. For failed capture, inspect `profiling.error`, `profiling/logs/profiler.log` and `profiling/logs/console.log`; a replay error may explain missing downstream CSVs. For timeout without full results, inspect attempt `errors`; the framework stops worker process groups. Saved results rebuild offline.
+`evaluate`, `precision` and `bench` attempts save `verifier/kernel-result.json`; independent profiling saves the validated diagnostic receipt as `verifier/kernel-profile-result.json`. Profiling saves `verifier/kernel-profile.json`, `kernel-profile.raw.json` and a `kernel-profile_profiling_root/` artifact tree, including replay metadata, raw CSVs, trace when requested, `profiling/original-result.json` and logs. Use the saved `profiling.artifacts` list for verifier-relative paths. Each capture attempt has its own replay result, profiler output and Triton cache. The kernel's artifact list identifies its selected capture, and the top-level list also retains failed attempts for diagnosis. For failures, inspect `profiling.error`, `profiling/logs/profiler.log`, `console.log` for the first attempt and `console-attempt-N.log` for retries in the same log directory. For timeout without full results, inspect attempt `errors`; the framework stops worker process groups. Saved results rebuild offline.
 
-`report.md` labels new original-kernel results and displays original metrics/L2/status/evidence. Historical LAST/unmarked results retain their definitions. `metrics.json` stores coverage/task summaries without recollection. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
+`report.md` shows the selected block, its metrics and L2 analysis, capture status and evidence links. `metrics.json` stores coverage and per-task summaries. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
 
 ```text
-profiling.schemaVersion = 1
 profiling.status / error                    # Collection status and error
 profiling.kernels[].name                    # Kernel identity
 profiling.kernels[].metrics[blockId]         # Available fields from the selected block
-profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1; historical results have older values or omit this field
+profiling.kernels[].metadata.outputPolicy   # kernel-original-f542-v1
 profiling.kernels[].metadata.upstreamCommit # Pinned source implementation commit
 profiling.kernels[].metadata.originalMetadata # Captured paths, round and timestamp
 profiling.metadata.diagnosticProtocol       # Effective case, seed, warmup, collection, scope and selection policy
@@ -193,7 +252,7 @@ profiling.analysis.trace / roofline         # Each analysis may be null when una
 profiling.artifacts                        # Raw evidence paths relative to verifier/
 ```
 
-Older saved results may contain `originalResultJson`, `originalReturnedNone` or `serializationConversions`; current capture does not require or emit those metadata fields. Locate current `original-result.json` through `profiling.artifacts`. Historical records are read without recollecting or redefining their metrics.
+Completed profiles require `kernel-original-f542-v1` in the profile and kernel metadata. The replay receipt and diagnostic protocol record the effective `inputUnmodified` setting.
 
 Check executionStatus/scoreStatus/verdict.passed for correctness/timing and `profiling.status` independently for collection. Profile failure does not imply incorrectness. Numeric consumers must verify actual required finite fields, not only exit codes. Uses existing CLI/Node SDK without HTTP services; Python may subprocess the CLI and read JSON. Offline reports call neither models nor NPUs.
 
@@ -201,43 +260,13 @@ Check executionStatus/scoreStatus/verdict.passed for correctness/timing and `pro
 # Use the directory printed by run; no model credentials or operator rerun needed.
 ember-evaluator report /absolute/path/to/results/run-id
 # Resume with identical configuration; referenced environment variables are still required.
-ember-evaluator run playbook/kernel/existing.yaml --resume
+ember-evaluator run experiment.yaml --resume
 ```
 
 dry-run proves only configuration/source parsing, not NPU readiness. Missing torch/torch_npu/NPU during `run` returns nonzero with invalid records, not evidence of candidate correctness.
 
-## Independent Measurement Atoms
-
-Besides full runs, three independent atoms support external orchestration such as RSI or manual use:
-
-```bash
-# Precision gate: two runs per seed against problem.Model (defaults atol=1e-5 / rtol=1e-3)
-ember-evaluator kernel precision --problem <problem.py> --kernel <kernel.py> \
-  --out <precision.json> [--seeds 0 1] [--python /usr/bin/python3]
-# Timing only: same timing module as the benchmark (see Metrics and Results); no precision check
-ember-evaluator kernel bench --problem <problem.py> --kernel <kernel.py> \
-  --out <bench.json> [--python /usr/bin/python3]
-# msprof attaches to replay for hardware metrics, with cache/retries and roofline classification
-ember-evaluator kernel profile --problem <problem.py> --kernel <kernel.py> \
-  --out <profile.json> [--round 0] [--seed 42] [--warmup 25] [--python /usr/bin/python3]
-```
-
-Each outputs one JSON object:
-
-| Atom | Output fields |
-| --- | --- |
-| `precision` | `passed` (bool), `error`, `seeds`, `tolerance` |
-| `bench` | `time_ms` (ms), `error` |
-| `profile` | `round`, `measured_by`, `metrics` (block pipelines/L2/bandwidth), `trace_analysis` (longest core/overlap/bubbles/Double Buffer, absent without trace), `roofline` (bottleneck/efficiency_rate/pipelines/warnings), `artifacts`, `error` |
-
-Roofline: maximum pipeline utilization<0.8 yields `no` (underutilization first); otherwise pipelines>=0.4 classify bottlenecks in scalar→vec→mte2→mte3 order.
-
-Exit contract: business failures such as compilation/precision set `error`, still write `--out`, and exit 0. Missing interpreters/timeouts/cancellation exit nonzero. `--python` defaults `python`; use torch_npu-capable interpreters. `KERNEL_ATOM_DIR` overrides executor directory, otherwise located from installation.
-
-All atoms accept `--device <n>` for the logical NPU ID, default 0, equivalent to KERNEL_NPU_DEVICE. Full runs use benchmark.config.device. Targets must be allowed by ASCEND_RT_VISIBLE_DEVICES. Profile caches separate visible sets/target IDs; evidence is not exchanged across cards.
-
 ## RSI Integration
 
-RSI's `application.kernel` seals candidate source, `proposer.operator` generates changes, and `evaluator.operatorbench` invokes `Evaluator.run()` using the kernel benchmark and kernel-replay solver. RSI installs the pinned `ember-evaluator` SDK; it does not discover a sibling checkout or run a separate CLI bridge. Evaluation and independent profiling are separate SDK operations. Measurement evidence links to the saved native result and verifier artifacts; evidence availability and calibration label confidence separately from candidate generation.
+RSI's `application.kernel` seals candidate source, `proposer.operator` generates changes, and `evaluator.operatorbench` invokes `Evaluator.run()` using the kernel benchmark and kernel-replay solver. RSI installs the pinned `ember-evaluator` SDK and selects the same benchmark operations through experiment configuration. Measurement evidence links to the saved native result and verifier artifacts; evidence availability and calibration label confidence separately from candidate generation.
 
 The SDK owns runtime assets, dependencies and prepare/build. Use the SDK package exports for contract and timing validation. An installed-consumer test can prove packaging and software integration without proving NPU correctness or performance; those require a real device run.

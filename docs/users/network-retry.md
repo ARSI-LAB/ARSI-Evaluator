@@ -4,6 +4,8 @@
 
 `ember-evaluator retry` creates full new attempts for invalid tasks with explicit network failures in the original run. It preserves task set, sources, model, Solver, official limits, and scoring. Zeros, wrong answers, valid agent timeouts, and failures without network evidence are ineligible.
 
+![Three recovery paths show request retry within the same attempt, automatic reruns after stream truncation and confirmed cleanup, and manual recovery into a new attempt in the same run](imgs/10-flowchart-network-retry.png)
+
 ## Automatic Network Retries
 
 Network operations have their own request-level retries:

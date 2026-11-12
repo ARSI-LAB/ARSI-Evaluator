@@ -4,16 +4,17 @@ import { kernelProfileVerdict } from "../../src/plugins/benchmarks/operator/kern
 function fixture(collection: "Default" | "PipeTimeline,Default" = "Default") {
   const candidate = "a".repeat(64);
   const reference = "b".repeat(64);
-  const expected = { caseId: "fixed", seed: 42, warmup: 25, collection, problemSha256: reference };
+  const candidateFiles = [{ path: "kernel.py", sha256: candidate }];
+  const expected = { candidateFiles, caseId: "fixed", seed: 42, warmup: 25, inputUnmodified: true, collection, problemSha256: reference };
   const metadata = {
-    collection,
-    diagnosticProtocol: { caseId: "fixed", seeds: [42], warmup: 25, collection,
+    outputPolicy: "kernel-original-f542-v1", collection,
+    diagnosticProtocol: { caseId: "fixed", seeds: [42], warmup: 25, inputUnmodified: true, collection,
       scope: "original-first-triton-kernel-or-file-stem", capture: "after-warmup-mstx-range", selectionPolicy: "last" },
     trace: collection === "Default" ? { status: "unavailable", reason: "not-requested-by-default-protocol" } : { status: "available" },
-    sources: { candidate: { sha256: candidate }, problem: { sha256: reference } },
-    replay: { seed: 42, warmup: 25, logicalDevice: 0 },
+    sources: { candidateFiles, candidate: { sha256: candidate }, problem: { sha256: reference } },
+    replay: { seed: 42, warmup: 25, inputUnmodified: true, logicalDevice: 0 },
   };
-  const value = { profiling: { schemaVersion: 1, status: "completed", error: "", kernels: [], artifacts: [], metadata } };
+  const value = { profiling: { status: "completed", error: "", kernels: [], artifacts: [], metadata } };
   return { candidate, expected, value, metadata };
 }
 
@@ -41,6 +42,9 @@ test("Benchmark refuses a fabricated trace availability marker", () => {
 test("Benchmark binds diagnostics to the frozen source and effective replay", () => {
   const f = fixture();
   expect(() => kernelProfileVerdict(f.value, "c".repeat(64), "pytorch", f.expected)).toThrow(/source/);
+  f.metadata.replay.inputUnmodified = false;
+  expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", f.expected)).toThrow(/replay/);
+  f.metadata.replay.inputUnmodified = true;
   f.metadata.replay.seed = 0;
   expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", f.expected)).toThrow(/replay/);
 });
@@ -53,4 +57,19 @@ test("unavailable capture retains a diagnostic verdict without a candidate score
     passed: null, details: { status: "unavailable", diagnosticProtocol: { collection: "Default" } },
   });
   expect(kernelProfileVerdict(f.value, f.candidate, "pytorch", f.expected)).not.toHaveProperty("score");
+});
+
+test("diagnostics require exact full-tree profiling evidence", () => {
+  const f = fixture();
+  const candidateFiles = [{ path: "kernels/kernel.py", sha256: f.candidate }, { path: "kernels/tiling.py", sha256: "c".repeat(64) }];
+  const expected = { ...f.expected, candidateFiles };
+  expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toThrow(/source/);
+  const sources = f.metadata.sources as Record<string, unknown>;
+  sources.candidateFiles = candidateFiles;
+  expect(kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toMatchObject({ details: { status: "completed" } });
+  for (const files of [candidateFiles.slice(0, 1), [...candidateFiles].reverse(),
+    candidateFiles.map(file => ({ ...file, sha256: "d".repeat(64) })), [...candidateFiles, candidateFiles[0]]]) {
+    sources.candidateFiles = files;
+    expect(() => kernelProfileVerdict(f.value, f.candidate, "pytorch", expected)).toThrow(/source/);
+  }
 });

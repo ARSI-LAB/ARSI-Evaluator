@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { associateKernelSteps } from "./timing-flow.js";
+import type { KernelContract } from "./strict.js";
 import { expectRecord, expectNonEmptyString } from "../../../../core/validation/input.js";
 
 export type KernelTimingRow = { step: number; device: string; stream: string; name: string; startUs: number; durationUs: number };
-export type KernelTimingSample = { csvPath: string; csvSha256: string; tracePath: string; traceSha256: string; warmup: number; repeat: number; meanMs: number; rows: KernelTimingRow[] };
+export type KernelTimingSample = { csvPath: string; csvSha256: string; tracePath: string; traceSha256: string; warmup: number; repeat: number; meanMs: number; rows: KernelTimingRow[]; stepLayout?: "prepare-then-run" };
 export type KernelTimingEvidence = { schemaVersion: 2; method: "profiler-flow/v1"; reference: KernelTimingSample; candidate: KernelTimingSample };
 
 function finite(value: unknown, name: string, positive = false): number {
@@ -15,8 +16,17 @@ function count(value: unknown, name: string): number {
   if (!Number.isSafeInteger(n)) throw new TypeError(`Invalid timing ${name}`);
   return n;
 }
-function sample(value: unknown): KernelTimingSample {
+function checkDeviceAndOrder(rows: KernelTimingRow[]): void {
+  if (new Set(rows.map(row => row.device)).size !== 1) throw new TypeError("Mixed timing devices");
+  const chronological = [...rows].sort((a, b) => a.startUs - b.startUs);
+  if (chronological.some((row, i) => i > 0 && row.step < chronological[i - 1]!.step))
+    throw new TypeError("Timing step order mismatch");
+}
+function sample(value: unknown, contract?: Pick<KernelContract, "inputUnmodified">): KernelTimingSample {
   const r = expectRecord(value, "timing sample");
+  const stepLayout = contract?.inputUnmodified === false ? "prepare-then-run" : undefined;
+  if (r.stepLayout !== stepLayout)
+    throw new TypeError("Timing stepLayout must be prepare-then-run for mutable inputs and absent for immutable inputs");
   const path = (key: string): string => {
     const value = expectNonEmptyString(r[key], `timing.${key}`);
     if (value.startsWith("/") || /[\\:\x00]/u.test(value) || value.split("/").some(p => p === ".." || p === "." || !p)) throw new TypeError("Unsafe timing evidence path");
@@ -43,19 +53,19 @@ function sample(value: unknown): KernelTimingSample {
     seen.add(key);
     return row;
   });
-  if (new Set(rows.map(row => row.step)).size !== warmup + repeat || new Set(rows.map(row => row.device)).size !== 1) throw new TypeError("Incomplete timing steps or mixed devices");
-  const chronological = [...rows].sort((a,b) => a.startUs - b.startUs);
-  if (chronological.some((row,i) => i > 0 && row.step < chronological[i-1]!.step)) throw new TypeError("Timing step order mismatch");
+  if (new Set(rows.map(row => row.step)).size !== warmup + repeat) throw new TypeError("Incomplete timing steps");
+  checkDeviceAndOrder(rows);
   const meanMs = finite(r.meanMs,"meanMs",true);
   const recomputed = rows.reduce((sum,row) => sum + (row.step >= warmup ? row.durationUs : 0),0) / repeat / 1000;
   if (!Number.isFinite(recomputed) || Math.abs(meanMs-recomputed) > Math.max(1e-12, Math.abs(recomputed)*1e-9)) throw new TypeError("Timing mean does not match rows");
-  return {csvPath,csvSha256,tracePath,traceSha256,warmup,repeat,meanMs,rows};
+  return {csvPath,csvSha256,tracePath,traceSha256,warmup,repeat,meanMs,rows,
+    ...(stepLayout === undefined ? {} : { stepLayout })};
 }
-export function parseKernelTimingEvidence(value: unknown): KernelTimingEvidence {
+export function parseKernelTimingEvidence(value: unknown, contract?: Pick<KernelContract, "inputUnmodified">): KernelTimingEvidence {
   const r = expectRecord(value,"kernel timing evidence");
   if (r.schemaVersion !== 2 || r.method !== "profiler-flow/v1") throw new TypeError("Unsupported kernel timing evidence");
-  const reference = sample(r.reference), candidate = sample(r.candidate);
-  if (reference.warmup !== candidate.warmup || reference.repeat !== candidate.repeat) throw new TypeError("Different timing protocols");
+  const reference = sample(r.reference, contract), candidate = sample(r.candidate, contract);
+  if (reference.warmup !== candidate.warmup || reference.repeat !== candidate.repeat || reference.stepLayout !== candidate.stepLayout) throw new TypeError("Different timing protocols");
   if (!reference.csvPath.startsWith("profile-reference/") || !candidate.csvPath.startsWith("profile-candidate/") || !reference.tracePath.startsWith("profile-reference/") || !candidate.tracePath.startsWith("profile-candidate/") ||
       reference.rows[0]!.device !== candidate.rows[0]!.device) throw new TypeError("Timing profiles must be distinct and use the same device");
   return {schemaVersion:2,method:"profiler-flow/v1",reference,candidate};
@@ -79,7 +89,8 @@ function csvRecords(text: string): string[][] {
   if (field || row.length || closed) {row.push(field); records.push(row);}
   return records;
 }
-export function auditKernelTimingSample(evidence: KernelTimingSample, csv: string | Uint8Array, trace: string | Uint8Array): void {
+export function auditKernelTimingSample(evidence: KernelTimingSample, csv: string | Uint8Array, trace: string | Uint8Array,
+  contract?: Pick<KernelContract, "inputUnmodified">): void {
   const buffer = typeof csv === "string" ? Buffer.from(csv) : Buffer.from(csv);
   const traceBuffer = typeof trace === "string" ? Buffer.from(trace) : Buffer.from(trace);
   if (createHash("sha256").update(buffer).digest("hex") !== evidence.csvSha256) throw new TypeError("Timing CSV digest mismatch");
@@ -95,7 +106,14 @@ export function auditKernelTimingSample(evidence: KernelTimingSample, csv: strin
     return {device:get("Device_id"),stream:get("Stream ID"),name:get("Name"),start:get("Start Time(us)"),duration:get("Duration(us)"),
       ...(header.includes("Task ID") ? {task:get("Task ID")} : {})};
   });
-  const rows = associateKernelSteps(raw, traceBuffer.toString("utf8"), evidence.warmup + evidence.repeat);
-  const checked = sample({...evidence,rows});
+  const prepared = evidence.stepLayout === "prepare-then-run";
+  const total = evidence.warmup + evidence.repeat;
+  let rows = associateKernelSteps(raw, traceBuffer.toString("utf8"), prepared ? total * 2 : total);
+  if (prepared) {
+    if (contract?.inputUnmodified !== false) throw new TypeError("Timing preparation steps require a mutable-input contract");
+    checkDeviceAndOrder(rows);
+    rows = rows.filter(row => row.step % 2 === 1).map(row => ({ ...row, step: Math.floor(row.step / 2) }));
+  }
+  const checked = sample({...evidence,rows}, contract);
   if (JSON.stringify(checked.rows) !== JSON.stringify(evidence.rows)) throw new TypeError("Timing flow records differ from evidence");
 }

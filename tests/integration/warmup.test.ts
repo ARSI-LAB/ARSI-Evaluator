@@ -194,6 +194,7 @@ test("standalone warmup loads a patch without API keys, honors task ID overrides
 test.each([
   ["codex", "openai-responses"],
   ["claudecode", "anthropic-messages"],
+  ["zcode", "openai-completions"],
 ])("%s warms up its runtime without model credentials", async (solver, api) => {
   const { root, file, patch, experiment, events, stdout, stderr, io } = await cliFixture();
   await writeFile(file, JSON.stringify({

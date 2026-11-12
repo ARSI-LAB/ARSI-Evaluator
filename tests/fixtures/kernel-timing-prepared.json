@@ -1,0 +1,18 @@
+{
+  "csv": "Device_id,Stream ID,Name,Start Time(us),Duration(us)\n0,7,work,110,10\n0,7,work,210,70\n0,7,work,310,4\n",
+  "trace": [
+    {"ph":"X","name":"ProfilerStep#0","pid":1,"tid":1,"ts":0,"dur":100},
+    {"ph":"X","name":"ProfilerStep#1","pid":1,"tid":1,"ts":100,"dur":100},
+    {"ph":"X","name":"ProfilerStep#2","pid":1,"tid":1,"ts":200,"dur":100},
+    {"ph":"X","name":"ProfilerStep#3","pid":1,"tid":1,"ts":300,"dur":100},
+    {"ph":"X","name":"work","pid":2,"tid":7,"ts":110,"dur":10},
+    {"ph":"s","name":"torch_to_npu","pid":1,"tid":1,"ts":105,"id":1},
+    {"ph":"f","name":"torch_to_npu","pid":2,"tid":7,"ts":110,"id":1},
+    {"ph":"X","name":"work","pid":2,"tid":7,"ts":210,"dur":70},
+    {"ph":"s","name":"torch_to_npu","pid":1,"tid":1,"ts":205,"id":2},
+    {"ph":"f","name":"torch_to_npu","pid":2,"tid":7,"ts":210,"id":2},
+    {"ph":"X","name":"work","pid":2,"tid":7,"ts":310,"dur":4},
+    {"ph":"s","name":"torch_to_npu","pid":1,"tid":1,"ts":305,"id":3},
+    {"ph":"f","name":"torch_to_npu","pid":2,"tid":7,"ts":310,"id":3}
+  ]
+}
