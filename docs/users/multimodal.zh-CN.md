@@ -4,6 +4,8 @@
 
 任务通过 `attachments` 指定公开附件；模型服务通过 `inputModalities` 声明接收能力。把文件放进工作区并不等于把图片交给模型。
 
+![公开附件通过兼容的 Solver 以图片字节、渲染后的 PNG 页面或原始 PDF 字节送入模型](imgs/11-flowchart-multimodal-input.png)
+
 ## 图片输入配置
 
 仓库提供一份开发测试夹具。设置 `MODEL_NAME`、`MODEL_ENDPOINT`、`MODEL_API_KEY` 后，在源码仓库根目录运行：

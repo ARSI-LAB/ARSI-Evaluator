@@ -4,6 +4,8 @@
 
 `kernel` 在昇腾 NPU 上验证已有候选，输出正确性、参考耗时、候选耗时和加速比，并可采集候选的详细硬件性能指标。`kernel-replay` 仅提交固定产物，不生成或修复代码，不调用模型。独立运行只需要 Evaluator、输入样例和 NPU 运行时。与 RSI 联合使用时，由 RSI Proposer 生成新候选，再通过完整 SDK 评测冻结产物；正确性、计时和详细 profiling 均由本协议完成。静态源码诊断、模型分析瓶颈和修改 kernel 由优化器负责。
 
+![NPU 算子评测先对照参考结果检查正确性，通过后计时并报告耗时与加速比，也可选择采集详细性能指标](imgs/01-flowchart-kernel-npu.png)
+
 ## 硬件选择
 
 实验 YAML 使用顶层 `hardware: npu`，省略时也默认 NPU。`hardware: gpu` 会在读取候选和启动 Python 前报“Kernel GPU backend is not implemented”。内置计时只使用 NPU profiler，缺少 NPU 时失败，不回退 CUDA 或 CPU。现有 `kernel precision/bench/profile` 独立命令仍为 NPU 入口，参数和结果格式不变。配置示例见[已有 kernel 评测](../../../playbook/kernel/existing.yaml)。

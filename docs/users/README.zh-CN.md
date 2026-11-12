@@ -39,7 +39,7 @@
 | Benchmark | [场景目录](benchmarks/README.zh-CN.md)：[Harbor](benchmarks/harbor.zh-CN.md)、[WorkBuddy](benchmarks/workbuddy.zh-CN.md)、[DeepSWE](benchmarks/deepswe.zh-CN.md)、[Terminal-Bench](benchmarks/terminalbench.zh-CN.md)、[AgentX](benchmarks/agentx.zh-CN.md) |
 | 部署 | [管理容器](deployment/container-toolbox.zh-CN.md)、[Docker 平台](deployment/docker-platform.zh-CN.md)；Ray 连接见[配置指南](config.zh-CN.md#ray-与执行节点) |
 | FAQ | [常见问题](faq/README.zh-CN.md)、[下载与镜像](faq/downloads.zh-CN.md)、[Docker 与跨架构](faq/docker.zh-CN.md) |
-| 参考 | [评分口径](reference/scoring.zh-CN.md)、[错误码与退出码](reference/errors.zh-CN.md) |
+| 参考 | [CLI 命令](reference/cli.zh-CN.md)、[实验 YAML 字段](reference/experiment-yaml.zh-CN.md)、[评分口径](reference/scoring.zh-CN.md)、[错误码与退出码](reference/errors.zh-CN.md) |
 | 架构 | 各模块文档中的 PNG 架构图与 `src/` 源码入口 |
 | 开发 | [开发文档](../development/README.md)，包含插件、Benchmark、结构化错误和受控测试 |
 

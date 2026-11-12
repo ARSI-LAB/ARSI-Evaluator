@@ -4,6 +4,8 @@
 
 `ember-evaluator retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
 
+![图中区分原 Attempt 内的请求重试、响应截断且确认清理后的自动重跑，以及在原 Run 中创建新 Attempt 的手动补测](imgs/10-flowchart-network-retry.png)
+
 ## 自动网络重试
 
 网络操作自身的重试发生在对应操作内：

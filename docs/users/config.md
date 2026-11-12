@@ -2,6 +2,8 @@
 
 > English | [中文](./config.zh-CN.md)
 
+For field paths, types, defaults, and plugin-specific options, see the [experiment YAML field reference](reference/experiment-yaml.md).
+
 Experiment YAML can declare only model services and a benchmark; plugin profiles fill remaining fields:
 
 ```yaml

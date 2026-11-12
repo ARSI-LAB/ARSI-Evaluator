@@ -6,6 +6,8 @@ This example adds a built-in Solver called `fixed-answer`. It returns an answer 
 
 You will edit two source files. Create `src/plugins/solvers/fixed-answer.ts` and register it in `src/plugins/solvers/index.ts`. Put the test CSV and YAML under `.scratch/solver-example/`. Follow the [installation guide](../users/installation.md) to install dependencies, then run the commands below from the repository root in Bash or WSL.
 
+![Add an implementation under the existing Solver role, register it, and select it through benchmark.solver.name in YAML](imgs/03-flowchart-add-solver.png)
+
 ## Minimal example
 
 ### 1. Write the Solver

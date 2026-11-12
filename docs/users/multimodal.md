@@ -4,6 +4,8 @@ English | [中文](multimodal.zh-CN.md)
 
 Tasks declare public files in `attachments`. Model services declare accepted inputs in `inputModalities`. A file in the workspace alone is not a model image input.
 
+![Public attachments reach the model through a compatible Solver as image bytes, rendered PNG pages, or original PDF bytes](imgs/11-flowchart-multimodal-input.png)
+
 ## Image input configuration
 
 The source repository includes a development test fixture. Set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY`, then run from the source repository root:
