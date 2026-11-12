@@ -1,10 +1,11 @@
-"""Attach validated images to the pinned process CLI's native Runtime request."""
+"""Add optional tool policy and validated images to the pinned process CLI."""
 
 from __future__ import annotations
 
 import base64
 import contextlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -12,11 +13,21 @@ from pathlib import Path
 
 def main() -> None:
     media = json.load(sys.stdin)
+    tool_policy = json.loads(os.environ.pop("EVALUATOR_JIUWENSWARM_TOOL_POLICY", "{}"))
+    if tool_policy:
+        with contextlib.redirect_stdout(sys.stderr):
+            from tool_policy import install_tool_policy
+
+            install_tool_policy(tool_policy)
     # Keep the original CLI's renderer, cancellation, permissions and Runtime close.
     # Only its text-only request builder needs an attachment bridge.
     with contextlib.redirect_stdout(sys.stderr):
         from jiuwenswarm.channels.process_cli import app
         from jiuwenswarm.channels.process_cli.main import main as cli_main
+    if not media:
+        cli_main()
+        return
+    with contextlib.redirect_stdout(sys.stderr):
         from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenSwarmDeepAdapter
         from jiuwenswarm.server.runtime.agent_adapter.interface_code import JiuwenSwarmCodeAdapter
         from jiuwenswarm.agents.harness.common.rails.multimodal_image_rail import MultimodalImageRail

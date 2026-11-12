@@ -21,6 +21,9 @@ export async function jiuwenswarmBundleRuntimeInstallation(path: string, environ
  */
 export const JIUWENSWARM_VERSION = "0.2.5";
 export const jiuwenswarmMultimodalRunner = fileURLToPath(new URL("./assets/multimodal-runner.py", import.meta.url));
+const jiuwenswarmToolPolicy = {
+  source: fileURLToPath(new URL("./assets/tool_policy.py", import.meta.url)), target: "jiuwenswarm/tool_policy.py",
+};
 
 /** Use the installed entry point's environment, never an unrelated system Python. */
 export async function resolveJiuwenswarmPython(command: string): Promise<string> {
@@ -161,7 +164,8 @@ export async function resolveJiuwenswarmCommand(
  */
 export async function jiuwenswarmRuntimeInstallation(signal: AbortSignal): Promise<RuntimeInstallation> {
   signal.throwIfAborted();
-  const files = [...await agentBundleRuntimeFiles(), { source: jiuwenswarmMultimodalRunner, target: "jiuwenswarm/multimodal-runner.py" }];
+  const files = [...await agentBundleRuntimeFiles(),
+    { source: jiuwenswarmMultimodalRunner, target: "jiuwenswarm/multimodal-runner.py" }, jiuwenswarmToolPolicy];
   const hash = createHash("sha256").update("jiuwenswarm-runtime-sdk-1");
   for (const file of files) {
     hash.update(file.target);
@@ -245,6 +249,7 @@ export async function jiuwenswarmDockerRuntimeInstallation(
   const files = [
     ...agentBundleFiles,
     { source: jiuwenswarmMultimodalRunner, target: "jiuwenswarm/multimodal-runner.py" },
+    jiuwenswarmToolPolicy,
     { source: jiuwenswarmRewriteRequirements, target: "jiuwenswarm/rewrite-requirements.mjs" },
     { source: jiuwenswarmRwLockProbe, target: "jiuwenswarm/probe-rwlock.py" },
     ...JIUWENSWARM_DOCKER_SOURCE_ENTRIES.map(entry => ({

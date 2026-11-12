@@ -4,6 +4,22 @@
 
 Benchmarks define tasks and scoring; solvers define model requests and agent execution. Start ordinary agent tasks with default SimpleAgent. MMLU and AgentX have dedicated defaults. Check configuration and start a new run after changes.
 
+## Configure tools and web access
+
+Set `benchmark.solver.config.tools: none` to disable solver tools as described below. Set `webSearch` and `webFetch` independently to `default`, `disabled`, or `enabled` to control native web search and URL fetching. Omitted fields use the solver's existing behavior. Solvers that disable all tools reject `tools: none` together with an enabled web tool.
+
+| Solver | Supported configuration |
+| --- | --- |
+| SimpleAgent, Pi | Support disabling all tools. The base tool set has no native web tools. When a bundle or task MCP is present, declare exact `webSearchTools` and `webFetchTools` names for explicit web settings. Put the names under `config.bundle` for SimpleAgent or `config.pi` for Pi. |
+| Claude Code, CodeBuddy | Support disabling all tools and independent `WebSearch` and `WebFetch` settings. Execution depends on the selected model service. |
+| ZCode | Supports disabling all tools or either web tool, and enabling fetch. Explicit search is unsupported on the custom model route. |
+| TRAE | Supports disabling all tools or either web tool. The pinned non-interactive `exec` does not support explicitly enabling search or fetch. |
+| Codex | `tools: none` maps to `shellTool: disabled` and removes shell tools with `--disable shell_tool`. The pinned CLI still declares tools such as `request_user_input`. `webSearch` controls native search separately. Opening pages is part of live search. |
+| DeepSeek Harness, JiuwenSwarm | Support disabling all tools. Explicitly enabled web tools require the corresponding native service. |
+
+The environment controls whether shell commands can access the network. For MMLU-Pro, `benchmark.config.solveNetwork: model-api` with Docker allows the solve container to reach only the model API. See the [MMLU-Pro Playbook](../../playbook/mmlu-pro/mmlu-pro-simpleagent.yaml).
+
+
 ## Choose a Solver
 
 | Solver | Purpose | Prerequisites |

@@ -7,14 +7,17 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { parseSolverToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 import { consumeZCode } from "../../runtimes/zcode/protocol.js";
 import { readZCodeSourceLock, ZCODE_ENTRY, zcodeRuntimeInstallation } from "../../runtimes/zcode/runtime.js";
 
-export function parseZCodeConfig(value: unknown): Record<string, never> {
-  rejectUnknown(expectRecord(value, "zcode config"), [], "zcode config");
-  return {};
+export function parseZCodeConfig(value: unknown): SolverToolPolicy {
+  const policy = parseSolverToolPolicy(value, "zcode config");
+  if (policy.webSearch === "enabled") {
+    unsupportedToolPolicy("zcode", "native WebSearch is unavailable on the configured custom model route");
+  }
+  return policy;
 }
 
 function apiBase(endpoint: string | null): string {
@@ -30,7 +33,7 @@ export class ZCodeSolver implements Solver {
   readonly inputModalities = ["text", "image", "pdf"] as const;
   private readonly endpoint: string;
 
-  constructor(private readonly binding: ServiceBinding) {
+  constructor(private readonly binding: ServiceBinding, private readonly policy: SolverToolPolicy = {}) {
     const { model } = binding;
     if (model.api === null || !["openai-completions", "openai-responses", "anthropic-messages"].includes(model.api)) {
       throw new TypeError("zcode requires api: openai-completions, openai-responses or anthropic-messages");
@@ -49,7 +52,7 @@ export class ZCodeSolver implements Solver {
 
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     const { cliVersion, commit } = await readZCodeSourceLock(signal);
-    return { zcodeVersion: cliVersion, zcodeCommit: commit };
+    return { ...toolPolicyProvenance(this.policy, "zcode-native"), zcodeVersion: cliVersion, zcodeCommit: commit };
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
@@ -83,7 +86,7 @@ export class ZCodeSolver implements Solver {
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({
           apiKey: auth.value, api: model.api, baseUrl, model: model.name, inputModalities: model.inputModalities,
-          prompt: input.prompt, token, media,
+          prompt: input.prompt, token, media, toolPolicy: this.policy,
         }), "utf8"),
       }, signal);
       return await consumeZCode(handle, context, [auth.value, token]);

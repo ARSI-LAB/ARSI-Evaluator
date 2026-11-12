@@ -76,7 +76,8 @@ export class DefinedBenchmark implements Benchmark {
     if (!row) throw new RangeError(`${this.definition.name} task reference is out of range`);
     return {
       ...this.definition.prepare(ref.id, row, index, setup),
-      solveEnv: { workdir: ".", image: null, initialFiles: [], runtime: [] },
+      solveEnv: { workdir: ".", image: null, initialFiles: [], runtime: [],
+        ...(this.context.solveNetwork === undefined ? {} : { network: this.context.solveNetwork }) },
       verifyEnv: null,
       transfer: null,
     };

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { startModelRelay } from "./model-relay.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, maxTokens, supportsImages, prompt, token, media } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, maxTokens, supportsImages, prompt, token, media, toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
 
 // The model loader in CodeBuddy 2.183.0 reads this file independently of --setting-sources.
 const projectModels = await lstat(join(process.cwd(), ".codebuddy", "models.json")).catch(error => {
@@ -32,13 +32,20 @@ try {
   }), { mode: 0o600 });
 
   const windows = process.platform === "win32";
-  const tools = ["Read", "Edit", "Write", "Glob", "Grep", windows ? "PowerShell" : "Bash"];
+  const tools = toolPolicy.tools === "none" ? [] : ["Read", "Edit", "Write", "Glob", "Grep", windows ? "PowerShell" : "Bash"];
+  if (toolPolicy.webSearch === "enabled") tools.push("WebSearch");
+  if (toolPolicy.webFetch === "enabled") tools.push("WebFetch");
+  const denied = [];
+  if (toolPolicy.webSearch === "disabled") denied.push("WebSearch");
+  if (toolPolicy.webFetch === "disabled") denied.push("WebFetch");
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:CODEBUDDY_|WORKBUDDY_|CLAUDE_|ANTHROPIC_|OTEL_)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
   const child = spawn(process.execPath, [entry,
     "--print", "--verbose", "--output-format", "stream-json", "--input-format", "stream-json", "--model", model,
     "--setting-sources", "user", "--strict-mcp-config", "--no-session-persistence",
-    "--tools", tools.join(","), "--permission-mode", "dontAsk", "--allowedTools", ...tools,
+    "--tools", tools.join(","), "--permission-mode", "dontAsk",
+    ...(tools.length ? ["--allowedTools", ...tools] : []),
+    ...(denied.length ? ["--disallowedTools", ...denied] : []),
   ], {
     env: {
       ...env, HOME: home, USERPROFILE: home, CODEBUDDY_CONFIG_DIR: home, CODEBUDDY_PROJECT_CONFIG_DIR: join(home, "project"),

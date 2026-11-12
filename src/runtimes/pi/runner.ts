@@ -123,11 +123,12 @@ function explicitResources(systemPrompt: string): ResourceLoader {
  * extensions alone.
  */
 async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsManager, systemPrompt: string): Promise<ResourceLoader> {
-  const skillPaths = input.input.skillsDirectories ?? [];
-  const factories = [...(input.input.mcpServers?.length ? [taskMcpExtension(input.input.mcpServers, join(input.outputDir, "mcp.log"))] : [])];
+  const noTools = input.toolAccess?.tools === "none";
+  const skillPaths = noTools ? [] : input.input.skillsDirectories ?? [];
+  const factories = [...(!noTools && input.input.mcpServers?.length ? [taskMcpExtension(input.input.mcpServers, join(input.outputDir, "mcp.log"))] : [])];
   if (input.piConfigDir !== undefined) {
     const settings = await installedPiSettings(input.piConfigDir);
-    const extensions = stringPaths(settings.extensions, "installed Pi settings.extensions");
+    const extensions = noTools ? [] : stringPaths(settings.extensions, "installed Pi settings.extensions");
     const instructions = join(input.piConfigDir, "AGENTS.md");
     const instructionText = await readFile(instructions, "utf8");
     const loader = new DefaultResourceLoader({
@@ -135,7 +136,7 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
       agentDir: input.piConfigDir,
       settingsManager,
       additionalExtensionPaths: extensions,
-      additionalSkillPaths: [join(input.piConfigDir, "skills"), ...skillPaths],
+      additionalSkillPaths: noTools ? [] : [join(input.piConfigDir, "skills"), ...skillPaths],
       extensionFactories: factories,
       noExtensions: true,
       noSkills: true,
@@ -151,10 +152,10 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
       throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED",
         `extension load failed: ${loaded.errors.map(error => `${error.path}: ${error.error}`).join("; ")}`);
     }
-    if (loaded.extensions.length === 0) throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED", "no extension was loaded");
+    if (!noTools && loaded.extensions.length === 0) throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED", "no extension was loaded");
     return loader;
   }
-  const extensionPaths = input.extensions ?? [];
+  const extensionPaths = noTools ? [] : input.extensions ?? [];
   // An empty temporary agent directory keeps the host's personal pi
   // configuration out of the evaluation.
   const agentDir = await mkdtemp(join(tmpdir(), "evaluator-pi-agent-"));
@@ -347,8 +348,23 @@ function shellToolDefinition(
 
 export async function run(input: RunnerInput, options: RunnerOptions = {}): Promise<SolveResult> {
   const shell = shellToolName();
-  const shellPath = shell === "bash" ? await findBash() : await findPowerShell();
-  const tools = [shell, "read", "write", "edit"];
+  const access = input.toolAccess ?? {};
+  const noTools = access.tools === "none";
+  const shellPath = noTools ? undefined : shell === "bash" ? await findBash() : await findPowerShell();
+  const tools = noTools ? [] : [shell, "read", "write", "edit"];
+  const excluded: string[] = [];
+  const required: string[] = [];
+  if (!noTools) {
+    const hasExternalTools = input.piConfigDir !== undefined || Boolean(input.extensions?.length || input.input.mcpServers?.length);
+    for (const [key, names] of [["webSearch", access.webSearchTools], ["webFetch", access.webFetchTools]] as const) {
+      const mode = access[key];
+      if (mode === undefined || mode === "default") continue;
+      if (!names && (hasExternalTools || mode === "enabled")) {
+        throw new RunnerFailure("CONFIG_INVALID", `Pi ${key}: ${mode} requires explicit ${key}Tools names for external tools`);
+      }
+      (mode === "enabled" ? required : excluded).push(...(names ?? []));
+    }
+  }
   const systemPrompt = `${SYSTEM_PROMPT} The command tool is ${shell}; use ${shell === "powershell" ? "PowerShell" : "Bash"} syntax for commands.`;
   await mkdir(input.outputDir, { recursive: true });
   const trajectory = (options.createTrajectoryWriter ?? ((path, key) => new TrajectoryWriter(path, key)))(
@@ -385,7 +401,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
       // fragile upstream connections, so the default budget is deliberately generous.
       retry: { enabled: maxAttempts > 1, maxRetries: maxAttempts - 1, baseDelayMs: 5_000 },
       defaultTools: tools,
-      ...(shell === "bash" ? { shellPath } : {}),
+      ...(shell === "bash" && shellPath !== undefined ? { shellPath } : {}),
   };
   let settingsManager: SettingsManager;
   if (input.piConfigDir === undefined) {
@@ -430,7 +446,11 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     cwd: input.workdir,
     modelRuntime: runtime,
     model,
-    customTools: [shellToolDefinition(shell, input.workdir, shellPath, input.toolPolicy ?? DEFAULT_SHELL_TOOL_POLICY)],
+    ...(noTools ? { noTools: "all" } : {}),
+    ...(excluded.length ? { excludeTools: excluded } : {}),
+    ...(shellPath === undefined ? {} : {
+      customTools: [shellToolDefinition(shell, input.workdir, shellPath, input.toolPolicy ?? DEFAULT_SHELL_TOOL_POLICY)],
+    }),
     resourceLoader,
     sessionManager,
     settingsManager,
@@ -444,6 +464,10 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
       process.stderr.write(`extension error (${error.extensionPath}): ${String(error.error)}\n`);
     },
   });
+  const active = session.getActiveToolNames();
+  if (required.some(name => !active.includes(name))) {
+    throw new RunnerFailure("CONFIG_INVALID", `Pi web tools are unavailable: ${required.filter(name => !active.includes(name)).join(", ")}`);
+  }
   let writeFailure: unknown;
   let modalityFailure: RunnerFailure | undefined;
   const write = (type: string, data: JsonValue, durable = false) => {

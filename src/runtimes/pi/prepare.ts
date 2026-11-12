@@ -36,8 +36,17 @@ export async function preparePi(
   const path = local ? join : posix.join;
   const node = local ? process.execPath : "node";
   const settings = preparation.options.pi?.settings ?? {};
+  const { tools, webSearch, webFetch, pi } = preparation.options;
+  const toolAccess = {
+    ...(tools === undefined ? {} : { tools }),
+    ...(webSearch === undefined ? {} : { webSearch }),
+    ...(webFetch === undefined ? {} : { webFetch }),
+    ...(pi?.webSearchTools === undefined ? {} : { webSearchTools: pi.webSearchTools }),
+    ...(pi?.webFetchTools === undefined ? {} : { webFetchTools: pi.webFetchTools }),
+  };
+  const toolConfig = Object.keys(toolAccess).length ? { toolAccess } : {};
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "pi", candidate, runtime: runtime.identity, settings } as JsonValue))
+    .update(canonicalJson({ kind: "pi", candidate, runtime: runtime.identity, settings, ...toolConfig } as JsonValue))
     .digest("hex");
   let state = path(stateRoot, identity.slice(0, 24));
   let home = path(state, "home");
@@ -108,6 +117,7 @@ export async function preparePi(
           outputDir: session.agentOutputDir,
           piConfigDir: codingAgentDir,
           piSettings: settings,
+          ...toolConfig,
         });
           signal.throwIfAborted();
           return start(

@@ -17,6 +17,7 @@ import type { AttemptContext, PreparedSolver, Solver, SolverProvenance } from ".
 import type { SolveResult } from "../../core/contracts/result.js";
 import type { JsonValue, PublicTask } from "../../core/contracts/task.js";
 import { canonicalJson } from "../../core/results/run-manifest.js";
+import { parseSolverToolPolicy, parseWebToolNames, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 import { AgentBundleError, type VerifiedBundle } from "../../runtimes/agentbundle/cli.js";
 import { DSH_VERSION, describeDshBundleRuntime, type DshBundleRuntime } from "../../runtimes/dsh/runtime.js";
 import { AGENT_BUNDLE_CORE_VERSION, assertHarnessVersionCompatible, verifyBundleCandidate } from "../../runtimes/agentbundle/sdk.js";
@@ -31,16 +32,17 @@ import { verifyPiBundleIntegrity } from "../../runtimes/pi/integrity.js";
 type DshOptions = { dshhome?: string; dshprofile?: string; environmentName?: string };
 type HermesOptions = { hermeshome?: string };
 type JiuwenswarmOptions = { jiuwenswarmhome?: string; jiuwenswarmTimeoutSeconds?: number };
-type PiOptions = { pi?: { settings?: Record<string, JsonValue> } };
-type HarnessOptions = DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions & { dify?: DifyOptions };
+type PiOptions = { pi?: { settings?: Record<string, JsonValue> } & WebToolNames };
+type HarnessOptions = DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions & SolverToolPolicy & { dify?: DifyOptions };
 
 export function parseAgentBundleConfig(
   value: unknown,
 ): { path: string; maxTokens?: number } & HarnessOptions {
   const config = expectRecord(value, "agentbundle");
-  rejectUnknown(config, ["path", "dshhome", "dshprofile", "maxTokens", "hermeshome", "jiuwenswarmhome", "jiuwenswarmTimeoutSeconds", "pi", "dify"], "agentbundle");
+  const policy = parseSolverToolPolicy(config, "agentbundle", ["path", "dshhome", "dshprofile", "maxTokens",
+    "hermeshome", "jiuwenswarmhome", "jiuwenswarmTimeoutSeconds", "pi", "dify"]);
   const result: { path: string; maxTokens?: number } & HarnessOptions = {
-    path: expectNonEmptyString(config.path, "agentbundle.path"),
+    path: expectNonEmptyString(config.path, "agentbundle.path"), ...policy,
   };
   if (config.maxTokens !== undefined) result.maxTokens = expectPositiveInteger(config.maxTokens, "agentbundle.maxTokens");
   if (config.dshhome !== undefined) result.dshhome = expectNonEmptyString(config.dshhome, "agentbundle.dshhome");
@@ -56,12 +58,12 @@ export function parseAgentBundleConfig(
     result.jiuwenswarmTimeoutSeconds = expectPositiveInteger(config.jiuwenswarmTimeoutSeconds, "agentbundle.jiuwenswarmTimeoutSeconds");
   if (config.pi !== undefined) {
     const pi = expectRecord(config.pi, "agentbundle.pi");
-    rejectUnknown(pi, ["settings"], "agentbundle.pi");
-    if (pi.settings === undefined) result.pi = {};
-    else {
+    rejectUnknown(pi, ["settings", "webSearchTools", "webFetchTools"], "agentbundle.pi");
+    result.pi = parseWebToolNames(pi, "agentbundle.pi");
+    if (pi.settings !== undefined) {
       const settings = expectRecord(pi.settings, "agentbundle.pi.settings");
       assertJsonValue(settings, "agentbundle.pi.settings");
-      result.pi = { settings };
+      result.pi.settings = settings;
     }
   }
   if (config.dify !== undefined) result.dify = parseDifyOptions(config.dify);
@@ -159,6 +161,12 @@ export class AgentBundleSolver implements Solver {
   async provenance(signal: AbortSignal, previous?: SolverProvenance): Promise<SolverProvenance> {
     signal.throwIfAborted();
     const identified = await verifyBundleCandidate(this.path);
+    const { tools, webSearch, webFetch } = this.options;
+    const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "agentbundle");
+    const method = { dsh: "cordis-tools", pi: "pi-sdk", jiuwenswarm: "jiuwenswarm-rail" }[identified.harness.name];
+    if (Object.keys(policy).length > 0 && method === undefined) {
+      unsupportedToolPolicy(identified.harness.name, "tool policy is unavailable for this Bundle harness");
+    }
     const dify = identified.harness.name === "dify";
     if (!dify && SUPPORTED_HARNESSES[identified.harness.name] === undefined)
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", `unsupported harness: ${identified.harness.name}`);
@@ -169,7 +177,9 @@ export class AgentBundleSolver implements Solver {
     if (identified.harness.name === "pi") {
       this.piArtifactDigest = await verifyPiBundleIntegrity(this.path);
       this.piConfigurationDigest = createHash("sha256")
-        .update(canonicalJson((this.options.pi?.settings ?? {}) as JsonValue))
+        .update(canonicalJson(this.options.pi?.webSearchTools || this.options.pi?.webFetchTools
+          ? { ...this.options.pi, ...policy } as JsonValue
+          : (this.options.pi?.settings ?? {}) as JsonValue))
         .digest("hex");
     } else if (this.options.pi !== undefined) {
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "agentbundle.pi settings are only accepted for pi bundles");
@@ -183,6 +193,9 @@ export class AgentBundleSolver implements Solver {
     if (!dify && harnessVersion === undefined)
       throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", `unsupported harness: ${identified.harness.name}`);
     if (harnessVersion !== undefined) assertHarnessVersionCompatible(harnessVersion, identified.harness.versionRange);
+    if (identified.harness.name === "dsh" && Object.keys(policy).length > 0 && harnessVersion !== DSH_VERSION) {
+      unsupportedToolPolicy("dsh", `tool policy requires the validated runtime ${DSH_VERSION}`);
+    }
     const reverified = await verifyBundleCandidate(this.path, identified.digest);
     if (reverified.harness.name !== identified.harness.name || reverified.digest !== identified.digest) {
       throw new AgentBundleError("SOURCE_CHANGED", "bundle changed while identifying the harness");
@@ -205,6 +218,7 @@ export class AgentBundleSolver implements Solver {
       ...(harnessVersion === undefined ? {} : { harnessVersion }),
       cliVersion: AGENT_BUNDLE_CORE_VERSION,
       installation: installation.id,
+      ...(method === undefined ? {} : toolPolicyProvenance(policy, method)),
     };
     if (dify) {
       provenance.harnessVersionRange = candidate.harness.versionRange;

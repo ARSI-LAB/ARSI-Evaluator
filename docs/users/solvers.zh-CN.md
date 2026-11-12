@@ -4,6 +4,22 @@
 
 Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执行。普通 Agent 任务可先用默认 SimpleAgent 跑通；MMLU 和 AgentX 使用各自的默认 Solver。修改后先做配置检查，并开始新的 run。
 
+## 控制工具和网页访问
+
+在 `benchmark.solver.config` 中设置 `tools: none` 禁用 Solver 工具，具体范围见下表。`webSearch` 与 `webFetch` 分别控制原生网页搜索和 URL 抓取，接受 `default`、`disabled`、`enabled`。省略字段或填写 `default` 会采用该 Solver 原有行为。对支持关闭全部工具的 Solver，`tools: none` 不能和 `enabled` 同时使用。
+
+| Solver | 支持范围 |
+| --- | --- |
+| SimpleAgent、Pi | 支持关闭全部工具。基础工具集没有原生网页工具。有 Bundle 扩展或任务 MCP 时，设置网页开关需分别声明 `webSearchTools`、`webFetchTools` 的实际工具名。SimpleAgent 将名称写入 `config.bundle`，Pi 将名称写入 `config.pi`。 |
+| Claude Code、CodeBuddy | 支持关闭全部工具，独立增删 `WebSearch` 和 `WebFetch`。实际执行需要对应模型服务支持。 |
+| ZCode | 支持关闭全部工具、禁用搜索和抓取以及启用抓取。当前自定义模型路由拒绝显式启用搜索。 |
+| TRAE | 支持关闭全部工具及禁用网页工具。锁定版本的非交互 `exec` 拒绝显式启用搜索或抓取。 |
+| Codex | `tools: none` 映射为 `shellTool: disabled`，通过 `--disable shell_tool` 移除 Shell 工具。锁定版本仍会声明 `request_user_input` 等其他工具。`webSearch` 单独控制原生搜索，打开网页属于原生实时搜索能力。 |
+| DeepSeek Harness、JiuwenSwarm | 支持关闭全部工具。网页功能沿用 Harness 自己的服务和配置，显式开启需要对应原生工具可用。 |
+
+网页开关控制模型可调用的网页工具。保留 Bash 时，命令能否联网由求解环境决定。MMLU-Pro 可在 Docker 中设置 `benchmark.config.solveNetwork: model-api`，让每个求解容器只访问模型 API。可直接使用 [MMLU-Pro Playbook](../../playbook/mmlu-pro/mmlu-pro-simpleagent.yaml)。
+
+
 ## 选哪一种 Solver
 
 | Solver | 用途 | 额外准备 |

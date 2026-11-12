@@ -13,11 +13,11 @@ import { TraeSolver, parseTraeConfig } from "./trae.js";
 import { CodeBuddySolver, parseCodeBuddyConfig } from "./codebuddy.js";
 
 export function apply(ctx: Context): void {
-  ctx.evaluator.register("solver", "claudecode", parseClaudeCodeConfig, (_config, runtime) => new ClaudeCodeSolver(bindSolverService(runtime)));
-  ctx.evaluator.register("solver", "codex", parseCodexConfig, (_config, runtime) => new CodexSolver(bindSolverService(runtime)));
-  ctx.evaluator.register("solver", "zcode", parseZCodeConfig, (_config, runtime) => new ZCodeSolver(bindSolverService(runtime)));
-  ctx.evaluator.register("solver", "trae", parseTraeConfig, (_config, runtime) => new TraeSolver(bindSolverService(runtime)));
-  ctx.evaluator.register("solver", "codebuddy", parseCodeBuddyConfig, (_config, runtime) => new CodeBuddySolver(bindSolverService(runtime)));
+  ctx.evaluator.register("solver", "claudecode", parseClaudeCodeConfig, (config, runtime) => new ClaudeCodeSolver(bindSolverService(runtime), config));
+  ctx.evaluator.register("solver", "codex", parseCodexConfig, (config, runtime) => new CodexSolver(bindSolverService(runtime), config));
+  ctx.evaluator.register("solver", "zcode", parseZCodeConfig, (config, runtime) => new ZCodeSolver(bindSolverService(runtime), config));
+  ctx.evaluator.register("solver", "trae", parseTraeConfig, (config, runtime) => new TraeSolver(bindSolverService(runtime), config));
+  ctx.evaluator.register("solver", "codebuddy", parseCodeBuddyConfig, (config, runtime) => new CodeBuddySolver(bindSolverService(runtime), config));
   ctx.evaluator.register("solver", "choice-logprobs", parseChoiceLogprobsConfig, (config, runtime) => {
     const { model, auth } = bindSolverService(runtime);
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);
@@ -37,6 +37,9 @@ export function apply(ctx: Context): void {
       const model = agentBundleModel(bound.model, config.maxTokens, runtime.solverService);
       const solver = new AgentBundleSolver(runtime.resolvePath(config.path), model, bound.auth, undefined, {
         environmentName: runtime.environmentName ?? "local",
+        ...(config.tools === undefined ? {} : { tools: config.tools }),
+        ...(config.webSearch === undefined ? {} : { webSearch: config.webSearch }),
+        ...(config.webFetch === undefined ? {} : { webFetch: config.webFetch }),
         ...(config.dshhome === undefined ? {} : { dshhome: runtime.resolvePath(config.dshhome) }),
         ...(config.dshprofile === undefined ? {} : { dshprofile: config.dshprofile }),
         ...(config.hermeshome === undefined ? {} : { hermeshome: runtime.resolvePath(config.hermeshome) }),
@@ -67,6 +70,13 @@ export function apply(ctx: Context): void {
               ...(config.bundle.settings === undefined ? {} : { settings: config.bundle.settings }),
             },
         config.toolPolicy,
+        {
+          ...(config.tools === undefined ? {} : { tools: config.tools }),
+          ...(config.webSearch === undefined ? {} : { webSearch: config.webSearch }),
+          ...(config.webFetch === undefined ? {} : { webFetch: config.webFetch }),
+          ...(config.bundle?.webSearchTools === undefined ? {} : { webSearchTools: config.bundle.webSearchTools }),
+          ...(config.bundle?.webFetchTools === undefined ? {} : { webFetchTools: config.bundle.webFetchTools }),
+        },
       );
       ctx.effect(() => () => solver.dispose(), "simpleagent staging lifecycle");
       return solver;

@@ -22,7 +22,7 @@
 | OfficeQA Pro V2 | [officeqa-pro-v2](officeqa-pro-v2) | [解析 JSON 全部 90 题](officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yaml)、[解析 JSON + SimpleAgent](officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml)、[原始 PDF](officeqa-pro-v2/officeqa-pro-v2-original-pdf.yaml)、[解析 JSON + Ray](officeqa-pro-v2/officeqa-pro-v2-parsed-json-ray.yaml)；均运行全部 90 题，[输入口径说明](../docs/users/benchmarks/officeqa-pro-v2.zh-CN.md#输入与测评口径) |
 | MMLU | [mmlu](mmlu) | [5-shot 概率评分](mmlu/mmlu-simpleagent.yaml)；模型服务须返回 logprobs/top_logprobs，使用 choice-logprobs Solver |
 | MATH-500 | [math500](math500) | [SimpleAgent 与独立等价裁判](math500/math500-simpleagent.yaml)；需配置 Judge 服务 |
-| MMLU-Pro | [mmlu-pro](mmlu-pro) | [SimpleAgent](mmlu-pro/mmlu-pro-simpleagent.yaml)；配置名为 `mmlu_pro` |
+| MMLU-Pro | [mmlu-pro](mmlu-pro) | [SimpleAgent](mmlu-pro/mmlu-pro-simpleagent.yaml) 关闭工具并在 Docker 中运行。配置名为 `mmlu_pro` |
 | MGSM | [mgsm](mgsm) | [SimpleAgent](mgsm/mgsm-simpleagent.yaml)；运行全部 11 种语言的题目 |
 | TriviaQA | [triviaqa](triviaqa) | [SimpleAgent](triviaqa/triviaqa-simpleagent.yaml) |
 | DROP | [drop](drop) | [SimpleAgent](drop/drop-simpleagent.yaml) |

@@ -7,14 +7,13 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { parseSolverToolPolicy, toolPolicyProvenance, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { consumeCodeBuddy } from "../../runtimes/codebuddy/protocol.js";
 import { CODEBUDDY_ENTRY, CODEBUDDY_VERSION, codeBuddyRuntimeInstallation } from "../../runtimes/codebuddy/runtime.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
-export function parseCodeBuddyConfig(value: unknown): Record<string, never> {
-  rejectUnknown(expectRecord(value, "codebuddy config"), [], "codebuddy config");
-  return {};
+export function parseCodeBuddyConfig(value: unknown): SolverToolPolicy {
+  return parseSolverToolPolicy(value, "codebuddy config");
 }
 
 function apiBase(endpoint: string | null): string {
@@ -30,7 +29,7 @@ export class CodeBuddySolver implements Solver {
   readonly inputModalities = ["text", "image"] as const;
   private readonly endpoint: string;
 
-  constructor(private readonly binding: ServiceBinding) {
+  constructor(private readonly binding: ServiceBinding, private readonly policy: SolverToolPolicy = {}) {
     const { model } = binding;
     if (model.api !== "openai-completions" && model.api !== "openai-responses") {
       throw new TypeError("codebuddy requires api: openai-completions or openai-responses on its selected service");
@@ -49,7 +48,7 @@ export class CodeBuddySolver implements Solver {
 
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     signal.throwIfAborted();
-    return { codebuddyVersion: CODEBUDDY_VERSION };
+    return { ...toolPolicyProvenance(this.policy, "codebuddy-native"), codebuddyVersion: CODEBUDDY_VERSION };
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
@@ -85,7 +84,7 @@ export class CodeBuddySolver implements Solver {
         env: { NODE_USE_ENV_PROXY: "1" },
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({
-          apiKey: auth.value, api: model.api, baseUrl, model: model.name, maxTokens: model.maxTokens,
+          apiKey: auth.value, api: model.api, baseUrl, model: model.name, maxTokens: model.maxTokens, toolPolicy: this.policy,
           supportsImages: model.inputModalities?.includes("image") ?? false, prompt: input.prompt, token, media,
         }), "utf8"),
       }, signal);

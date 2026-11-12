@@ -7,14 +7,25 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { expectRecord } from "../../core/validation/input.js";
+import { parseSolverToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { consumeCodex } from "../../runtimes/codex/protocol.js";
 import { CODEX_ENTRY, CODEX_VERSION, codexRuntimeInstallation } from "../../runtimes/codex/runtime.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
-export function parseCodexConfig(value: unknown): Record<string, never> {
-  rejectUnknown(expectRecord(value, "codex config"), [], "codex config");
-  return {};
+type CodexConfig = Omit<SolverToolPolicy, "tools"> & { shellTool?: "disabled" };
+
+export function parseCodexConfig(value: unknown): CodexConfig {
+  const { tools, shellTool, ...webConfig } = expectRecord(value, "codex config");
+  // Codex maps the shared tool switch to shell only, independently of web search.
+  const policy = parseSolverToolPolicy({ ...webConfig, tools: tools === "none" ? undefined : tools }, "codex config");
+  if (shellTool !== undefined && shellTool !== "default" && shellTool !== "disabled") {
+    throw new TypeError("codex config.shellTool must be default or disabled");
+  }
+  if (policy.webFetch === "enabled" || policy.webSearch === "enabled" && policy.webFetch === "disabled") {
+    unsupportedToolPolicy("codex", "web fetch is part of native web search and cannot be configured independently");
+  }
+  return { ...policy, ...(tools === "none" || shellTool === "disabled" ? { shellTool: "disabled" } : {}) };
 }
 
 function responsesEndpoint(endpoint: string | null): string {
@@ -29,7 +40,7 @@ export class CodexSolver implements Solver {
   readonly inputModalities = ["text", "image"] as const;
   private readonly endpoint: string;
 
-  constructor(private readonly binding: ServiceBinding) {
+  constructor(private readonly binding: ServiceBinding, private readonly policy: CodexConfig = {}) {
     if (binding.model.api !== "openai-responses") {
       throw new TypeError("codex requires api: openai-responses on its selected service");
     }
@@ -47,7 +58,8 @@ export class CodexSolver implements Solver {
 
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     signal.throwIfAborted();
-    return { codexVersion: CODEX_VERSION };
+    return { ...toolPolicyProvenance(this.policy, "codex-native"),
+      ...(this.policy.shellTool === undefined ? {} : { shellTool: this.policy.shellTool }), codexVersion: CODEX_VERSION };
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
@@ -76,7 +88,7 @@ export class CodexSolver implements Solver {
     const settings = [
       'approval_policy="never"',
       "allow_login_shell=false",
-      'web_search="disabled"',
+      this.policy.webSearch === "enabled" ? 'web_search="live"' : 'web_search="disabled"',
       "analytics.enabled=false",
       "features.hooks=false",
       `projects.${JSON.stringify(session.workdir)}.trust_level="untrusted"`,
@@ -97,6 +109,7 @@ export class CodexSolver implements Solver {
         args: [path(runtime.root, "launch.mjs"), home, path(runtime.root, CODEX_ENTRY),
           "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
           "--color", "never", "--sandbox", local ? "workspace-write" : "danger-full-access", "--model", model.name,
+          ...(this.policy.shellTool === "disabled" ? ["--disable", "shell_tool"] : []),
           ...settings.flatMap(setting => ["-c", setting]), "-"],
         cwd: session.workdir,
         env: {},

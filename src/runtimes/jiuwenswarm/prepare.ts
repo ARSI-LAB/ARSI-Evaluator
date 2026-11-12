@@ -1,3 +1,4 @@
+import { parseSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
@@ -114,8 +115,12 @@ export async function prepareJiuwenswarm(
   const images = imageInputEnabled(preparation);
   // Model binding is per-attempt environment, not home content: different
   // model configurations safely share one installation home.
+  const { tools, webSearch, webFetch } = preparation.options;
+  const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "jiuwenswarm");
+  const hasPolicy = Object.keys(policy).length > 0;
+  const useRunner = images || hasPolicy;
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "jiuwenswarm", candidate, runtime: runtime.identity, images }))
+    .update(canonicalJson({ kind: "jiuwenswarm", candidate, runtime: runtime.identity, images, ...(hasPolicy ? { toolPolicy: policy } : {}) }))
     .digest("hex");
   const configuredHome = preparation.options.jiuwenswarmhome;
   const customHome = configuredHome !== undefined;
@@ -177,7 +182,7 @@ export async function prepareJiuwenswarm(
     const endpoint = preparation.model.endpoint;
     if (endpoint === null)
       throw new AgentBundleError("SOLVER_PROTOCOL_INVALID", "jiuwenswarm solver requires a model endpoint");
-    const executable = images ? await resolveJiuwenswarmPython(jiuwenswarm.command) : jiuwenswarm.command;
+    const executable = useRunner ? await resolveJiuwenswarmPython(jiuwenswarm.command) : jiuwenswarm.command;
     if (images) {
       const configPath = join(state, "config", "config.yaml");
       await writeFile(configPath, mergeJiuwenswarmModelConfig(await readFile(configPath, "utf8"), true), { mode: 0o600 });
@@ -192,7 +197,7 @@ export async function prepareJiuwenswarm(
           {
             executable,
             args: [
-              ...(images ? [join(runtime.root, "jiuwenswarm", "multimodal-runner.py")] : []),
+              ...(useRunner ? [join(runtime.root, "jiuwenswarm", "multimodal-runner.py")] : []),
               input.prompt,
               "--output",
               "json",
@@ -209,6 +214,7 @@ export async function prepareJiuwenswarm(
               // U+2212 and aborts the run before any envelope is written.
               PYTHONIOENCODING: "utf-8",
               JIUWENSWARM_DATA_DIR: state,
+              ...(hasPolicy ? { EVALUATOR_JIUWENSWARM_TOOL_POLICY: JSON.stringify(policy) } : {}),
               API_BASE: endpoint,
               API_KEY: preparation.auth.value,
               MODEL_NAME: preparation.model.name,
@@ -216,7 +222,7 @@ export async function prepareJiuwenswarm(
               ENDPOINT_PROFILE: "openai",
             },
             inheritEnv: false,
-            input: images ? Buffer.from(JSON.stringify(media)) : null,
+            input: useRunner ? Buffer.from(JSON.stringify(media)) : null,
           },
           signal,
         );
@@ -269,8 +275,12 @@ export async function prepareJiuwenswarmDocker(
   // The container is disposable, so the bundle home derives from the attempt
   // identity instead of a shared host cache; model binding stays per-attempt
   // environment exactly as in local mode.
+  const { tools, webSearch, webFetch } = preparation.options;
+  const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "jiuwenswarm");
+  const hasPolicy = Object.keys(policy).length > 0;
+  const useRunner = images || hasPolicy;
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "jiuwenswarm-docker", candidate, runtime: runtime.identity }))
+    .update(canonicalJson({ kind: "jiuwenswarm-docker", candidate, runtime: runtime.identity, ...(hasPolicy ? { toolPolicy: policy } : {}) }))
     .digest("hex");
   const state = posix.join(stateRoot, identity.slice(0, 24));
   const env = {
@@ -377,9 +387,9 @@ export async function prepareJiuwenswarmDocker(
       const media = await loadAttachments(input, session, { ...context, signal });
       return start(
         {
-          executable: images ? posix.join(home, "bin", "python") : process,
+          executable: useRunner ? posix.join(home, "bin", "python") : process,
           args: [
-            ...(images ? [posix.join(root, "jiuwenswarm", "multimodal-runner.py")] : []),
+            ...(useRunner ? [posix.join(root, "jiuwenswarm", "multimodal-runner.py")] : []),
             input.prompt,
             "--output",
             "json",
@@ -392,6 +402,7 @@ export async function prepareJiuwenswarmDocker(
           env: {
             ...env,
             JIUWENSWARM_DATA_DIR: state,
+            ...(hasPolicy ? { EVALUATOR_JIUWENSWARM_TOOL_POLICY: JSON.stringify(policy) } : {}),
             API_BASE: apiBase,
             API_KEY: preparation.auth.value,
             MODEL_NAME: preparation.model.name,
@@ -399,7 +410,7 @@ export async function prepareJiuwenswarmDocker(
             ENDPOINT_PROFILE: "openai",
           },
           inheritEnv: false,
-          input: images ? Buffer.from(JSON.stringify(media)) : null,
+          input: useRunner ? Buffer.from(JSON.stringify(media)) : null,
         },
         signal,
       );

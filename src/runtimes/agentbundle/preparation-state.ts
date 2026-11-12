@@ -9,6 +9,7 @@ import type { AttemptContext, PreparedSolver } from "../../core/contracts/solver
 import type { SolveResult } from "../../core/contracts/result.js";
 import type { JsonValue, PublicTask } from "../../core/contracts/task.js";
 import { canonicalJson } from "../../core/results/run-manifest.js";
+import type { SolverToolPolicy, WebToolNames } from "../../core/validation/solver-tool-policy.js";
 import { AgentBundleError, type VerifiedBundle } from "./cli.js";
 
 
@@ -78,8 +79,8 @@ export type BundlePreparation = {
   options: {
     environmentName?: string; dshhome?: string; dshprofile?: string; hermeshome?: string;
     jiuwenswarmhome?: string; jiuwenswarmTimeoutSeconds?: number;
-    pi?: { settings?: Record<string, JsonValue> };
-  };
+    pi?: { settings?: Record<string, JsonValue> } & WebToolNames;
+  } & SolverToolPolicy;
   harnessVersion: string | undefined;
 };
 export function preparedAttempt(
