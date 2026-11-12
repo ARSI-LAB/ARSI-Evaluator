@@ -380,7 +380,7 @@ def main():
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     request = json.load(sys.stdin)
-    result = {"schemaVersion": 1, "candidateSha256": request["candidateSha256"],
+    result = {"candidateSha256": request["candidateSha256"],
               "referenceKind": request["referenceKind"], "timingScope": "all-device-kernels",
               "referenceMs": None, "candidateMs": None, "speedup": None}
     if "contract" in request:

@@ -14,7 +14,7 @@ function fixture(collection: "Default" | "PipeTimeline,Default" = "Default") {
     sources: { candidateFiles, candidate: { sha256: candidate }, problem: { sha256: reference } },
     replay: { seed: 42, warmup: 25, inputUnmodified: true, logicalDevice: 0 },
   };
-  const value = { profiling: { schemaVersion: 1, status: "completed", error: "", kernels: [], artifacts: [], metadata } };
+  const value = { profiling: { status: "completed", error: "", kernels: [], artifacts: [], metadata } };
   return { candidate, expected, value, metadata };
 }
 

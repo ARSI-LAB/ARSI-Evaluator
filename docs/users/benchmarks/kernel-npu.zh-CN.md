@@ -39,7 +39,6 @@ Profiling 优先选择入口中的第一个 Triton `@jit` 函数，再按路径�
 
 ```json
 {
-  "schemaVersion": 1,
   "tasks": [
     {
       "id": "operator-example",
@@ -65,13 +64,12 @@ Profiling 优先选择入口中的第一个 Triton `@jit` 函数，再按路径�
 
 ## 严格任务契约与计时审计
 
-Manifest 的任务可提供 `contract`，包含 schemaVersion 1、caseId、输入张量契约、输出张量契约与 inputUnmodified。每个张量声明 shape、dtype（`float16`、`bfloat16` 或 `float32`）和 contiguous。标量使用 `[]`，其他形状的各维长度须为正整数。`contiguous: false` 允许非连续张量。输出还需声明 independent。严格评测对每个 seed 执行两次，检查入口、形状、类型、设备、布局、输出独立性、输入不变性与数值一致性。结果保存契约摘要、逐项检查、有效协议和实际环境。参考实现或基础设施失败属于无效评测，候选失败属于候选问题。
+Manifest 的任务可提供 `contract`，包含 caseId、输入张量契约、输出张量契约与 inputUnmodified。每个张量声明 shape、dtype（`float16`、`bfloat16` 或 `float32`）和 contiguous。标量使用 `[]`，其他形状的各维长度须为正整数。`contiguous: false` 允许非连续张量。输出还需声明 independent。严格评测对每个 seed 执行两次，检查入口、形状、类型、设备、布局、输出独立性、输入不变性与数值一致性。结果保存契约摘要、逐项检查、有效协议和实际环境。参考实现或基础设施失败属于无效评测，候选失败属于候选问题。
 
 例如，为实际输入与输出符合以下形状的任务添加此 `contract`：
 
 ```json
 {
-  "schemaVersion": 1,
   "caseId": "operator-example",
   "inputs": [{ "shape": [2, 4], "dtype": "float16", "contiguous": true }],
   "output": { "shape": [2, 2, 2], "dtype": "float16", "contiguous": true, "independent": true },
@@ -201,7 +199,6 @@ Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed�
 `report.md` 展示所选 block、指标、L2 结论、采集状态及证据链接。`metrics.json` 记录总体覆盖率与逐题摘要。RSI 需要性能反馈时读取 `tasks/<task-key>/attempts/<attempt-id>/result.json` 的 `verdict.details.profiling`：
 
 ```text
-profiling.schemaVersion = 1
 profiling.status / error                    # 采集状态与错误
 profiling.kernels[].name                    # kernel 身份
 profiling.kernels[].metrics[blockId]         # 所选 block 中可用的字段

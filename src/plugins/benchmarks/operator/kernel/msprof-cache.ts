@@ -27,7 +27,7 @@ export class MsProfCache {
   async restore(profileDir: string): Promise<CachedCapture | null> {
     try {
       const data = expectRecord(JSON.parse(await readFile(join(this.entry, "capture.json"), "utf8")), "cached capture");
-      if (data.schemaVersion !== 1 || data.scope !== this.scope) throw new TypeError("Profile cache receipt mismatch");
+      if (data.scope !== this.scope) throw new TypeError("Profile cache receipt mismatch");
       const metrics = Object.fromEntries(Object.entries(expectRecord(data.metrics, "cached metrics"))
         .map(([block, values]) => [block, expectRecord(values, "cached block metrics")]));
       const replay = expectRecord(data.replay, "cached replay");
@@ -45,7 +45,7 @@ export class MsProfCache {
     const temporary = await mkdtemp(join(this.directory, ".capture-"));
     try {
       await cp(profileDir, join(temporary, "profile"), { recursive: true });
-      await writeFile(join(temporary, "capture.json"), JSON.stringify({ schemaVersion: 1, scope: this.scope, ...capture }));
+      await writeFile(join(temporary, "capture.json"), JSON.stringify({ scope: this.scope, ...capture }));
       // Publish the receipt and native artifacts together. A concurrent writer may have already published this scope.
       try { await rename(temporary, this.entry); }
       catch (error) {

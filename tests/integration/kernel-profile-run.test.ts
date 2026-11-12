@@ -23,7 +23,7 @@ async function fixture(ids: string[], selected: string[], taskTimeout: number) {
     await writeFile(join(root, candidate), `# ${id}\ndef kernel_function(x): return x\n`);
     tasks.push({ id, problem: "problem.py", candidate, candidateRoot, referenceKind: "pytorch" });
   }
-  await writeFile(join(root, "manifest.json"), JSON.stringify({ schemaVersion: 1, tasks }));
+  await writeFile(join(root, "manifest.json"), JSON.stringify({ tasks }));
   const configPath = join(root, "config.yaml");
   await writeFile(configPath, JSON.stringify({
     services: { default: { model: "unused", base_url: "http://localhost:1/v1", api_key: "${TEST_API_KEY}" } },

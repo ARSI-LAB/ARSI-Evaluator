@@ -88,8 +88,8 @@ export type KernelConfig = ReturnType<typeof parseKernelConfig>;
 
 export function parseKernelManifest(value: unknown) {
   const m = expectRecord(value, "kernel manifest");
-  rejectUnknown(m, ["schemaVersion", "tasks"], "kernel manifest");
-  if (m.schemaVersion !== 1 || !Array.isArray(m.tasks) || !m.tasks.length) throw new TypeError("Expected schemaVersion 1 and nonempty tasks");
+  rejectUnknown(m, ["tasks"], "kernel manifest");
+  if (!Array.isArray(m.tasks) || !m.tasks.length) throw new TypeError("Expected nonempty tasks");
   const ids = new Set<string>();
   return m.tasks.map((value, index) => {
     const t = expectRecord(value, `tasks[${index}]`);
@@ -167,7 +167,7 @@ export class KernelBenchmark implements Benchmark {
     const revision = digest(JSON.stringify(files.map(({ path, sha256 }) => ({ path, sha256 }))));
     if (previous && (previous.source !== "kernel-v1" || previous.revision !== revision)) throw new Error("Kernel evaluation source changed since locking");
     signal.throwIfAborted();
-    return { source: "kernel-v1", revision, files, metadata: { schemaVersion: 1, tasks } };
+    return { source: "kernel-v1", revision, files, metadata: { tasks } };
   }
 
   async *enumerate(source: SourceLock, signal: AbortSignal): AsyncIterable<TaskRef> {
@@ -194,7 +194,7 @@ export class KernelBenchmark implements Benchmark {
       env: this.backend.environment() });
     return {
       input: { id: task.id, prompt: "Submit the frozen kernel artifact for independent evaluation.", payload: { candidateSha256: candidate.sha256 } },
-      verification: { schemaVersion: 1, caseId: task.id, operation: this.config.operation, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
+      verification: { caseId: task.id, operation: this.config.operation, candidate: candidate.path, dataRoot: "data", candidateSha256: candidate.sha256,
         candidateRoot: `data/${task.candidateRoot}`,
         files: selected.map(f => ({ source: f.origin, target: f.path })),
         problem: `data/${task.problem}`, referenceKind: task.referenceKind, outputIndices: task.outputIndices ?? null,

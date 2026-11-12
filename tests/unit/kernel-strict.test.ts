@@ -2,11 +2,11 @@ import { expect, test } from "vitest";
 import { parseKernelContract, parseKernelAssessment } from "../../src/plugins/benchmarks/operator/kernel/strict.js";
 import { parseKernelManifest } from "../../src/plugins/benchmarks/operator/kernel/index.js";
 
-const contract = { schemaVersion: 1, caseId: "fixed", inputs: [{ shape: [2, 4], dtype: "float16", contiguous: true }],
+const contract = { caseId: "fixed", inputs: [{ shape: [2, 4], dtype: "float16", contiguous: true }],
   output: { shape: [2, 2, 2], dtype: "float16", contiguous: true, independent: true }, inputUnmodified: true };
 test("kernel manifest accepts and validates an explicit strict contract", () => {
   const task = { id: "t", problem: "p.py", candidate: "candidate/c.py", candidateRoot: "candidate", referenceKind: "pytorch", contract };
-  expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]?.contract).toEqual(contract);
+  expect(parseKernelManifest({ tasks: [task] })[0]?.contract).toEqual(contract);
   expect(() => parseKernelContract({ ...contract, output: { ...contract.output, shape: [0] } })).toThrow(/shape/);
   expect(() => parseKernelContract({ ...contract, unknown: true })).toThrow(/unknown/i);
 });
@@ -16,20 +16,20 @@ test("strict manifests retain mixed floating dtypes, scalars and optional contig
     { shape: [2, 3], dtype: "bfloat16", contiguous: false },
   ], output: { shape: [], dtype: "bfloat16", contiguous: true, independent: true } };
   const task = { id: "t", problem: "p.py", candidate: "candidate/c.py", candidateRoot: "candidate", referenceKind: "pytorch", contract: mixed };
-  expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]?.contract).toEqual(mixed);
+  expect(parseKernelManifest({ tasks: [task] })[0]?.contract).toEqual(mixed);
   for (const change of [{ dtype: "int32" }, { dtype: "float64" }, { contiguous: 0 }, { shape: [2, 0] }])
     expect(() => parseKernelContract({ ...mixed, inputs: [{ ...mixed.inputs[0], ...change }] })).toThrow();
   expect(() => parseKernelContract({ ...mixed, output: { ...mixed.output, dtype: "int32" } })).toThrow();
-  expect(kernelContractDigest(parseKernelContract(contract))).toBe("270f44b1b441eb2d52a40dcdd7fc201bfe8dba892ddcdfbfffffff8ed8c1ceb8");
+  expect(kernelContractDigest(parseKernelContract(contract))).toBe("0e8faa830613ce13b8e10ad4838e327d6c0f99944b19455445a9802516bd077a");
 });
 test("strict assessment rejects missing checks and unknown check states", () => {
-  expect(() => parseKernelAssessment({ schemaVersion: 1, checks: [] }, parseKernelContract(contract), [42])).toThrow();
+  expect(() => parseKernelAssessment({ checks: [] }, parseKernelContract(contract), [42])).toThrow();
 });
 
 import { kernelContractDigest, KERNEL_CHECK_IDS } from "../../src/plugins/benchmarks/operator/kernel/strict.js";
 import { kernelVerdict } from "../../src/plugins/benchmarks/operator/kernel/result.js";
 const parsed = parseKernelContract(contract);
-const assessment = () => ({ schemaVersion: 1, contractSha256: kernelContractDigest(parsed),
+const assessment = () => ({ contractSha256: kernelContractDigest(parsed),
   checks: [0, 1].flatMap(call => KERNEL_CHECK_IDS.map(id => ({ id, seed: 42, call, status: "passed", message: "" }))),
   effectiveProtocol: { seeds: [42], rtol: 0, atol: 0, warmup: 5, repeat: 20, timingScope: "all-device-kernels", aggregation: "iteration-mean", timingSeed: 42 },
   environment: { python: "fixture", torch: "fixture", torchNpu: "fixture", triton: "fixture", cann: "fixture", driver: "fixture", device: "fixture", visibleDevices: "0" }, errorOwnership: null });
@@ -66,7 +66,7 @@ test("many-seed assessment validation preserves check order with linear seed loo
 const protocol = { seeds: [42], rtol: 0, atol: 0, warmup: 5, repeat: 20 };
 
 test("strict verdict binds the worker's effective protocol to the requested settings", () => {
-  const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch",
+  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2,
     assessment: assessment() };
   const strict = { contract: parsed, protocol: { ...protocol, repeat: 21 } };
@@ -74,7 +74,7 @@ test("strict verdict binds the worker's effective protocol to the requested sett
 });
 
 test("strict verdict refuses not-run checks and unattributed candidate defects", () => {
-  const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: assessment() };
   expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/timing evidence/i);
   value.assessment.checks[0]!.status = "not-run";
@@ -85,7 +85,7 @@ test("strict verdict refuses not-run checks and unattributed candidate defects",
 
 test("strict performance verdict requires the observed environment identity", () => {
   const checks = { ...assessment(), environment: { ...assessment().environment, driver: null } };
-  const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 2, candidateMs: 1, speedup: 2, assessment: checks };
   expect(() => kernelVerdict(value, value.candidateSha256, "pytorch", [{ path: "c.py", sha256: value.candidateSha256 }], false, { contract: parsed, protocol })).toThrow(/environment/);
 });
@@ -96,7 +96,7 @@ test.each([true, false])("strict timing matches both timers to the input policy 
   checks.contractSha256 = kernelContractDigest(taskContract);
   checks.effectiveProtocol.warmup = 1;
   checks.effectiveProtocol.repeat = 1;
-  const value = { schemaVersion: 1, candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { candidateSha256: "a".repeat(64), referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 0.001, candidateMs: 0.001, speedup: 1, assessment: checks };
   const sample = (side: string) => ({
     csvPath: `profile-${side}/kernel_details.csv`, csvSha256: "0".repeat(64),

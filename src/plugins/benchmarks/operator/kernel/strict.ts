@@ -6,7 +6,7 @@ export const KERNEL_CHECK_IDS = ["entry", "shape", "dtype", "device", "layout", 
 export type KernelCheckId = typeof KERNEL_CHECK_IDS[number];
 const TENSOR_DTYPES = ["float16", "bfloat16", "float32"] as const;
 type TensorContract = { shape: number[]; dtype: typeof TENSOR_DTYPES[number]; contiguous: boolean };
-export type KernelContract = { schemaVersion: 1; caseId: string; inputs: TensorContract[];
+export type KernelContract = { caseId: string; inputs: TensorContract[];
   output: TensorContract & { independent: boolean }; inputUnmodified: boolean };
 export type KernelCheck = { id: KernelCheckId; seed: number; call: number;
   status: "passed" | "failed" | "not-run"; message: string };
@@ -14,7 +14,7 @@ export type KernelEffectiveProtocol = { seeds: number[]; rtol: number; atol: num
   timingScope: "all-device-kernels"; aggregation: "iteration-mean"; timingSeed: number };
 export const KERNEL_ENVIRONMENT_FIELDS = ["python", "torch", "torchNpu", "triton", "cann", "driver", "device", "visibleDevices"] as const;
 export type KernelEnvironment = Record<typeof KERNEL_ENVIRONMENT_FIELDS[number], string | null>;
-export type KernelAssessment = { schemaVersion: 1; contractSha256: string; checks: KernelCheck[];
+export type KernelAssessment = { contractSha256: string; checks: KernelCheck[];
   effectiveProtocol: KernelEffectiveProtocol; environment: KernelEnvironment; errorOwnership: "candidate" | "evaluation" | null };
 
 function tensor(value: unknown, output = false): TensorContract & { independent?: boolean } {
@@ -29,10 +29,10 @@ function tensor(value: unknown, output = false): TensorContract & { independent?
 }
 export function parseKernelContract(value: unknown): KernelContract {
   const r = expectRecord(value, "kernel contract");
-  rejectUnknown(r, ["schemaVersion", "caseId", "inputs", "output", "inputUnmodified"], "kernel contract");
-  if (r.schemaVersion !== 1 || !Array.isArray(r.inputs) || !r.inputs.length || typeof r.inputUnmodified !== "boolean") throw new TypeError("Invalid kernel contract");
+  rejectUnknown(r, ["caseId", "inputs", "output", "inputUnmodified"], "kernel contract");
+  if (!Array.isArray(r.inputs) || !r.inputs.length || typeof r.inputUnmodified !== "boolean") throw new TypeError("Invalid kernel contract");
   const output = tensor(r.output, true);
-  return { schemaVersion: 1, caseId: expectNonEmptyString(r.caseId, "contract.caseId"), inputs: r.inputs.map(v => tensor(v)),
+  return { caseId: expectNonEmptyString(r.caseId, "contract.caseId"), inputs: r.inputs.map(v => tensor(v)),
     output: { ...output, independent: output.independent === true }, inputUnmodified: r.inputUnmodified };
 }
 export function kernelContractDigest(contract: KernelContract): string {
@@ -40,8 +40,8 @@ export function kernelContractDigest(contract: KernelContract): string {
 }
 export function parseKernelAssessment(value: unknown, contract: KernelContract, seeds: number[]): KernelAssessment {
   const r = expectRecord(value, "kernel assessment");
-  rejectUnknown(r, ["schemaVersion", "contractSha256", "checks", "effectiveProtocol", "environment", "errorOwnership"], "kernel assessment");
-  if (r.schemaVersion !== 1 || r.contractSha256 !== kernelContractDigest(contract)) throw new TypeError("Invalid kernel assessment contract identity");
+  rejectUnknown(r, ["contractSha256", "checks", "effectiveProtocol", "environment", "errorOwnership"], "kernel assessment");
+  if (r.contractSha256 !== kernelContractDigest(contract)) throw new TypeError("Invalid kernel assessment contract identity");
   if (!Array.isArray(r.checks) || r.checks.length !== seeds.length * 2 * KERNEL_CHECK_IDS.length) throw new TypeError("Incomplete kernel checks");
   const expectedSeeds = new Set(seeds);
   const seen = new Set<string>();
@@ -68,7 +68,7 @@ export function parseKernelAssessment(value: unknown, contract: KernelContract, 
     return [name, v];
   })) as KernelEnvironment;
   if (r.errorOwnership !== null && r.errorOwnership !== "candidate" && r.errorOwnership !== "evaluation") throw new TypeError("Invalid errorOwnership");
-  return { schemaVersion: 1, contractSha256: String(r.contractSha256), checks,
+  return { contractSha256: String(r.contractSha256), checks,
     effectiveProtocol: { seeds, rtol: Number(p.rtol), atol: Number(p.atol), warmup: Number(p.warmup), repeat: Number(p.repeat),
       timingScope: "all-device-kernels", aggregation: "iteration-mean", timingSeed: Number(p.timingSeed) }, environment, errorOwnership: r.errorOwnership };
 }

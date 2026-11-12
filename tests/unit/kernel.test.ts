@@ -13,7 +13,7 @@ const outputPolicy = "kernel-original-f542-v1";
 const singleFile = [{ path: "c.py", sha256: sha }];
 
 test("prefixProfilingPaths rewrites artifacts and profileDir to verifier-relative", () => {
-  const raw = { schemaVersion: 1, status: "completed", error: "",
+  const raw = { status: "completed", error: "",
     kernels: [{ name: "kernel_fn", metrics: {}, artifacts: ["profiling/x.csv"], metadata: { outputPolicy, profileDir: "profiling/OPPROF_a" } }],
     metadata: { outputPolicy, profileDir: "profiling/OPPROF_a", kernelCount: 1, sources: { candidateFiles: singleFile } }, artifacts: ["profiling/result.json"] };
   const out = prefixProfilingPaths(raw, "kernel-profile_profiling_root") as Record<string, any>;
@@ -42,24 +42,24 @@ test("parseKernelConfig derives timeout from profiling attempts", () => {
 });
 
 test("parseKernelManifest validates schema and relative files", () => {
-  const manifest = parseKernelManifest({ schemaVersion: 1, tasks: [
+  const manifest = parseKernelManifest({ tasks: [
     { id: "t1", problem: "p.py", candidateRoot: "candidate", candidate: "candidate/c.py", referenceKind: "pytorch", outputIndices: [0, 1] },
   ] });
   expect(manifest[0]).toMatchObject({ id: "t1", referenceKind: "pytorch" });
-  expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [
+  expect(() => parseKernelManifest({ tasks: [
     { id: "t1", problem: "p.py", candidateRoot: "candidate", candidate: "candidate/c.py", referenceKind: "pytorch" },
     { id: "t1", problem: "p.py", candidateRoot: "candidate", candidate: "candidate/c.py", referenceKind: "pytorch" },
   ] })).toThrow(/Duplicate/);
-  expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [
+  expect(() => parseKernelManifest({ tasks: [
     { id: "t1", problem: "p.py", candidateRoot: "candidate", candidate: "candidate/c.py", referenceKind: "onnx" },
   ] })).toThrow(/referenceKind/);
-  expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [
+  expect(() => parseKernelManifest({ tasks: [
     { id: "t1", problem: "../escape.py", candidateRoot: "candidate", candidate: "candidate/c.py", referenceKind: "pytorch" },
   ] })).toThrow(/relative file/);
 });
 
 const validProfiling = {
-  schemaVersion: 1, status: "completed", error: "",
+  status: "completed", error: "",
   kernels: [{ name: "kernel0", metrics: { "0": { aiv_vec_ratio: 0.5 } }, metadata: { outputPolicy }, artifacts: [] }],
   metadata: { outputPolicy, sources: { candidateFiles: singleFile } },
   artifacts: ["profiling/original-result.json", "profiling/metrics-dataframe.csv"],
@@ -68,12 +68,12 @@ const validProfiling = {
 test("manifest candidateRoot preserves explicit import roots and rejects unsafe layouts", () => {
   const task = { id: "tree", problem: "problem.py", candidate: "candidate/kernels/kernel.py",
     candidateRoot: "candidate", files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py"], referenceKind: "pytorch" };
-  expect(parseKernelManifest({ schemaVersion: 1, tasks: [task] })[0]).toMatchObject(task);
-  expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [{ ...task, candidateRoot: undefined }] })).toThrow(/candidateRoot/);
+  expect(parseKernelManifest({ tasks: [task] })[0]).toMatchObject(task);
+  expect(() => parseKernelManifest({ tasks: [{ ...task, candidateRoot: undefined }] })).toThrow(/candidateRoot/);
   for (const candidateRoot of ["../candidate", "/candidate", "candidate/", ".", "candidate\\kernels"])
-    expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [{ ...task, candidateRoot }] })).toThrow(/relative/);
+    expect(() => parseKernelManifest({ tasks: [{ ...task, candidateRoot }] })).toThrow(/relative/);
   for (const patch of [{ candidate: "outside.py" }, { problem: "candidate/reference.py" }, { candidateRoot: "candidate/kernels/kernel.py" }])
-    expect(() => parseKernelManifest({ schemaVersion: 1, tasks: [{ ...task, ...patch }] })).toThrow(/candidateRoot/);
+    expect(() => parseKernelManifest({ tasks: [{ ...task, ...patch }] })).toThrow(/candidateRoot/);
 });
 
 test("parseKernelProfiling rejects traversal and absolute artifact paths", () => {
@@ -85,12 +85,12 @@ test("parseKernelProfiling rejects traversal and absolute artifact paths", () =>
   for (const bad of [["../out.json", "x"], ["/abs/path.json", "x"], ["a\\b.json", "x"]]) {
     expect(() => parseKernelProfiling({ ...validProfiling, artifacts: bad }, singleFile)).toThrow(/verifier-relative/);
   }
-  expect(() => parseKernelProfiling({ ...validProfiling, schemaVersion: 2 }, singleFile)).toThrow(/identity/);
+  expect(() => parseKernelProfiling({ ...validProfiling, status: "unknown" }, singleFile)).toThrow(/identity/);
   expect(() => parseKernelProfiling({ ...validProfiling, kernels: "no" }, singleFile)).toThrow(/evidence/);
 });
 
 test("kernelVerdict accepts consistent passed timing and rejects mismatches", () => {
-  const payload = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch",
+  const payload = { candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "",
     referenceMs: 0.1, candidateMs: 0.05, speedup: 2, profiling: validProfiling };
   const verdict = kernelVerdict(payload, sha, "pytorch", singleFile, true);
@@ -107,7 +107,7 @@ test("kernelVerdict accepts consistent passed timing and rejects mismatches", ()
 
 test("kernelVerdict rejects failed results carrying scores and maps infra errors", () => {
   // Reject timing scores on failed results, including omitted fields (undefined !== null).
-  const base = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch",
+  const base = { candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "incorrect", error: "mismatch",
     referenceMs: null, candidateMs: null, speedup: null };
   expect(() => kernelVerdict({ ...base, referenceMs: 0.1, candidateMs: 0.05, speedup: 2 }, sha, "pytorch", singleFile))
@@ -120,9 +120,9 @@ test("kernelVerdict rejects failed results carrying scores and maps infra errors
 });
 
 test("kernelVerdict adapts unparseable profiling instead of failing the run", () => {
-  const payload = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch",
+  const payload = { candidateSha256: sha, referenceKind: "pytorch",
     timingScope: "all-device-kernels", status: "passed", error: "",
-    referenceMs: 0.1, candidateMs: 0.1, speedup: 1, profiling: { schemaVersion: 1 } };
+    referenceMs: 0.1, candidateMs: 0.1, speedup: 1, profiling: {} };
   const verdict = kernelVerdict(payload, sha, "pytorch", singleFile);
   const profiling = (verdict.details as Record<string, unknown>).profiling as Record<string, unknown>;
   expect(profiling.status).toBe("failed");
@@ -131,7 +131,7 @@ test("kernelVerdict adapts unparseable profiling instead of failing the run", ()
 
 test("evaluation profiling cannot publish a completed receipt without its declared candidate tree", () => {
   const candidateFiles = [{ path: "kernel.py", sha256: sha }, { path: "helper.py", sha256: "b".repeat(64) }];
-  const value = { schemaVersion: 1, candidateSha256: sha, referenceKind: "pytorch", timingScope: "all-device-kernels",
+  const value = { candidateSha256: sha, referenceKind: "pytorch", timingScope: "all-device-kernels",
     status: "passed", error: "", referenceMs: 1, candidateMs: 1, speedup: 1, profiling: validProfiling };
   expect(kernelVerdict(value, sha, "pytorch", candidateFiles, true)).toMatchObject({ passed: true,
     details: { profiling: { status: "failed" } } });

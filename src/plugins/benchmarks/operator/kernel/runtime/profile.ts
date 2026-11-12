@@ -275,7 +275,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   await writeFile(requestPath, JSON.stringify(request, null, 2), "utf8");
 
   const result: Record<string, unknown> = {
-    schemaVersion: 1, status: "failed", error: "", kernels: [],
+    status: "failed", error: "", kernels: [],
     metadata: {
       outputPolicy: KERNEL_PROFILE_OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT, artifactRoot: basename(root),
       scope: "original-first-triton-kernel-or-file-stem",

@@ -54,7 +54,7 @@ export class NpuKernelBackend implements KernelBackend {
   private async collectProfiling(request: KernelRequest, session: EnvironmentSession,
     signal: AbortSignal, value: Record<string, unknown>): Promise<void> {
     const fail = (error: string): void => {
-      value.profiling = { schemaVersion: 1, status: "failed", error, kernels: [], metadata: {}, artifacts: [] };
+      value.profiling = { status: "failed", error, kernels: [], metadata: {}, artifacts: [] };
     };
     try {
       const stem = "kernel-profile";

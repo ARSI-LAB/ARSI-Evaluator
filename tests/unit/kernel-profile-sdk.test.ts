@@ -46,8 +46,8 @@ async function fixture(
     await writeFile(join(dir, "refs/pkg/problem.py"), "from ..inputs import make_inputs\nclass Model: pass\nget_inputs = make_inputs\n");
   }
   const tensor = { dtype: "float16", shape: [1], contiguous: true };
-  const contract = { schemaVersion: 1, caseId: "fixed", inputs: [tensor], output: { ...tensor, independent: true }, inputUnmodified };
-  await writeFile(manifest, JSON.stringify({ schemaVersion: 1, tasks: [{ id: "fixed", problem: "problem.py", candidate: "candidate/kernel.py", candidateRoot: "candidate", referenceKind: "pytorch",
+  const contract = { caseId: "fixed", inputs: [tensor], output: { ...tensor, independent: true }, inputUnmodified };
+  await writeFile(manifest, JSON.stringify({ tasks: [{ id: "fixed", problem: "problem.py", candidate: "candidate/kernel.py", candidateRoot: "candidate", referenceKind: "pytorch",
     ...(candidateTree ? { candidate: "candidate/kernels/problem.py",
       files: ["candidate/kernels/__init__.py", "candidate/kernels/tiling.py",
         ...(nestedReference ? ["refs/__init__.py", "refs/pkg/__init__.py", "refs/inputs.py"] : [])] } : {}),

@@ -38,7 +38,7 @@ export function assertKernelProfileOutputPolicy(profile: Record<string, unknown>
 /** Validate the framework boundary; the profiler determines status, field availability and metric values. */
 export function parseKernelProfiling(value: unknown, candidateFiles: { path: string; sha256: string }[]): { [key: string]: JsonValue } {
   const p = expectRecord(value, "kernel profiling");
-  if (p.schemaVersion !== 1 || (p.status !== "completed" && p.status !== "failed") || typeof p.error !== "string")
+  if ((p.status !== "completed" && p.status !== "failed") || typeof p.error !== "string")
     throw new TypeError("Invalid kernel profiling identity");
   if (!Array.isArray(p.kernels) || !Array.isArray(p.artifacts)) throw new TypeError("Missing kernel profiling evidence");
   assertKernelProfileOutputPolicy(p);
@@ -67,7 +67,7 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
   strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> }): VerifyResult {
   const contract = strict?.contract;
   const r = expectRecord(value, "kernel result");
-  if (r.schemaVersion !== 1 || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
+  if (r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
   const details: { [key: string]: JsonValue } = { protocol: "kernel-v1", candidateSha256, referenceKind,
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
@@ -91,11 +91,11 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     try { details.profiling = parseKernelProfiling(r.profiling, candidateFiles); }
     catch {
       // Do not copy unvalidated objects or exception messages into reports as unsafe evidence paths.
-      details.profiling = { schemaVersion: 1, status: "failed", error: "Profiling result could not be adapted",
+      details.profiling = { status: "failed", error: "Profiling result could not be adapted",
         kernels: [], metadata: { adapterError: true }, artifacts: [] };
     }
   } else if (profilingRequested && r.status === "passed") {
-    details.profiling = { schemaVersion: 1, status: "failed", error: "Requested profiling did not return a result",
+    details.profiling = { status: "failed", error: "Requested profiling did not return a result",
       kernels: [], metadata: { missingResult: true }, artifacts: [] };
   }
   if (r.status === "infrastructure_error") throw new VerificationError("Kernel evaluation infrastructure failed", details);

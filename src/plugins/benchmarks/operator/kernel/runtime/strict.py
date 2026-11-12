@@ -27,7 +27,7 @@ def error_owner(exc):
 
 
 def new_assessment(request):
-    return {'schemaVersion': 1, 'contractSha256': request['contractSha256'],
+    return {'contractSha256': request['contractSha256'],
             'checks': [{'id': name, 'seed': seed, 'call': call, 'status': 'not-run', 'message': ''}
                        for seed in request['seeds'] for call in range(2) for name in CHECKS],
             'effectiveProtocol': {**{key: request[key] for key in ('seeds', 'rtol', 'atol', 'warmup', 'repeat')},

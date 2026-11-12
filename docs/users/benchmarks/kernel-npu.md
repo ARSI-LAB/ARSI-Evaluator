@@ -39,7 +39,6 @@ Profiling selects the first Triton `@jit` function in the entry, then checks dec
 
 ```json
 {
-  "schemaVersion": 1,
   "tasks": [
     {
       "id": "operator-example",
@@ -65,13 +64,12 @@ Source locks include SHA-256 for manifests, candidate/reference/dependencies, `p
 
 ## Strict Task Contracts and Audited Timing
 
-A manifest task may provide `contract` with schemaVersion 1, caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor declares its shape, dtype (`float16`, `bfloat16`, or `float32`) and contiguous flag. Use `[]` for a scalar and positive integer extents for other shapes. Set `contiguous: false` to permit strided tensors. The output also declares independent. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference or infrastructure failures invalidate an evaluation. Candidate failures are attributed to the candidate.
+A manifest task may provide `contract` with caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor declares its shape, dtype (`float16`, `bfloat16`, or `float32`) and contiguous flag. Use `[]` for a scalar and positive integer extents for other shapes. Set `contiguous: false` to permit strided tensors. The output also declares independent. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference or infrastructure failures invalidate an evaluation. Candidate failures are attributed to the candidate.
 
 For example, add this `contract` to a task whose actual inputs and output match these shapes:
 
 ```json
 {
-  "schemaVersion": 1,
   "caseId": "operator-example",
   "inputs": [{ "shape": [2, 4], "dtype": "float16", "contiguous": true }],
   "output": { "shape": [2, 2, 2], "dtype": "float16", "contiguous": true, "independent": true },
@@ -201,7 +199,6 @@ Evaluation attempts save `verifier/kernel-result.json`; independent profiling sa
 `report.md` shows the selected block, its metrics and L2 analysis, capture status and evidence links. `metrics.json` stores coverage and per-task summaries. RSI reads `verdict.details.profiling` from `tasks/<task-key>/attempts/<attempt-id>/result.json`:
 
 ```text
-profiling.schemaVersion = 1
 profiling.status / error                    # Collection status and error
 profiling.kernels[].name                    # Kernel identity
 profiling.kernels[].metrics[blockId]         # Available fields from the selected block
