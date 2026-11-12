@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseKernelContract, parseKernelAssessment } from "../../src/plugins/benchmarks/operator/kernel/strict.js";
+import { parseKernelContract, parseKernelAssessment, KERNEL_TENSOR_DTYPES } from "../../src/plugins/benchmarks/operator/kernel/strict.js";
 import { parseKernelManifest } from "../../src/plugins/benchmarks/operator/kernel/index.js";
 
 const contract = { caseId: "fixed", inputs: [{ shape: [2, 4], dtype: "float16", contiguous: true }],
@@ -17,9 +17,9 @@ test("strict manifests retain mixed floating dtypes, scalars and optional contig
   ], output: { shape: [], dtype: "bfloat16", contiguous: true, independent: true } };
   const task = { id: "t", problem: "p.py", candidate: "candidate/c.py", candidateRoot: "candidate", referenceKind: "pytorch", contract: mixed };
   expect(parseKernelManifest({ tasks: [task] })[0]?.contract).toEqual(mixed);
-  for (const change of [{ dtype: "int32" }, { dtype: "float64" }, { contiguous: 0 }, { shape: [2, 0] }])
+  for (const change of [{ dtype: "float64" }, { dtype: "uint8" }, { contiguous: 0 }, { shape: [2, 0] }])
     expect(() => parseKernelContract({ ...mixed, inputs: [{ ...mixed.inputs[0], ...change }] })).toThrow();
-  expect(() => parseKernelContract({ ...mixed, output: { ...mixed.output, dtype: "int32" } })).toThrow();
+  expect(() => parseKernelContract({ ...mixed, output: { ...mixed.output, dtype: "float64" } })).toThrow();
   expect(kernelContractDigest(parseKernelContract(contract))).toBe("0e8faa830613ce13b8e10ad4838e327d6c0f99944b19455445a9802516bd077a");
 });
 test("strict assessment rejects missing checks and unknown check states", () => {
@@ -115,4 +115,31 @@ test.each([true, false])("strict timing matches both timers to the input policy 
     rows: [...side.rows, { ...side.rows[1]!, step: 2, startUs: 2 }] });
   expect(() => verdict({ ...value, timingEvidence: { ...matching, reference: differentRepeat(matching.reference),
     candidate: differentRepeat(matching.candidate) } })).toThrow(/warmup or repeat mismatch/);
+});
+
+test("kernel contract accepts every supported tensor dtype for inputs and outputs", () => {
+  for (const dtype of KERNEL_TENSOR_DTYPES) {
+    const value = { ...contract, inputs: [{ shape: [2, 4], dtype, contiguous: true }],
+      output: { shape: [2, 2, 2], dtype, contiguous: true, independent: true } };
+    expect(parseKernelContract(value)).toEqual(value);
+  }
+});
+
+test("kernel contract accepts mixed integer and floating input dtypes", () => {
+  const value = { ...contract,
+    inputs: [{ shape: [2, 4], dtype: "int64", contiguous: true }, { shape: [4], dtype: "int32", contiguous: true },
+      { shape: [2, 4], dtype: "float32", contiguous: true }],
+    output: { shape: [2, 2, 2], dtype: "float32", contiguous: true, independent: true } };
+  expect(parseKernelContract(value)).toEqual(value);
+});
+
+test("kernel contract rejects dtypes outside the supported vocabulary and reports the observed value", () => {
+  for (const dtype of ["half", "torch.float32", "fp32", "float8_e4m3fn", null, 42]) {
+    expect(() => parseKernelContract({ ...contract, inputs: [{ shape: [2, 4], dtype, contiguous: true }] }))
+      .toThrow(`contract tensor.dtype must be one of ${KERNEL_TENSOR_DTYPES.join(", ")}; got ${String(dtype)}`);
+  }
+});
+
+test("widening dtype validation preserves the existing float16 contract digest", () => {
+  expect(kernelContractDigest(parseKernelContract(contract))).toBe("0e8faa830613ce13b8e10ad4838e327d6c0f99944b19455445a9802516bd077a");
 });

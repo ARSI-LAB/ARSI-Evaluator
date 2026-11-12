@@ -101,7 +101,7 @@ Source locks include SHA-256 for manifests, candidate/reference/dependencies, `p
 
 ## Strict Task Contracts and Audited Timing
 
-A manifest task may provide `contract` with caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor declares its shape, dtype (`float16`, `bfloat16`, or `float32`) and contiguous flag. Use `[]` for a scalar and positive integer extents for other shapes. Set `contiguous: false` to permit strided tensors. The output also declares independent. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference or infrastructure failures invalidate an evaluation. Candidate failures are attributed to the candidate.
+A manifest task may provide `contract` with caseId, input tensor contracts, output tensor contract, and inputUnmodified. Each tensor declares its shape, dtype (`float16`, `bfloat16`, `float32`, `int64`, or `int32`) and contiguous flag. Use `[]` for a scalar and positive integer extents for other shapes. Set `contiguous: false` to permit strided tensors. The output also declares independent. Strict evaluation checks entry, shape, dtype, device, layout, output independence, input preservation and numerical equality twice per seed. Results contain the contract digest, per-check assessment, effective protocol and observed environment. Reference or infrastructure failures invalidate an evaluation. Candidate failures are attributed to the candidate.
 
 For example, add this `contract` to a task whose actual inputs and output match these shapes:
 

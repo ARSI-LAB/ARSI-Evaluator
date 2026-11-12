@@ -4,8 +4,9 @@ import { expectRecord, expectNonEmptyString, rejectUnknown } from "../../../../c
 
 export const KERNEL_CHECK_IDS = ["entry", "shape", "dtype", "device", "layout", "independent-output", "input-unmodified", "numerical"] as const;
 export type KernelCheckId = typeof KERNEL_CHECK_IDS[number];
-const TENSOR_DTYPES = ["float16", "bfloat16", "float32"] as const;
-type TensorContract = { shape: number[]; dtype: typeof TENSOR_DTYPES[number]; contiguous: boolean };
+export const KERNEL_TENSOR_DTYPES = ["float16", "bfloat16", "float32", "int64", "int32"] as const;
+export type KernelTensorDtype = typeof KERNEL_TENSOR_DTYPES[number];
+type TensorContract = { shape: number[]; dtype: KernelTensorDtype; contiguous: boolean };
 export type KernelContract = { caseId: string; inputs: TensorContract[];
   output: TensorContract & { independent: boolean }; inputUnmodified: boolean };
 export type KernelCheck = { id: KernelCheckId; seed: number; call: number;
@@ -17,14 +18,16 @@ export type KernelEnvironment = Record<typeof KERNEL_ENVIRONMENT_FIELDS[number],
 export type KernelAssessment = { contractSha256: string; checks: KernelCheck[];
   effectiveProtocol: KernelEffectiveProtocol; environment: KernelEnvironment; errorOwnership: "candidate" | "evaluation" | null };
 
+const isKernelTensorDtype = (value: unknown): value is KernelTensorDtype =>
+  typeof value === "string" && (KERNEL_TENSOR_DTYPES as readonly string[]).includes(value);
+
 function tensor(value: unknown, output = false): TensorContract & { independent?: boolean } {
   const r = expectRecord(value, "contract tensor");
   rejectUnknown(r, output ? ["shape", "dtype", "contiguous", "independent"] : ["shape", "dtype", "contiguous"], "contract tensor");
   if (!Array.isArray(r.shape) || r.shape.some(n => !Number.isSafeInteger(n) || n <= 0)) throw new TypeError("contract tensor.shape must contain positive integers");
-  const dtype = TENSOR_DTYPES.find(value => value === r.dtype);
-  if (dtype === undefined) throw new TypeError("contract tensor.dtype must be float16, bfloat16 or float32");
+  if (!isKernelTensorDtype(r.dtype)) throw new TypeError(`contract tensor.dtype must be one of ${KERNEL_TENSOR_DTYPES.join(", ")}; got ${String(r.dtype)}`);
   if (typeof r.contiguous !== "boolean" || (output && typeof r.independent !== "boolean")) throw new TypeError("Invalid contract tensor layout");
-  return { shape: r.shape as number[], dtype, contiguous: r.contiguous,
+  return { shape: r.shape as number[], dtype: r.dtype, contiguous: r.contiguous,
     ...(output ? { independent: r.independent as boolean } : {}) };
 }
 export function parseKernelContract(value: unknown): KernelContract {
