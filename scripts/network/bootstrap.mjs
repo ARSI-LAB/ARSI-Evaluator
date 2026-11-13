@@ -7368,7 +7368,7 @@ var require_dist = __commonJS({
 
 // src/infrastructure/network/package-manager.ts
 import { lstat, realpath } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 async function packageManagerCli(name) {
   const paths = [dirname(process.execPath), ...(process.env.PATH ?? "").split(delimiter)].map((path) => path.replace(/^"|"$/gu, "")).filter(Boolean);
   for (const path of new Set(paths)) {
@@ -7382,6 +7382,16 @@ async function packageManagerCli(name) {
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
+    }
+    try {
+      const executable2 = join(path, name);
+      if ((await lstat(executable2)).isSymbolicLink()) {
+        const target = await realpath(executable2);
+        const entrypoints = name === "npm" ? ["npm-cli.js", "npm.js"] : ["pnpm.cjs", "pnpm.js"];
+        if (entrypoints.includes(basename(target)) && (await lstat(target)).isFile()) return target;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
   }
   throw new Error(`Cannot locate installed ${name} beside Node or on PATH`);

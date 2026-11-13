@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 
 /** Resolve JavaScript entry points without passing installer arguments through cmd.exe. */
 export async function packageManagerCli(name: "npm" | "pnpm"): Promise<string> {
@@ -13,6 +13,18 @@ export async function packageManagerCli(name: "npm" | "pnpm"): Promise<string> {
       catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
+    }
+    // Unix installations commonly expose bin/npm -> ../lib/node_modules/npm/bin/npm-cli.js.
+    // Resolve the JavaScript target, never a shell or native launcher passed to Node.
+    try {
+      const executable = join(path, name);
+      if ((await lstat(executable)).isSymbolicLink()) {
+        const target = await realpath(executable);
+        const entrypoints = name === "npm" ? ["npm-cli.js", "npm.js"] : ["pnpm.cjs", "pnpm.js"];
+        if (entrypoints.includes(basename(target)) && (await lstat(target)).isFile()) return target;
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
   }
   throw new Error(`Cannot locate installed ${name} beside Node or on PATH`);
