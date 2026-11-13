@@ -128,6 +128,30 @@ test("a shared image survives until its last selected configuration is removed",
   expect((await fake.inventory.cleanup(selected(true, "b".repeat(64)), signal())).items.every(item => item.status === "deleted")).toBe(true);
 });
 
+test("a missing alias held by another configuration cannot block cleanup of a live tag", async () => {
+  const fake = docker();
+  const current = "ember-evaluator/base:linux-amd64-base";
+  const other = owner("b".repeat(64));
+  await acquire(fake, false, other);
+  await fake.inventory.use(owner(), signal(), () =>
+    fake.inventory.command(["pull", current], { signal: signal() }));
+  fake.images.delete(source);
+  fake.images.delete(base);
+  const file = join(directory, (await readdir(directory)).find(name => name.endsWith(".json"))!);
+  const before = await readFile(file, "utf8");
+  const callsBeforePreview = fake.calls.length;
+  expect((await fake.inventory.cleanup(selected(false), signal())).items).toEqual([
+    expect.objectContaining({ reference: current, status: "candidate" }),
+  ]);
+  expect(await readFile(file, "utf8")).toBe(before);
+  expect(fake.calls.slice(callsBeforePreview).some(args => args[0] === "image" && args[1] === "inspect")).toBe(false);
+  expect((await fake.inventory.cleanup(selected(), signal())).items).toEqual([
+    expect.objectContaining({ reference: current, status: "deleted" }),
+  ]);
+  expect(JSON.parse(await readFile(file, "utf8")).entries).toEqual([]);
+  expect((await fake.inventory.cleanup(selected(true, other.configFingerprint), signal())).items).toEqual([]);
+});
+
 test("210 tasks sharing one image add one owner per configuration", async () => {
   const fake = docker();
   const shared = "ember-evaluator/shared:solve-runtime-a";

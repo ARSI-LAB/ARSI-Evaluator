@@ -114,6 +114,8 @@ Records default to `EVALUATOR_CACHE_DIR/docker-images`, otherwise system cache l
 
 This command leaves build caches, datasets, archives, results, and persistent Ray clusters. Removing references may free less disk than image size because layers remain shared.
 
+Cleanup checks references against Docker first. Missing tags are omitted from the results and no longer protect other references to the same image. Executing cleanup removes those stale records from the daemon's inventory. A preview leaves the inventory intact.
+
 ### Increase Execution Concurrency
 
 ```yaml

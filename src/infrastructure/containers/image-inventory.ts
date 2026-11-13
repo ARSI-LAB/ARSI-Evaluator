@@ -466,27 +466,53 @@ export class DockerImageInventory {
     return this.edit(signal, async data => {
       const items: ImageCleanupItem[] = [];
       const leases = data.leases.filter(activeLease);
-      const inventory = request.all ? (await command(["image", "ls", "--no-trunc", "--format", "{{json .}}"])).stdout.trim() : "";
+      const inventory = !leases.length || request.all
+        ? (await command(["image", "ls", "--all", "--no-trunc", "--format", "{{json .}}"])).stdout.trim() : "";
       const listedImages = new Map<string, string | null>();
-      if (request.all) for (const line of inventory.split(/\r?\n/u).filter(Boolean)) {
+      const recordedReferences = new Set(data.entries.map(entry => entry.reference));
+      for (const line of inventory.split(/\r?\n/u).filter(Boolean)) {
         const image: unknown = JSON.parse(line);
         if (!image || typeof image !== "object" || !("Repository" in image) || typeof image.Repository !== "string" || !("Tag" in image) || typeof image.Tag !== "string") throw new Error("Invalid Docker image list");
         if (image.Tag === "<none>") continue;
         const reference = `${image.Repository}:${image.Tag}`;
         const listedId = "ID" in image && typeof image.ID === "string" && digest.test(image.ID) ? image.ID : undefined;
-        listedImages.set(reference, listedId ?? null);
-        if (!legacyOwned(reference)) continue;
-        if (!data.entries.some(entry => entry.reference === reference)) {
+        listedImages.set(referenceIdentity(reference), listedId ?? null);
+        if (request.all && legacyOwned(reference) && !recordedReferences.has(reference)) {
           const found = listedId ? { id: listedId } : await this.inspect(reference, commandSignal());
-          if (found) data.entries.push({ reference, id: found.id, owned: true, owners: [], dependencies: [] });
+          if (found) {
+            data.entries.push({ reference, id: found.id, owned: true, owners: [], dependencies: [] });
+            recordedReferences.add(reference);
+          }
         }
       }
-      const selected = data.entries.filter(entry => request.all || entry.owners.some(owner => owner.configFingerprint === request.configFingerprint));
+      const inScope = (entry: Entry) => request.all || entry.owners.some(owner => owner.configFingerprint === request.configFingerprint);
+      const remainingOwners = (entry: Entry) => entry.owners.filter(owner => owner.configFingerprint !== request.configFingerprint);
+      const add = (entry: Entry, status: ImageCleanupItem["status"], reason: string) =>
+        items.push({ reference: entry.reference, imageId: entry.id, status, reason });
+      // Digest references and bare IDs are not necessarily present in the tag listing.
+      const listedTag = (reference: string) => reference.includes("@") || /^(?:sha256:)?[a-f0-9]{12,64}$/u.test(reference)
+        ? null : listedImages.get(referenceIdentity(reference));
+      const stale = new Set<Entry>();
+      const changed = new Set<Entry>();
+      if (!leases.length) for (const entry of data.entries) {
+        signal.throwIfAborted();
+        const listed = listedTag(entry.reference);
+        let actual = listed;
+        if (listed === null) {
+          try { actual = (await this.inspect(entry.reference, commandSignal()))?.id; }
+          catch { signal.throwIfAborted(); continue; } // Unverified references still protect their image IDs.
+        }
+        if (actual === undefined) stale.add(entry);
+        else if (actual !== entry.id) changed.add(entry);
+      }
+      // An absent alias cannot keep a live alias of the same ID in use.
+      const selected = data.entries.filter(entry => inScope(entry) && !stale.has(entry));
+      if (request.execute) data.entries = data.entries.filter(entry => !stale.has(entry));
       // A lease already forbids every deletion. Do not hold up its release
       // while inspecting containers which cannot change this decision.
       const used = leases.length ? new Set<string>() : await this.containerImages(commandSignal());
-      const remainingOwners = (entry: Entry) => entry.owners.filter(owner => owner.configFingerprint !== request.configFingerprint);
-      const retainedIds = new Set(data.entries.filter(entry => !request.all && remainingOwners(entry).length).map(entry => entry.id));
+      const retainedIds = new Set(data.entries.filter(entry =>
+        !request.all && !stale.has(entry) && !changed.has(entry) && remainingOwners(entry).length).map(entry => entry.id));
       // Remove derived images before their inputs. Aliases can have the same ID.
       const ordered: Entry[] = [], pending = [...selected];
       while (pending.length) {
@@ -494,36 +520,36 @@ export class DockerImageInventory {
         ordered.push(pending.splice(index < 0 ? 0 : index, 1)[0]!);
       }
       for (const entry of ordered) {
-        const add = (status: ImageCleanupItem["status"], reason: string) => items.push({ reference: entry.reference, imageId: entry.id, status, reason });
-        if (signal.aborted) { add("skipped", "Cleanup cancelled before this reference was processed"); continue; }
-        if (leases.length) { add("skipped", "Docker images are in use by evaluation or preparation"); continue; }
+        const report = (status: ImageCleanupItem["status"], reason: string) => add(entry, status, reason);
+        if (signal.aborted) { report("skipped", "Cleanup cancelled before this reference was processed"); continue; }
+        if (leases.length) { report("skipped", "Docker images are in use by evaluation or preparation"); continue; }
+        if (changed.has(entry)) { report("skipped", "Image reference changed since it was recorded"); continue; }
         if (!entry.owned) {
           if (request.execute) entry.owners = request.all ? [] : remainingOwners(entry);
-          add("retained", "Source reference existed before evaluator acquisition"); continue;
+          report("retained", "Source reference existed before evaluator acquisition"); continue;
         }
-        if (used.has(entry.id)) { add("skipped", "Referenced by a running or stopped container"); continue; }
+        if (used.has(entry.id)) { report("skipped", "Referenced by a running or stopped container"); continue; }
         if (retainedIds.has(entry.id)) {
           if (request.execute) entry.owners = remainingOwners(entry);
-          add("retained", "Still associated with another configuration or task"); continue;
+          report("retained", "Still associated with another configuration or task"); continue;
         }
         try {
-          const listedId = listedImages.get(entry.reference);
-          const snapshotPreview = request.all && !request.execute && !entry.reference.includes("@") &&
-            entry.reference.lastIndexOf(":") > entry.reference.lastIndexOf("/") && listedId !== null;
+          const listedId = listedTag(entry.reference);
+          const snapshotPreview = !request.execute && typeof listedId === "string";
           // A preview is a snapshot; removing images still rechecks each exact
           // reference immediately before its delete command.
           const current = snapshotPreview ? listedId ? { id: listedId, tags: [] } : undefined
             : await this.inspect(entry.reference, commandSignal());
-          if (!current) { if (request.execute) data.entries = data.entries.filter(item => item !== entry); add("skipped", "Reference is already absent"); continue; }
-          if (current.id !== entry.id) { add("skipped", "Image reference changed since it was recorded"); continue; }
+          if (!current) { if (request.execute) data.entries = data.entries.filter(item => item !== entry); report("skipped", "Reference is already absent"); continue; }
+          if (current.id !== entry.id) { report("skipped", "Image reference changed since it was recorded"); continue; }
           if (entry.reference.includes("@") && current.tags.some(reference => !data.entries.some(record => record.reference === reference && record.id === entry.id && record.owned))) {
-            add("retained", "Digest also has image tags outside evaluator ownership"); continue;
+            report("retained", "Digest also has image tags outside evaluator ownership"); continue;
           }
-          if (!request.execute) { add("candidate", "Eligible evaluator image reference"); continue; }
+          if (!request.execute) { report("candidate", "Eligible evaluator image reference"); continue; }
           await command(["image", "rm", "--no-prune", entry.reference]);
           data.entries = data.entries.filter(item => item !== entry);
-          add("deleted", "Removed evaluator image reference");
-        } catch { add("failed", signal.aborted ? "Cleanup interrupted; removal was not confirmed" : "Docker could not remove or verify the image reference"); }
+          report("deleted", "Removed evaluator image reference");
+        } catch { report("failed", signal.aborted ? "Cleanup interrupted; removal was not confirmed" : "Docker could not remove or verify the image reference"); }
       }
       if (request.execute) data.leases = leases;
       return { nodeId: hostname(), daemonId: id, inventoryId: data.inventoryId, items,
