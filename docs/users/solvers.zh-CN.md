@@ -29,7 +29,7 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | `codex` | 用 Codex CLI 处理文本、图片和 PDF 页图，执行命令和生成任务文件 | 支持流式 Responses API 和工具调用的模型服务 |
 | `claudecode` | 用 Claude Code 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Anthropic Messages API 和工具调用的模型服务 |
 | `zcode` | 用 ZCode CLI 处理文本、图片和 PDF，在本机和 Docker 中执行 Bash | 支持流式 Chat Completions、Responses 或 Messages 和工具调用的模型服务 |
-| `trae` | 用 TRAE CLI 2.0 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Responses API 和工具调用的模型服务 |
+| `trae` | 用 TRAE CLI 2.0 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Chat Completions、Responses 或 Messages 和工具调用的模型服务 |
 | `codebuddy` | 用 CodeBuddy Code 处理文本、图片和 PDF 页图，执行 shell 命令 | 支持流式 Chat Completions 或 Responses 和工具调用的模型服务 |
 | `agentx-replay` | 按 Trace 请求模型，测量服务性能 | AgentX 所需的流式 API、长上下文、tokenizer 和 Python 或 Docker |
 | `choice-logprobs` | 直接请求单个输出位置的候选概率，供 MMLU 评分 | local 环境；模型服务必须实际返回 logprobs/top_logprobs；按需关闭思考 |
@@ -229,7 +229,7 @@ output:
   directory: ./results/trae
 ```
 
-- `base_url` 填 API 基址，例如 `https://api.openai.com/v1`。TRAE 会在该地址下请求 `/responses`。`solver.config` 可省略或填 `{}`，服务字段 `maxTokens`、`contextWindow` 和 `retry` 须省略。
+- TRAE 按所选模型服务的 `api` 请求接口。在 `base_url` 后，`openai-completions` 拼接 `/chat/completions`，`openai-responses` 拼接 `/responses`，`anthropic-messages` 拼接 `/messages`。`base_url` 需要包含服务要求的 API 前缀，例如连接 LiteLLM 时包含 `/v1`。服务字段 `maxTokens`、`contextWindow` 和 `retry` 须省略。
 - WSL 本机使用 Bash，Windows 原生使用 PowerShell，两者都使用 `workspace-write` 沙箱。Windows 原生可能需要先完成 [TRAE 沙箱初始化](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh)。需要 Bash 的任务用 WSL 或 Docker，Docker 中的 Bash 在任务容器内运行。
 - 使用图片或 PDF `pages` 附件时，在服务中设置 `inputModalities: [text, image]`。原生 PDF、任务技能和任务 MCP 配置会报能力不支持。每次 attempt 在 `agent/` 下保存脱敏的会话事件、Evaluator 轨迹和 stderr。见[图片与 PDF 评测](multimodal.zh-CN.md)。
 

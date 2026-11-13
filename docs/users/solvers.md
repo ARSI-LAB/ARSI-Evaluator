@@ -29,7 +29,7 @@ The environment controls whether shell commands can access the network. For MMLU
 | `codex` | Codex CLI for text, images, PDF pages, commands, and workspace files | Model service with streaming Responses API and tool calling |
 | `claudecode` | Claude Code for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
 | `zcode` | ZCode CLI for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
-| `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Responses and tool calling |
+| `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
 | `codebuddy` | CodeBuddy Code for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions or Responses and tool calling |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
@@ -229,7 +229,7 @@ output:
   directory: ./results/trae
 ```
 
-- Set `base_url` to the API base, such as `https://api.openai.com/v1`. TRAE sends requests to `/responses` under that base. Omit `solver.config` or use `{}`, and omit the service fields `maxTokens`, `contextWindow`, and `retry`.
+- The selected service's `api` controls the request path. TRAE appends `/chat/completions` for `openai-completions`, `/responses` for `openai-responses`, or `/messages` for `anthropic-messages` to `base_url`. Include any API prefix required by the service (for example, `/v1` for LiteLLM). Omit the service fields `maxTokens`, `contextWindow`, and `retry`.
 - WSL uses Bash and native Windows uses PowerShell. Both run in the `workspace-write` sandbox. Native Windows may need [TRAE sandbox initialization](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh). Use WSL or Docker for tasks that require Bash. Docker runs Bash within the task container.
 - Set `inputModalities: [text, image]` for images and PDF `pages` attachments. Native PDFs, task skills, and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
