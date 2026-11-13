@@ -54,6 +54,8 @@ export type ContainerService = {
 };
 
 export type EnvironmentSpec = {
+  /** Logical repository for a task-provided Docker image. */
+  imageScope?: { dataset: string; taskPath?: string };
   executionUsers?: { solve?: string; verify?: string };
   services?: Record<string, ContainerService>;
   healthcheck?: { command: string; intervalSeconds: number; timeoutSeconds: number; retries: number; startPeriodSeconds: number; startIntervalSeconds: number };

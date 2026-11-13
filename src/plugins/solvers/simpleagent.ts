@@ -1,6 +1,7 @@
 import { loadAttachments } from "../../runtimes/multimodal/input.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { join, posix } from "node:path";
+import { readFile } from "node:fs/promises";
 
 import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
 import type {
@@ -17,6 +18,7 @@ import { projectRunnerInput } from "../../runtimes/pi/protocol.js";
 import { consumePiRunner, PiRunnerError } from "../../runtimes/pi/process.js";
 import { parseShellToolPolicy, type ShellToolPolicy } from "../../runtimes/pi/tool-policy.js";
 import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { parseSolverToolPolicy, parseWebToolNames, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 
 export class SimpleAgentError extends Error {
   constructor(
@@ -29,7 +31,7 @@ export class SimpleAgentError extends Error {
   }
 }
 
-export type SimpleAgentConfig = { bundle?: PiBundleOptions; toolPolicy?: ShellToolPolicy };
+export type SimpleAgentConfig = SolverToolPolicy & { bundle?: PiBundleOptions & WebToolNames; toolPolicy?: ShellToolPolicy };
 
 /**
  * Parse the simpleagent solver config. `bundle` is optional; without it the
@@ -38,14 +40,22 @@ export type SimpleAgentConfig = { bundle?: PiBundleOptions; toolPolicy?: ShellTo
  */
 export function parseSimpleAgentConfig(value: unknown): SimpleAgentConfig {
   const config = expectRecord(value, "simpleagent");
-  rejectUnknown(config, ["bundle", "toolPolicy"], "simpleagent");
-  const toolPolicy = config.toolPolicy === undefined ? {} : {
-    toolPolicy: parseShellToolPolicy(config.toolPolicy, "simpleagent.toolPolicy"),
+  const policy = parseSolverToolPolicy(config, "simpleagent", ["bundle", "toolPolicy"]);
+  const options = config.toolPolicy === undefined ? policy : {
+    ...policy, toolPolicy: parseShellToolPolicy(config.toolPolicy, "simpleagent.toolPolicy"),
   };
-  if (config.bundle === undefined) return toolPolicy;
+  if (config.bundle === undefined) {
+    if (policy.webSearch === "enabled" || policy.webFetch === "enabled") {
+      unsupportedToolPolicy("simpleagent", "web tools require a Bundle with declared tool names");
+    }
+    return options;
+  }
   const bundle = expectRecord(config.bundle, "simpleagent.bundle");
-  rejectUnknown(bundle, ["path", "settings"], "simpleagent.bundle");
-  const parsed: PiBundleOptions = { path: expectNonEmptyString(bundle.path, "simpleagent.bundle.path") };
+  rejectUnknown(bundle, ["path", "settings", "webSearchTools", "webFetchTools"], "simpleagent.bundle");
+  const parsed: PiBundleOptions & WebToolNames = {
+    path: expectNonEmptyString(bundle.path, "simpleagent.bundle.path"),
+    ...parseWebToolNames(bundle, "simpleagent.bundle"),
+  };
   if (bundle.settings !== undefined) {
     const settings = expectRecord(bundle.settings, "simpleagent.bundle.settings");
     try {
@@ -54,7 +64,7 @@ export function parseSimpleAgentConfig(value: unknown): SimpleAgentConfig {
       throw new TypeError(`simpleagent.bundle.settings is not JSON-serializable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { bundle: parsed, ...toolPolicy };
+  return { bundle: parsed, ...options };
 }
 
 function local(session: EnvironmentSession): boolean {
@@ -85,7 +95,19 @@ export class SimpleAgentSolver implements Solver {
     private readonly auth: RuntimeAuth,
     private readonly bundle?: PiBundleOptions,
     private readonly toolPolicy?: ShellToolPolicy,
-  ) {}
+    private readonly policy: SolverToolPolicy & WebToolNames = {},
+  ) {
+    if (Object.keys(policy).length > 0) {
+      this.provenance = async signal => {
+        signal.throwIfAborted();
+        const entry = import.meta.resolve("@earendil-works/pi-coding-agent");
+        const { version } = JSON.parse(await readFile(new URL("../package.json", entry), { encoding: "utf8", signal }));
+        return { piSdkVersion: expectNonEmptyString(version, "Pi SDK version"), ...toolPolicyProvenance(policy, "pi-sdk") };
+      };
+    }
+  }
+
+  readonly provenance?: NonNullable<Solver["provenance"]>;
 
   dispose(): Promise<void> { return disposePiBundle(this.staged); }
 
@@ -162,6 +184,7 @@ export class SimpleAgentSolver implements Solver {
       workdir: session.workdir,
       outputDir: session.agentOutputDir,
       ...(this.toolPolicy === undefined ? {} : { toolPolicy: this.toolPolicy }),
+      ...(Object.keys(this.policy).length === 0 ? {} : { toolAccess: this.policy }),
       ...(extensions === undefined ? {} : { extensions }),
     });
     const handle = await session.start(

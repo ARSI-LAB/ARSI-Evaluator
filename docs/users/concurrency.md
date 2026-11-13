@@ -91,7 +91,7 @@ Explicit network preparation failures may receive bounded recovery; other failur
 
 memory means completed in-process cache; shared means coalesced active preparation; image means existing image; built means new build; reference means explicitly supplied image. These are not BuildKit layer hit rates. Shared Solver installs are reused while tasks keep independent workspaces/containers. Ray rejects explicit pipeline and retains batch protocols.
 
-Docker image names include short task names, solve/verify purpose, and kind. Shared installs use `ember-evaluator/shared`. Batch, pipeline, and Ray share naming, but caches belong to each node's Docker daemon. See [Docker FAQ](faq/docker.md#identify-and-inspect-task-images) for inspection, reuse, and upgrades.
+Tasks with the same build inputs reuse Docker image tags in the same phase and service. Batch, pipeline, and Ray use the same naming rules. Each Docker daemon has its own cache. See [Docker FAQ](faq/docker.md#identify-and-inspect-task-images) for inspection, reuse, and upgrades.
 
 Local batch/pipeline emit `[prepare]` by default without `EVALUATOR_DEBUG`. Task image readiness prints index, ID, purpose, elapsed time, and source, e.g. `Task 1/50 task=workbuddy/xxx Task image build completed; purpose=solve; elapsed 120.0s; source=new build`. Reused/explicit images say `Task image ready`, without claiming rebuilds. Runtime/Solver work may remain; pipeline `Environment ready` means full task readiness. Ray returns preparation/execution activity too. See [live previews](usage.md#live-execution-previews) for interactive multi-task display.
 

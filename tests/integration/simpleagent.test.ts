@@ -420,6 +420,28 @@ describe("simpleagent runner", () => {
     } finally { await session.dispose(new AbortController().signal); }
   }, 35_000);
 
+  test("no-tools requests stay empty after a model attempts a shell call", async () => {
+    const attemptPaths = await paths("no-tools");
+    const workspace = join(root, "no-tools-workspace");
+    await mkdir(workspace);
+    const input = projectRunnerInput({
+      key: { runId: "run", taskId: "no-tools", attemptId: "attempt" },
+      input: { id: "no-tools", prompt: "Complete alpha" },
+      model: { name: "fixture-model", endpoint, provider: null, api: "openai-completions" },
+      auth: { value: "key-no-tools", reference: null },
+      workdir: workspace,
+      outputDir: attemptPaths.agent,
+      toolAccess: { tools: "none" },
+      extensions: [join(workspace, "missing-extension.ts")],
+    });
+    expect((await run(input)).finalText).toBe("Answer: alpha");
+    expect(await stat(join(workspace, "marker.txt")).then(() => true, () => false)).toBe(false);
+    const requests = (await readFile(statePath, "utf8")).trim().split("\n").map(line => JSON.parse(line))
+      .filter(request => request.authorization === "Bearer key-no-tools");
+    expect(requests).toHaveLength(2);
+    expect(requests.every(request => (request.body.tools ?? []).length === 0)).toBe(true);
+  });
+
   test("rejects malformed and missing terminal protocol messages", async () => {
     const attemptPaths = await paths("protocol-errors");
     const context = {

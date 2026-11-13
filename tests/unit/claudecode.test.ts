@@ -62,6 +62,15 @@ test.each([
   expect(trajectory).not.toContain('"type":"end"');
 });
 
+test("Claude Code rejects a requested web tool missing from the native inventory", async () => {
+  const context = await attempt();
+  const handle = processWith(chunks(jsonl({ type: "system", subtype: "init", tools: ["Bash", "WebFetch"] }, resultEvent)));
+  await expect(consumeClaudeCode(handle, context, secret, ["WebFetch", "WebSearch"])).rejects.toMatchObject({
+    code: "CONFIG_INVALID", message: expect.stringContaining("WebSearch is unavailable"),
+  });
+  expect(handle.stop).toHaveBeenCalledOnce();
+});
+
 test.each([new DOMException("cancelled", "AbortError"), new DOMException("timed out", "TimeoutError")])(
   "Claude Code stops and preserves the abort reason (%s)", async reason => {
     const controller = new AbortController();
@@ -82,7 +91,7 @@ test("Claude Code validates service settings and supports preparation without cr
   const binding: ServiceBinding = { model: { name: "fixture", endpoint: "https://fixture.invalid/anthropic", provider: null, api: "anthropic-messages" },
     auth: { value: secret, reference: null } };
   expect(parseClaudeCodeConfig({})).toEqual({});
-  expect(() => parseClaudeCodeConfig({ tools: "Bash" })).toThrow(/unknown field tools/u);
+  expect(() => parseClaudeCodeConfig({ tools: "Bash" })).toThrow(/tools must be default or none/u);
   expect(() => new ClaudeCodeSolver({ ...binding, model: { ...binding.model, api: "openai-responses" } })).toThrow(/anthropic-messages/u);
   expect(() => new ClaudeCodeSolver({ ...binding, model: { ...binding.model, retry: { maxAttempts: 2 } } })).toThrow(/retry/u);
   expect(() => new ClaudeCodeSolver({ ...binding, model: { ...binding.model, contextWindow: 90_000 } })).toThrow(/contextWindow/u);

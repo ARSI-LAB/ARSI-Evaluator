@@ -7,10 +7,36 @@ import { recoverDockerAttempts } from "../../../infrastructure/containers/recove
 import { EvaluatorError } from "../../../core/errors/evaluator-error.js";
 import { createDockerImagePuller } from "../../../infrastructure/containers/image-pull.js";
 import { PlatformCapabilityDetector } from "../../../infrastructure/containers/platform.js";
+import { DockerImageInventory } from "../../../infrastructure/containers/image-inventory.js";
+import { platformImageCommand } from "../../../infrastructure/containers/image-inspect.js";
+import { dockerImageReference } from "../../../infrastructure/containers/image-name.js";
+import type { EnvironmentSpec } from "../../../core/contracts/environment.js";
+
+export function verifierImageInventory(docker: string): DockerImageInventory {
+  return new DockerImageInventory(platformImageCommand((args, options) => runDockerCommand(docker, args, options)));
+}
 
 /** Resolve the local immutable image ID before a task becomes ready. */
 export async function materializeVerifierImage(docker: string, image: string, signal: AbortSignal,
-  network?: import("../../../core/contracts/network.js").NetworkAccess): Promise<string> {
+  network?: import("../../../core/contracts/network.js").NetworkAccess, inventory?: DockerImageInventory,
+  imageScope?: EnvironmentSpec["imageScope"]): Promise<string> {
+  if (inventory) {
+    const command = inventory.command;
+    const platform = await new PlatformCapabilityDetector(command).nativePlatform(signal);
+    const key = `verifier:${platform}:${image}`;
+    const preferred = dockerImageReference(platform, "verify", imageScope);
+    return inventory.withSource(image, platform, signal, async () => {
+      try { await command(["image", "inspect", "--platform", platform, image, "--format", "{{.Id}}"], { signal }); }
+      catch {
+        signal.throwIfAborted();
+        const cached = await inventory.cached(key, platform, signal, preferred);
+        if (cached) return cached.id;
+        const pulled = await createDockerImagePuller(command, { network })(image, platform, signal);
+        return (await inventory.retain(pulled.reference, platform, signal, { key, preferred, removeAlias: true })).id;
+      }
+      return (await inventory.retain(image, platform, signal, { key, preferred, removeAlias: true })).id;
+    });
+  }
   const command: import("../../../infrastructure/containers/runtime-contract.js").DockerCommand = (args, options) => runDockerCommand(docker, args, options);
   let reference = image;
   const inspect = () => runDockerCommand(docker, ["image", "inspect", reference, "--format", "{{.Id}}"], { signal });
@@ -33,11 +59,12 @@ export function recoverVerifierContainers(docker: string, keys: AttemptKey[], si
 
 /** A created container is owned before its untrusted program is started. */
 export async function createVerifierContainer(docker: string, image: string, args: string[], command: string[],
-  key: AttemptKey, signal: AbortSignal) {
+  key: AttemptKey, signal: AbortSignal, inventory?: DockerImageInventory) {
   if (!/^sha256:[a-f0-9]{64}$/u.test(image)) throw new Error("Verifier requires a materialized image ID");
   const name = `evaluator-verifier-${randomUUID()}`;
   const labels = { run: key.runId, task: key.taskId, attempt: key.attemptId, phase: "verify" };
   const remove = (active: AbortSignal) => removeDockerContainer((argv, options) => runDockerCommand(docker, argv, options), name, active);
+  const release = await inventory?.lease(signal);
   try {
     await runDockerCommand(docker, ["create", "--pull", "never", "--name", name, "--interactive",
       ...Object.entries(labels).flatMap(([field, value]) => ["--label", `ember.${field}=${value.replace(/[\u0000-\u001f\u007f]/gu, "_")}`]),
@@ -47,6 +74,7 @@ export async function createVerifierContainer(docker: string, image: string, arg
     try { await remove(AbortSignal.timeout(60_000)); }
     catch (cleanup) { throw new EvaluatorError("CLEANUP_FAILED", "Verifier container creation failed and removal could not be confirmed", {},
       { cause: new AggregateError([error, cleanup]) }); }
+    finally { await release?.(); }
     throw error;
   }
   let child: ChildProcessWithoutNullStreams | undefined;
@@ -83,9 +111,11 @@ export async function createVerifierContainer(docker: string, image: string, arg
       if (disposed) return;
       detach?.();
       child?.kill();
-      await remove(active);
-      if (done) await done.catch(() => {});
-      disposed = true;
+      try {
+        await remove(active);
+        if (done) await done.catch(() => {});
+        disposed = true;
+      } finally { await release?.(); }
     },
   };
 }

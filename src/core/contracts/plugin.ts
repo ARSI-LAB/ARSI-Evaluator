@@ -36,6 +36,7 @@ export type FactoryContext<R extends PluginRole> = R extends "metrics" | "report
 
 export type PluginFactoryContext = {
   benchmarkName?: string;
+  solverName?: string;
   network?: import("./network.js").NetworkAccess;
   /** Bootstrap always supplies this; omitted by historical SDK callers means NPU. */
   hardware?: HardwareKind;

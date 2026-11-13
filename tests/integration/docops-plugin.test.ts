@@ -50,7 +50,6 @@ test("DocOps remains external until its Cordis plugin is loaded", async () => {
   expect(environment).toBeInstanceOf(DocOpsDockerEnvironment);
   expect(environment.supportsRuntimeInstallation).toBe(true);
   expect(environment.materialize).toBeTypeOf("function");
-  expect(environment.installRuntime).toBeTypeOf("function");
   expect(ctx.evaluator.configTransport("benchmark", "docops")).toEqual({ nodeLocal: { cacheDir: "cache" } });
   expect(ctx.evaluator.configTransport("environment", "docops-docker")).toEqual({ nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" } });
   await ctx.fiber.dispose();

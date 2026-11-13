@@ -10,7 +10,7 @@ Covers eight component interfaces, runnable metric plugins, explicit patches, an
 
 Components may report live activity. Solvers use `AttemptContext.activity?.({ message, lines, activity })`; Environment `materialize` argument4, `prepare` argument5, `installRuntime` argument4 accept the same callback. `onImageReady` retains position/meaning. Plugins without callbacks still work. ActivityListener/ComponentActivity are root exports.
 
-`materialize` argument5 optionally takes `EnvironmentPreparationContext`:`{ taskId, phase: "solve" | "verify" }`, exported at root. Batch/pipeline/Ray supply it; Docker uses task/purpose image names. Direct `prepare` gets attempt/phase identity. External environments may ignore it; wrappers should forward all args. It changes no task/access boundaries; absent context uses `shared` names. See [Docker naming/cache](../users/faq/docker.md#identify-and-inspect-task-images).
+The fifth argument to `materialize` optionally takes `EnvironmentPreparationContext` (`{ taskId, phase: "solve" | "verify" }`), exported from the package root. Batch, pipeline, and Ray supply it. Docker uses the task ID to select task-specific build settings and the phase to name images. Direct `prepare` obtains both from the attempt. External environments may ignore the context. Wrappers should forward all arguments. See [Docker image naming and reuse](../users/faq/docker.md#identify-and-inspect-task-images).
 
 With context, Docker migrates digest-pinned external images to stable Evaluator tags, validates/saves provenance, then removes official local references. Use returned receipts rather than assuming official references persist. Declarations/results retain sources. Fixed Node/mutable tags/context-free calls skip migration; see FAQ.
 

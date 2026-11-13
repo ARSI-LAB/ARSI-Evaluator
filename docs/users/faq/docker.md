@@ -18,40 +18,45 @@ When a task image lacks system CA certificates, Evaluator writes the pinned Node
 
 ## Identify and Inspect Task Images
 
-Local images use `ember-evaluator/<short-task>:<purpose>-<kind>-<hash>`. `solve` and `verify` identify solving and verification; the suffix distinguishes tasks and content. Use the task name or purpose to find images:
+Evaluator reuses references by actual image ID on the same Docker daemon. Newly prepared images retain at most one Evaluator-managed tag per ID, and can reuse existing source references. Each attempt starts a separate container from its final image ID.
 
-For `terminal-bench/atrx-vep-crispr`:
+Evaluator generates references in the form `ember-evaluator/<repository-path>:<platform>-<purpose>`. In `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-solver-codex`, each part has a specific meaning.
 
-| Kind | Example |
+- `ember-evaluator` is the Evaluator image namespace.
+- `terminalbench4.0/coq-block-bound` identifies the benchmark version and task path. Harbor uses this structure for task-provided images. A shared benchmark image uses just the benchmark name, such as `officeqa-pro-v2`. The default solve environment uses `base`.
+- `linux-amd64` represents the Docker platform `linux/amd64`. ARM64 uses `linux-arm64`.
+- `solver-codex` identifies the image used to launch Codex. The `base` purpose marks a base image, `verify` marks a separate verifier image, and `solve-service-redis` marks a Redis sidecar for the solve phase. Verification sidecars use `verify-service-<service>`.
+
+| Retained image | Example reference |
 | --- | --- |
-| Pinned official solve image | `ember-evaluator/atrx-vep-crispr:solve-base-<hash>` |
-| Solve runtime | `ember-evaluator/atrx-vep-crispr:solve-runtime-<hash>` |
-| Final solve image with agent | `ember-evaluator/atrx-vep-crispr:solve-agent-<hash>` |
-| Pinned official verify image | `ember-evaluator/atrx-vep-crispr:verify-base-<hash>` |
-| Verify runtime | `ember-evaluator/atrx-vep-crispr:verify-runtime-<hash>` |
-| Task Dockerfile, when needed | `ember-evaluator/atrx-vep-crispr:solve-task-<hash>` or `verify-task-<hash>` |
-| Agent build runtime reference, when needed | `ember-evaluator/atrx-vep-crispr:solve-agent-base-<hash>` |
-| Sidecars, when needed | `ember-evaluator/atrx-vep-crispr:verify-service-redis-base-<hash>`, plus `verify-service-redis-task-<hash>` for builds |
-| Shared agent installation | `ember-evaluator/shared:solver-install-<hash>` |
-| Internal gateway reference, when needed | `ember-evaluator/shared:gateway-base-<hash>` |
+| Default solve base | `ember-evaluator/base:linux-amd64-base` |
+| Harbor task base | `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-base` |
+| Solver image | `ember-evaluator/terminalbench4.0/coq-block-bound:linux-amd64-solver-codex` |
+| Shared OfficeQA Pro V2 corpus | `ember-evaluator/officeqa-pro-v2:linux-amd64-base` |
+| Separate verification image | `ember-evaluator/officeqa-pro-v2:linux-amd64-verify` |
+| Sidecar | `ember-evaluator/terminalbench4.0/example:linux-amd64-solve-service-redis` |
+| Separately acquired shared Node image | `ember-evaluator/node:linux-amd64-base` |
 
-Fixed-digest official task images receive local Evaluator names. Original official tags may be removed, but image content and official sources in results stay unchanged. Agent images are created only when installation is needed, so not every task has every image kind.
+When a tag already points to a different image, the next image gets a suffix such as `-2` or `-3`. The suffix distinguishes images that would otherwise have the same tag. Tasks and roles that resolve to the same image ID share its registered reference. For example, a verifier image shared by two tasks may appear under just one task path.
 
-Inspect one task, all verification images, or shared images:
+ModelScope uses its archive file layout. A local `linux-amd64-base` tag for a task base corresponds to `linux/amd64/solve.tar.gz` in the dataset repository. See the [archive layout](../../development/image-archives.md#文件布局) for verification and sidecar paths.
+
+One multi-stage build adds the Solver installation and runtime helpers to the final solve image. Different solve bases can reuse the installation stage in BuildKit. Preparation releases temporary build tags. Separate verification retains the image used to start the verifier and any sources still used by other tasks.
+
+List images by benchmark.
 
 ```bash
-docker image ls --filter 'reference=ember-evaluator/atrx-vep-crispr:*'
-docker image ls --filter 'reference=ember-evaluator/*:verify-*'
-docker image ls --filter 'reference=ember-evaluator/shared:*'
+docker image ls --filter 'reference=ember-evaluator/terminalbench4.0/*:*'
+docker image ls --filter 'reference=ember-evaluator/officeqa-pro-v2:*'
 ```
 
-Images can be reused for the same task, purpose, and content. Multiple tags can share an IMAGE ID without duplicating the image, and different images can share layers. Use `docker system df` for disk usage rather than summing SIZE from `docker image ls`.
+Different images can share layers. Use `docker system df` for disk usage.
 
 Alongside Docker images, Evaluator stores local records needed for reuse under `EVALUATOR_CACHE_DIR/docker-images/`, or the application cache directory when unset. Toolbox typically uses `/toolbox-home/.cache/ember-evaluator/docker-images/`. Copying images without these records may still require downloading again.
 
 Preparation fails if local image tags were replaced or the platform does not match. Check Docker context, target platform, and cache directory first. To clean up and prepare again, follow [delete evaluation images](../usage.md#delete-evaluation-images), then run `warmup`.
 
-If an upgrade changes image names, first preparation may rebuild, while Docker can still reuse existing layers. Old images and containers using them are not deleted automatically; renaming alone does not free disk space.
+When preparation hits an older tag, Evaluator replaces it with a readable tag once containers and other preparations release the image. Cache lookups still use build inputs and image IDs. Use `cleanup images --all` to preview cleanup of older tags.
 
 ## Will Restarting Redownload or Rebuild Every Image?
 
@@ -62,7 +67,7 @@ Normally no. Completed images/tags on the same daemon are reused when identities
 | Official task, service, and Node images | Reuse usable local content; download missing images |
 | Task Dockerfile images | Reuse when build files, arguments, and platform are unchanged |
 | Runtime images | Reuse when task/Node images, runtime code, and platform are unchanged |
-| Agent installation and final solve images | Reuse when relevant base images, Agent files, installation commands, and arguments are unchanged |
+| Final solve images with an Agent | Reuse when relevant base images, Agent files, installation commands, and arguments are unchanged |
 
 Runs still check selected environments, so Preparing solve image and runtime environment/Task image ready logs repeat without proving downloads/builds. `source=explicit image reference` means configuration supplied an address, not whether it was cached/pulled. Runtime/Solver work may follow. See [preparation](../concurrency.md).
 
@@ -74,7 +79,6 @@ Re-pulls/builds may occur when:
 - Images/tags were deleted or Docker context/daemon changed; local/Ray caches are not shared automatically.
 - Task/Node images, platforms, runtime programs, Solver files/dependencies, or build args changed.
 - Switching Docker backends makes previous images or build caches unavailable.
-- Naming upgrades/task IDs/purpose changes select different tags.
 
 Docker may still reuse build layers; its cache determines which steps rerun.
 

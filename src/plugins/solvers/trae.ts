@@ -7,17 +7,33 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { parseSolverToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 import { consumeTrae } from "../../runtimes/trae/protocol.js";
 import { TRAE_VERSION, traeRuntimeInstallation } from "../../runtimes/trae/runtime.js";
 
-export function parseTraeConfig(value: unknown): Record<string, never> {
-  rejectUnknown(expectRecord(value, "trae config"), [], "trae config");
-  return {};
+// Captured from the locked headless CLI, including tools exposed after the first batch is removed.
+const TRAE_TOOLS = [
+  "Read", "Write", "Edit", "Bash", "Agent", "ListAgents", "Skill", "TaskCreate", "TaskGet", "TaskList",
+  "TaskUpdate", "exec", "wait", "Monitor", "SendMessage", "TaskStop", "TaskOutput", "WebFetch",
+  "Glob", "Grep", "WebSearch", "web_search",
+];
+
+const TRAE_WIRE_APIS = new Map<string, string>([
+  ["openai-completions", "chat_completions"],
+  ["openai-responses", "responses"],
+  ["anthropic-messages", "anthropic_messages"],
+]);
+
+export function parseTraeConfig(value: unknown): SolverToolPolicy {
+  const policy = parseSolverToolPolicy(value, "trae config");
+  if (policy.webSearch === "enabled" || policy.webFetch === "enabled") {
+    unsupportedToolPolicy("trae", "the locked headless exec mode cannot explicitly enable web search or fetch");
+  }
+  return policy;
 }
 
-function responsesEndpoint(endpoint: string | null): string {
+function apiBase(endpoint: string | null): string {
   const url = endpoint === null ? null : URL.parse(endpoint);
   if (!url || !["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new TypeError("trae requires an HTTP(S) base_url without credentials, query or fragment");
@@ -28,13 +44,17 @@ function responsesEndpoint(endpoint: string | null): string {
 export class TraeSolver implements Solver {
   readonly inputModalities = ["text", "image"] as const;
   private readonly endpoint: string;
+  private readonly wireApi: string;
 
-  constructor(private readonly binding: ServiceBinding) {
+  constructor(private readonly binding: ServiceBinding, private readonly policy: SolverToolPolicy = {}) {
     const { model } = binding;
-    if (model.api !== "openai-responses") {
-      throw new TypeError("trae requires api: openai-responses on its selected service");
+    const api = model.api;
+    const wireApi = api === null ? undefined : TRAE_WIRE_APIS.get(api);
+    if (wireApi === undefined) {
+      throw new TypeError("trae requires api: openai-completions, openai-responses or anthropic-messages on its selected service");
     }
-    this.endpoint = responsesEndpoint(model.endpoint);
+    this.wireApi = wireApi;
+    this.endpoint = apiBase(model.endpoint);
     if (model.maxTokens !== undefined || model.contextWindow !== undefined || model.retry !== undefined) {
       throw new TypeError("trae does not support services.*.maxTokens, services.*.contextWindow or services.*.retry");
     }
@@ -48,7 +68,7 @@ export class TraeSolver implements Solver {
 
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     signal.throwIfAborted();
-    return { traeVersion: TRAE_VERSION };
+    return { ...toolPolicyProvenance(this.policy, "trae-native"), traeVersion: TRAE_VERSION };
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
@@ -70,7 +90,7 @@ export class TraeSolver implements Solver {
       throw new EvaluatorError("ENV_RUNTIME_INSTALL_FAILED", "trae requires an environment-prepared runtime with writable state");
     }
     const mapping = session.modelEndpoint;
-    const endpoint = mapping?.originEndpoint === model.endpoint ? responsesEndpoint(mapping.baseUrl) : this.endpoint;
+    const endpoint = mapping?.originEndpoint === model.endpoint ? apiBase(mapping.baseUrl) : this.endpoint;
     const local = runtime.persistent;
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
@@ -88,8 +108,12 @@ export class TraeSolver implements Solver {
       'model_providers.ember.name="Ember Evaluator"',
       `model_providers.ember.base_url=${JSON.stringify(endpoint)}`,
       'model_providers.ember.env_key="EVALUATOR_TRAE_API_KEY"',
-      'model_providers.ember.wire_api="responses"',
+      `model_providers.ember.wire_api=${JSON.stringify(this.wireApi)}`,
       ...(local && process.platform === "win32" ? ['windows.sandbox="unelevated"'] : []),
+    ];
+    const denied = this.policy.tools === "none" ? TRAE_TOOLS : [
+      ...(this.policy.webSearch === "disabled" ? ["WebSearch", "web_search"] : []),
+      ...(this.policy.webFetch === "disabled" ? ["WebFetch"] : []),
     ];
     const media = await loadAttachments(input, session, context);
     try {
@@ -97,7 +121,8 @@ export class TraeSolver implements Solver {
         executable: local ? process.execPath : "node",
         args: [path(runtime.root, "launch.mjs"), home, "exec", "--json", "--ephemeral",
           "--ignore-rules", "--skip-git-repo-check", "--color", "never", "--sandbox", local ? "workspace-write" : "danger-full-access",
-          "--model", model.name, ...settings.flatMap(setting => ["-c", setting]), "-"],
+          "--model", model.name, ...settings.flatMap(setting => ["-c", setting]),
+          ...denied.flatMap(tool => ["--disallowed-tool", tool]), "-"],
         cwd: session.workdir,
         env: {},
         inheritEnv: false,

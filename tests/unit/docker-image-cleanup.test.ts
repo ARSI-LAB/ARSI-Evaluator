@@ -28,11 +28,13 @@ function docker(daemonId = "fixture-daemon") {
     if (args[0] === "container" && args[1] === "inspect") return result(containers.get(args[2]!)!);
     if (args[0] === "pull") { images.set(args.at(-1)!, id); return result(); }
     if (args[0] === "build") { images.set(args[args.indexOf("--tag") + 1]!, otherId); return result(); }
-    if (args[0] === "image" && args[1] === "tag") { images.set(args[3]!, images.get(args[2]!)!); return result(); }
+    if (args[0] === "image" && args[1] === "tag") { images.set(args[3]!, images.get(args[2]!) ?? args[2]!); return result(); }
     if (args[0] === "image" && args[1] === "inspect") {
-      const reference = args[2]!, found = images.get(reference) ?? [...images.values()].find(image => image === reference);
+      const reference = args[args.includes("--platform") ? 4 : 2]!, found = images.get(reference) ?? [...images.values()].find(image => image === reference);
       if (!found) throw new Error(`No such image: ${reference}`);
-      return result(args.at(-1)!.includes("RepoTags") ? JSON.stringify([found, [...images].filter(([, image]) => image === found).map(([tag]) => tag), []]) : found);
+      const format = args.at(-1)!;
+      return result(format.includes("RepoTags") ? JSON.stringify([found, [...images].filter(([, image]) => image === found).map(([tag]) => tag), []])
+        : format.includes(".Architecture") ? JSON.stringify([found, "linux", "amd64"]) : found);
     }
     if (args[0] === "image" && args[1] === "ls") return result([...images.keys()].map(reference => {
       const separator = reference.lastIndexOf(":");
@@ -56,6 +58,32 @@ async function acquire(fake: ReturnType<typeof docker>, existing = false, config
   });
 }
 const selected = (execute = true, configFingerprint = owner().configFingerprint) => ({ all: false, execute, configFingerprint });
+
+test("legacy cache hits rename in place, preserving both owners and a conflicting user tag", async () => {
+  const fake = docker();
+  const old = "ember-evaluator/shared:solve-runtime-fixture";
+  const preferred = "ember-evaluator/base:linux-amd64-solver-simpleagent";
+  fake.images.set(old, id);
+  fake.images.set(preferred, otherId);
+  const platform = "linux/amd64";
+  const key = "runtime-build-input";
+  await fake.inventory.use(owner(), signal(), () => fake.inventory.retain(old, platform, signal(), { key }));
+  const next = owner("b".repeat(64));
+  const hit = () => fake.inventory.use(next, signal(), () => fake.inventory.cached(key, platform, signal(), preferred));
+  const container = "c".repeat(64);
+  fake.containers.set(container, id);
+  expect(await hit()).toMatchObject({ reference: old, id });
+  fake.containers.delete(container);
+  const release = await fake.inventory.lease(signal());
+  try { expect(await hit()).toMatchObject({ reference: old, id }); } finally { await release(); }
+  expect(await hit()).toMatchObject({ reference: preferred + "-2", id });
+  expect(fake.images.has(old)).toBe(false);
+  expect(fake.images.get(preferred)).toBe(otherId);
+  expect((await fake.inventory.cleanup(selected(), signal())).items).toMatchObject([{ reference: preferred + "-2", status: "retained" }]);
+  expect((await fake.inventory.cleanup(selected(true, next.configFingerprint), signal())).items).toMatchObject([{ reference: preferred + "-2", status: "deleted" }]);
+  await fake.inventory.cleanup({ all: true, execute: true }, signal());
+  expect(fake.images.get(preferred)).toBe(otherId);
+});
 
 test("preview lists downloaded and derived references without modifying the receipt or removing images", async () => {
   const fake = docker(); await acquire(fake);
@@ -98,6 +126,61 @@ test("a shared image survives until its last selected configuration is removed",
   expect((await fake.inventory.cleanup(selected(), signal())).items.every(item => item.status === "retained")).toBe(true);
   expect(fake.images.size).toBe(2);
   expect((await fake.inventory.cleanup(selected(true, "b".repeat(64)), signal())).items.every(item => item.status === "deleted")).toBe(true);
+});
+
+test("a missing alias held by another configuration cannot block cleanup of a live tag", async () => {
+  const fake = docker();
+  const current = "ember-evaluator/base:linux-amd64-base";
+  const other = owner("b".repeat(64));
+  await acquire(fake, false, other);
+  await fake.inventory.use(owner(), signal(), () =>
+    fake.inventory.command(["pull", current], { signal: signal() }));
+  fake.images.delete(source);
+  fake.images.delete(base);
+  const file = join(directory, (await readdir(directory)).find(name => name.endsWith(".json"))!);
+  const before = await readFile(file, "utf8");
+  const callsBeforePreview = fake.calls.length;
+  expect((await fake.inventory.cleanup(selected(false), signal())).items).toEqual([
+    expect.objectContaining({ reference: current, status: "candidate" }),
+  ]);
+  expect(await readFile(file, "utf8")).toBe(before);
+  expect(fake.calls.slice(callsBeforePreview).some(args => args[0] === "image" && args[1] === "inspect")).toBe(false);
+  expect((await fake.inventory.cleanup(selected(), signal())).items).toEqual([
+    expect.objectContaining({ reference: current, status: "deleted" }),
+  ]);
+  expect(JSON.parse(await readFile(file, "utf8")).entries).toEqual([]);
+  expect((await fake.inventory.cleanup(selected(true, other.configFingerprint), signal())).items).toEqual([]);
+});
+
+test("210 tasks sharing one image add one owner per configuration", async () => {
+  const fake = docker();
+  const shared = "ember-evaluator/shared:solve-runtime-a";
+  fake.images.set(shared, id);
+  for (let index = 0; index < 210; index++) {
+    await fake.inventory.use({ ...owner(), taskId: `test:${index}` }, signal(), () => fake.inventory.associatePrepared(shared, signal()));
+  }
+  const file = (await readdir(directory)).find(file => file.endsWith(".json"))!;
+  const data = JSON.parse(await readFile(join(directory, file), "utf8"));
+  expect(data.entries).toEqual([expect.objectContaining({ reference: shared, owners: [expect.objectContaining({ configFingerprint: owner().configFingerprint })] })]);
+  expect((await fake.inventory.cleanup(selected(), signal())).items).toEqual([expect.objectContaining({ reference: shared, status: "deleted" })]);
+});
+
+test("writing a legacy inventory compacts its task owners and keeps shared aliases eligible for cleanup", async () => {
+  const fake = docker();
+  await acquire(fake);
+  const file = join(directory, (await readdir(directory)).find(file => file.endsWith(".json"))!);
+  const data = JSON.parse(await readFile(file, "utf8")) as { entries: Array<{ owners: Array<ReturnType<typeof owner>> }> };
+  const otherConfig = "b".repeat(64);
+  for (const entry of data.entries) {
+    entry.owners = [owner(otherConfig), ...Array.from({ length: 210 }, (_, index) => ({ ...owner(), taskId: `test:${index}` }))];
+  }
+  await writeFile(file, JSON.stringify(data));
+  const release = await fake.inventory.lease(signal());
+  await release();
+  const compact = JSON.parse(await readFile(file, "utf8")) as typeof data;
+  for (const entry of compact.entries) expect(entry.owners.map(value => value.configFingerprint)).toEqual([otherConfig, owner().configFingerprint]);
+  expect((await fake.inventory.cleanup(selected(), signal())).items.map(item => item.status)).toEqual(["retained", "retained"]);
+  expect((await fake.inventory.cleanup(selected(true, otherConfig), signal())).items.map(item => item.status)).toEqual(["deleted", "deleted"]);
 });
 
 test("both running and stopped container references prevent image removal", async () => {

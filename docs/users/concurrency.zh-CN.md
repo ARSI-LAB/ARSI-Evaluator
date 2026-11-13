@@ -91,7 +91,7 @@ run:
 
 memory 表示同进程已完成缓存，shared 表示合并同进程正在准备的请求，image 表示已有镜像，built 表示新构建，reference 表示直接指定镜像引用；这些指标不表示 BuildKit 层缓存命中率。共享 Solver 安装继续复用，各题仍创建独立工作区及容器。流水线不支持 Ray，显式请求时会报错；Ray 保留原整批协议。
 
-Docker 镜像名称包含任务短名、解题／验证用途和镜像种类；共享安装镜像放在 `ember-evaluator/shared` 下。整批、流水线和 Ray 使用相同命名规则，但缓存仍属于实际执行节点的 Docker daemon。查看命令、重复运行复用条件及旧版升级行为见 [Docker FAQ](faq/docker.zh-CN.md#如何按任务区分和查看镜像)。
+同一阶段、同一服务的任务在构建输入相同时复用 Docker 镜像标签。整批、流水线和 Ray 使用相同命名规则，各 Docker daemon 管理自己的缓存。查看命令、复用条件及旧版升级行为见 [Docker FAQ](faq/docker.zh-CN.md#如何查看评测镜像)。
 
 本地整批及流水线模式默认输出 `[prepare]` 进度，不需要设置 `EVALUATOR_DEBUG`。Docker 任务镜像就绪后立即显示任务序号、ID、解题／验证用途、镜像准备耗时及缓存来源，例如 `Task 1/50 task=workbuddy/xxx Task image build completed; purpose=solve; elapsed 120.0s; source=new build`。缓存复用和直接指定镜像显示 `Task image ready`，不误报为重新构建。此时仍可能继续准备 Runtime 和 Solver；流水线的 `Environment ready` 表示整题环境已准备完成。Ray 节点也会回传环境准备和执行活动；交互终端的多任务显示规则见[实时执行预览](usage.zh-CN.md#实时执行预览)。
 

@@ -4,6 +4,22 @@
 
 Benchmarks define tasks and scoring; solvers define model requests and agent execution. Start ordinary agent tasks with default SimpleAgent. MMLU and AgentX have dedicated defaults. Check configuration and start a new run after changes.
 
+## Configure tools and web access
+
+Set `benchmark.solver.config.tools: none` to disable solver tools as described below. Set `webSearch` and `webFetch` independently to `default`, `disabled`, or `enabled` to control native web search and URL fetching. Omitted fields use the solver's existing behavior. Solvers that disable all tools reject `tools: none` together with an enabled web tool.
+
+| Solver | Supported configuration |
+| --- | --- |
+| SimpleAgent, Pi | Support disabling all tools. The base tool set has no native web tools. When a bundle or task MCP is present, declare exact `webSearchTools` and `webFetchTools` names for explicit web settings. Put the names under `config.bundle` for SimpleAgent or `config.pi` for Pi. |
+| Claude Code, CodeBuddy | Support disabling all tools and independent `WebSearch` and `WebFetch` settings. Execution depends on the selected model service. |
+| ZCode | Supports disabling all tools or either web tool, and enabling fetch. Explicit search is unsupported on the custom model route. |
+| TRAE | Supports disabling all tools or either web tool. The pinned non-interactive `exec` does not support explicitly enabling search or fetch. |
+| Codex | `tools: none` maps to `shellTool: disabled` and removes shell tools with `--disable shell_tool`. The pinned CLI still declares tools such as `request_user_input`. `webSearch` controls native search separately. Opening pages is part of live search. |
+| DeepSeek Harness, JiuwenSwarm | Support disabling all tools. Explicitly enabled web tools require the corresponding native service. |
+
+The environment controls whether shell commands can access the network. For MMLU-Pro, `benchmark.config.solveNetwork: model-api` with Docker allows the solve container to reach only the model API. See the [MMLU-Pro Playbook](../../playbook/mmlu-pro/mmlu-pro-simpleagent.yaml).
+
+
 ## Choose a Solver
 
 | Solver | Purpose | Prerequisites |
@@ -13,7 +29,7 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 | `codex` | Codex CLI for text, images, PDF pages, commands, and workspace files | Model service with streaming Responses API and tool calling |
 | `claudecode` | Claude Code for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
 | `zcode` | ZCode CLI for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
-| `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Responses and tool calling |
+| `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
 | `codebuddy` | CodeBuddy Code for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions or Responses and tool calling |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
@@ -213,7 +229,7 @@ output:
   directory: ./results/trae
 ```
 
-- Set `base_url` to the API base, such as `https://api.openai.com/v1`. TRAE sends requests to `/responses` under that base. Omit `solver.config` or use `{}`, and omit the service fields `maxTokens`, `contextWindow`, and `retry`.
+- The selected service's `api` controls the request path. TRAE appends `/chat/completions` for `openai-completions`, `/responses` for `openai-responses`, or `/messages` for `anthropic-messages` to `base_url`. Include any API prefix required by the service (for example, `/v1` for LiteLLM). Omit the service fields `maxTokens`, `contextWindow`, and `retry`.
 - WSL uses Bash and native Windows uses PowerShell. Both run in the `workspace-write` sandbox. Native Windows may need [TRAE sandbox initialization](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh). Use WSL or Docker for tasks that require Bash. Docker runs Bash within the task container.
 - Set `inputModalities: [text, image]` for images and PDF `pages` attachments. Native PDFs, task skills, and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 

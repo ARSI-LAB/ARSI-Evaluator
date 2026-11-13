@@ -10,6 +10,7 @@ export type BenchmarkDefinitionContext = {
   judge?: { model: ModelConfig; auth: RuntimeAuth };
   judgeService?: string;
   dockerExecutable: string;
+  solveNetwork?: "model-api";
 };
 export type DefinedTask = Pick<PreparedTask, "input" | "verification">;
 

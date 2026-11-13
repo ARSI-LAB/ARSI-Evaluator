@@ -31,6 +31,7 @@ async function boundedArchive(work: () => Promise<void>, signal: AbortSignal): P
 export async function preparePythonVerifier(
   task: VerificationTask, importPath: string, env: Record<string, string>, docker: string,
   image: string, key: AttemptKey, signal: AbortSignal, secrets: readonly string[] = [],
+  inventory?: import("../../../../infrastructure/containers/image-inventory.js").DockerImageInventory,
 ): Promise<VerificationRuntimeSession<VerificationEvidence>> {
   signal.throwIfAborted();
   const lifetime = new AbortController();
@@ -43,7 +44,7 @@ export async function preparePythonVerifier(
     await mkdir(join(trial, "verifier"), { recursive: true });
     container = await createVerifierContainer(docker, image, ["--add-host", "host.docker.internal:host-gateway",
       "--mount", `type=bind,source=${resolve(task.datasetDir)},target=/dataset,readonly`,
-      "--mount", `type=bind,source=${trial},target=/trial`], [], key, signal);
+      "--mount", `type=bind,source=${trial},target=/trial`], [], key, signal, inventory);
   } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
   const calls = new Set<Promise<void>>();
   let verificationFinished: Promise<void> = Promise.resolve();

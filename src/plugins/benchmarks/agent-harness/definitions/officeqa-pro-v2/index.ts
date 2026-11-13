@@ -29,7 +29,8 @@ export class OfficeQAProV2Benchmark implements Benchmark {
   private readonly suffix: string;
 
   constructor(readonly config: OfficeQAProV2Config, source?: DatasetFileSource,
-    private readonly expected = { questions: 90, documents: 1435 }, network?: import("../../../../../core/contracts/network.js").NetworkAccess) {
+    private readonly expected = { questions: 90, documents: 1435 }, network?: import("../../../../../core/contracts/network.js").NetworkAccess,
+    imageConfigFingerprint?: string) {
     this.prefix = config.corpusFormat === "pdf" ? "pdfs/" : "parsed_corpus/jsons/";
     this.suffix = config.corpusFormat === "pdf" ? ".pdf" : ".json";
     const definition = { dataset: "databricks/officeqa-pro-v2", revision: config.revision,
@@ -38,7 +39,7 @@ export class OfficeQAProV2Benchmark implements Benchmark {
     this.source = source ?? (config.localPath === undefined
       ? new HuggingFaceSnapshotSource(config.cacheDir, definition, config.hfToken ?? process.env.HF_TOKEN, undefined, network)
       : new LocalFileSource(config.localPath, definition));
-    this.verificationRuntime = officeQAVerificationRuntime(config.dockerExecutable, network);
+    this.verificationRuntime = officeQAVerificationRuntime(config.dockerExecutable, network, imageConfigFingerprint);
   }
 
   validateRun(config: EffectiveConfig): void {
@@ -119,7 +120,7 @@ export class OfficeQAProV2Benchmark implements Benchmark {
       input: { id: row.uid, ...(attachments.length ? { attachments } : {}), prompt: `Answer the following question using the complete document corpus in /corpus (${this.config.corpusFormat}). You may search the corpus, run code, and obtain supplemental public information when necessary. Do not retrieve benchmark questions or reference answers online.\n\n${row.question}\n\nReturn a concise final answer on one line inside <FINAL_ANSWER>...</FINAL_ANSWER>. Put any explanation outside these tags.` },
       verification: { answer: row.answer, source_docs: row.source_docs, source_files: row.source_files,
         tolerance: this.config.tolerance, corpusFormat: this.config.corpusFormat },
-      solveEnv: { workdir: "/workspace", image: null, initialFiles, runtime: [], build, network: "bridge" },
+      solveEnv: { workdir: "/workspace", image: null, imageScope: { dataset: "officeqa-pro-v2" }, initialFiles, runtime: [], build, network: "bridge" },
       verifyEnv: null, transfer: null,
       artifactCollection: { kind: "artifacts", workdir: "/workspace", paths: ["/workspace"] },
       preparationTimeoutSeconds: { solve: 3600, verify: 3600 },

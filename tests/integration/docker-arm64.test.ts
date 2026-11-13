@@ -60,8 +60,8 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")(
         runtime: [{ name: "node", version: "24.x", platform: "any" }],
       }, signal, undefined, undefined, { taskId: "fixture/readable-image", phase: "solve" });
       expect(ready.prepared).toMatchObject({
-        baseImage: { pinnedReference: expect.stringMatching(/^ember-evaluator\/readable-image:solve-base-[a-f0-9]{24}$/u) },
-        runtime: { image: expect.stringMatching(/^ember-evaluator\/readable-image:solve-runtime-[a-f0-9]{24}$/u) },
+        baseImage: { pinnedReference: PINNED_NODE_IMAGE },
+        runtime: { image: expect.stringMatching(/^ember-evaluator\/base:linux-amd64-solver-runtime(?:-\d+)?$/u) },
       });
       const reused = await new DockerEnvironment().materialize({
         workdir: "/workspace", image: PINNED_NODE_IMAGE, initialFiles: [], runtime: [],

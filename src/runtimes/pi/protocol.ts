@@ -6,6 +6,7 @@ import type { AttemptKey, SolveResult } from "../../core/contracts/result.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import type { JsonValue } from "../../core/contracts/task.js";
 import { parseShellToolPolicy, type ShellToolPolicy } from "./tool-policy.js";
+import { parseSolverToolPolicy, parseWebToolNames, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 import type { ComponentActivity } from "../../core/contracts/activity.js";
 import { LIVE_LINES } from "../../core/progress/live-progress.js";
 
@@ -20,6 +21,7 @@ export type RunnerInput = {
   outputDir: string;
   /** Absent keeps the runner's default shell tool policy. */
   toolPolicy?: ShellToolPolicy;
+  toolAccess?: SolverToolPolicy & WebToolNames;
   /** Extension entry files inside the target environment; absent means no extensions. */
   extensions?: string[];
   /** Isolated AgentBundle installation selected instead of ambient Pi config. */
@@ -104,6 +106,7 @@ export function projectRunnerInput(source: RunnerInputSource): RunnerInput {
     workdir: source.workdir,
     outputDir: source.outputDir,
     ...(source.toolPolicy === undefined ? {} : { toolPolicy: source.toolPolicy }),
+    ...(source.toolAccess === undefined ? {} : { toolAccess: source.toolAccess }),
     ...(source.extensions === undefined ? {} : { extensions: [...source.extensions] }),
     ...(source.piConfigDir === undefined ? {} : { piConfigDir: source.piConfigDir }),
     ...(source.piSettings === undefined ? {} : { piSettings: JSON.parse(JSON.stringify(source.piSettings)) as Record<string, JsonValue> }),
@@ -112,10 +115,15 @@ export function projectRunnerInput(source: RunnerInputSource): RunnerInput {
 
 export function parseRunnerInput(value: unknown): RunnerInput {
   const root = record(value, "runner input");
-  fields(root, ["schemaVersion", "key", "input", "model", "auth", "workdir", "outputDir", "extensions", "piConfigDir", "piSettings", "toolPolicy", "media"], "runner input");
+  fields(root, ["schemaVersion", "key", "input", "model", "auth", "workdir", "outputDir", "extensions", "piConfigDir", "piSettings", "toolPolicy", "toolAccess", "media"], "runner input");
   if (root.schemaVersion !== 1) throw new TypeError("runner input schemaVersion must be 1");
   const toolPolicy =
     root.toolPolicy === undefined ? undefined : parseShellToolPolicy(root.toolPolicy, "runner input.toolPolicy");
+  const access = root.toolAccess === undefined ? undefined : record(root.toolAccess, "runner input.toolAccess");
+  const toolAccess = access === undefined ? undefined : {
+    ...parseSolverToolPolicy(access, "runner input.toolAccess", ["webSearchTools", "webFetchTools"]),
+    ...parseWebToolNames(access, "runner input.toolAccess"),
+  };
   const key = record(root.key, "runner input.key");
   fields(key, ["runId", "taskId", "attemptId"], "runner input.key");
   const input = record(root.input, "runner input.input");
@@ -168,6 +176,7 @@ export function parseRunnerInput(value: unknown): RunnerInput {
     workdir: text(root.workdir, "runner input.workdir"),
     outputDir: text(root.outputDir, "runner input.outputDir"),
     ...(toolPolicy === undefined ? {} : { toolPolicy }),
+    ...(toolAccess === undefined ? {} : { toolAccess }),
     ...(root.extensions === undefined ? {} : { extensions: extensionPaths(root.extensions) }),
     ...(root.piConfigDir === undefined ? {} : { piConfigDir: text(root.piConfigDir, "runner input.piConfigDir") }),
     ...(root.piSettings === undefined ? {} : { piSettings: jsonRecord(root.piSettings, "runner input.piSettings") }),

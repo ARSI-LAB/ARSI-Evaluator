@@ -138,9 +138,11 @@ ember-evaluator warmup experiment.yaml --network network-skopeo.yaml
 
 归档地址由 `baseUrl`、任务路径、平台和阶段组成。例如 `terminal-bench/vf2-speedup-networkx` 的解题镜像使用 `<baseUrl>/vf2-speedup-networkx/linux/amd64/solve.tar.gz`，验证镜像改为 `verify.tar.gz`；服务镜像放在 `<阶段>/services/<服务名>.tar.gz`。准备自己的归档时，按[文件布局](../development/image-archives.md#文件布局)组织。
 
-下载后由 `docker load` 加载归档，加载失败会停止本次准备。归档可能恢复或覆盖原始镜像标签。Evaluator 不确认归档是否与原仓库镜像相同；需要确认时，可按下方方法比较镜像 ID。
+解题基础镜像的本地标签，例如 `ember-evaluator/terminalbench4.0/vf2-speedup-networkx:linux-amd64-base`，对应远端 `vf2-speedup-networkx/linux/amd64/solve.tar.gz`。Evaluator 根据镜像 ID 分配或复用本地引用。Solver 成品在执行节点构建。
 
-用 `environment.platform` 选择归档平台，`auto` 使用执行节点的原生平台。相同下载地址对应的本地镜像仍在时会复用。远端替换同名文件后，请换用新的版本地址，或清理对应本地镜像再执行 `warmup`。
+Evaluator 检查归档的平台和镜像 ID，通过临时引用导入 Docker。归档里的发布者标签不会恢复。相同镜像 ID 的归档共用一个本地引用。需要核对归档与原仓库是否一致时，可按下方方法比较镜像 ID。
+
+用 `environment.platform` 选择归档平台，`auto` 使用执行节点的原生平台。同一下载地址优先复用已有镜像，清理镜像后可以用本机缓存的归档重新导入。不同下载地址各自记录下载结果。发布更新时请换用新的版本地址。
 
 官方维护的 ModelScope 仓库为 [evolving-foundry/ember-evaluator](https://www.modelscope.cn/datasets/evolving-foundry/ember-evaluator)，存放部分 Benchmark 的官方任务镜像归档。可用镜像以仓库目录为准；上传自己的镜像见[单个和批量上传指引](../development/image-archives.md#上传到-modelscope)。
 

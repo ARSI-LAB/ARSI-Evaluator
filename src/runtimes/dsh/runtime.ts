@@ -57,10 +57,12 @@ export async function describeDshBundleRuntime(
   const hash = createHash("sha256");
   await hashRuntimeSource(hash, outputHook.source, signal);
   await hashRuntimeSource(hash, mediaRunner.source, signal);
+  const toolPolicy = dshToolPolicyRuntimeFile();
+  await hashRuntimeSource(hash, toolPolicy.source, signal);
   return { localDsh, version: localDsh.version, installation: {
     id: `external-dsh:${JSON.stringify(localDsh)}:${hash.digest("hex")}`,
     cacheName: "dsh-external",
-    files: [...await agentBundleRuntimeFiles(), outputHook, mediaRunner], commands: [], probes: [agentBundleVersionProbe()],
+    files: [...await agentBundleRuntimeFiles(), outputHook, mediaRunner, toolPolicy], commands: [], probes: [agentBundleVersionProbe()],
   } };
 }
 
@@ -96,12 +98,17 @@ export function dshOutputRuntimeFile(): { source: string; target: string } {
   return { source: fileURLToPath(new URL("./assets/output-hook.mjs", import.meta.url)), target: "dsh-output-hook.mjs" };
 }
 
+function dshToolPolicyRuntimeFile(): { source: string; target: string } {
+  return { source: fileURLToPath(new URL("./assets/tool-policy.mjs", import.meta.url)), target: "dsh-tool-policy.mjs" };
+}
+
 export async function dshRuntimeInstallation(signal: AbortSignal, version = DSH_VERSION, directory?: string): Promise<RuntimeInstallation> {
   signal.throwIfAborted();
   const files = [
     { source: directory ? join(directory, "package.json") : dshManifest, target: "package.json" },
     { source: directory ? join(directory, "package-lock.json") : fileURLToPath(new URL("./assets/runtime-lock.json", import.meta.url)), target: "package-lock.json" },
     dshOutputRuntimeFile(),
+    dshToolPolicyRuntimeFile(),
     { source: fileURLToPath(new URL("./assets/multimodal-runner.mjs", import.meta.url)), target: "dsh-multimodal-runner.mjs" },
     ...await agentBundleRuntimeFiles(),
   ];

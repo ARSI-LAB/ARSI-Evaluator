@@ -1,17 +1,21 @@
 import type { ErrorCode } from "../../core/errors/registry.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ContainerPlatform, PreparationCacheSource, RuntimeRequirement } from "../../core/contracts/environment.js";
+import type { ContainerPlatform, PreparationCacheSource, RuntimeInstallation, RuntimeRequirement } from "../../core/contracts/environment.js";
+import type { NetworkAccess } from "../../core/contracts/network.js";
 import { workspaceHelperSource } from "../filesystem/workspace-transfer.js";
 import { forwarderSource } from "../network/model-gateway.js";
 import { DockerBuildCache } from "./build-cache.js";
 import { createDockerImagePuller, type DockerImagePull } from "./image-pull.js";
 import { CPU_VIEW_PATH, nodeCpuViewSource } from "./cpu.js";
 import { dockerImageUser } from "./image-user.js";
-import { dockerImageName, type DockerImageScope } from "./image-name.js";
+import { dockerImageName, dockerImageReference, type DockerImageScope } from "./image-name.js";
+import { dockerBuildNetwork } from "./build-network.js";
+import { prepareSolverLayer } from "./solver-runtime.js";
+import type { DockerImageInventory } from "./image-inventory.js";
 
 import { PINNED_NODE_IMAGE, DOCKER_PLATFORM, EVALUATOR_NODE_EXECUTABLE, PROCESS_HELPER, type DockerCommand, type PreparedRuntimeImage } from "./runtime-contract.js";
 
@@ -190,8 +194,8 @@ const runtimeDockerfile = [
 ].join("\n");
 
 export class DockerRuntime {
-  private readonly imageCache = new DockerBuildCache<RuntimeImageIdentity>();
-  private readonly nodeCache = new DockerBuildCache<string>();
+  private readonly imageCache = new DockerBuildCache<RuntimeImageIdentity>(false);
+  private readonly nodeCache = new DockerBuildCache<string>(false);
   private nodeReference: string;
   get nodeImage(): string { return this.nodeReference; }
   constructor(
@@ -200,6 +204,8 @@ export class DockerRuntime {
     readonly platform: ContainerPlatform = DOCKER_PLATFORM,
     private readonly pullImage: DockerImagePull = createDockerImagePuller(command),
     readonly dockerExecutable = "docker",
+    private readonly network?: NetworkAccess,
+    private readonly inventory?: DockerImageInventory,
   ) {
     if (platform !== "linux/amd64" && platform !== "linux/arm64")
       throw new DockerRuntimeError("ENV_ARCH_UNSUPPORTED", `Unsupported Docker runtime platform: ${String(platform)}`);
@@ -216,13 +222,22 @@ export class DockerRuntime {
     return `${recipe}\nUSER ${user}\n`;
   }
 
-  async nodeImageDigest(signal: AbortSignal): Promise<string> {
-    return await this.nodeCache.get("node", signal, active => this.resolveNodeImage(active));
+  get helperIdentity(): string {
+    return createHash("sha256").update(this.dockerfile("0")).update(helperSource)
+      .update(workspaceHelperSource).update(forwarderSource).update(nodeCpuViewSource).digest("hex");
   }
 
-  private async resolveNodeImage(signal: AbortSignal): Promise<string> {
+  async nodeImageDigest(signal: AbortSignal, preferred = dockerImageReference(this.platform, "base", { dataset: "node" })): Promise<string> {
+    return this.nodeCache.getImage(this.dockerExecutable, `node:${this.platform}:${PINNED_NODE_IMAGE}`, signal,
+      active => this.resolveNodeImage(active, preferred));
+  }
+
+  private async resolveNodeImage(signal: AbortSignal, preferred: string): Promise<string> {
     const expected = PINNED_NODE_IMAGE.slice(PINNED_NODE_IMAGE.lastIndexOf("@") + 1);
-    let reference = this.nodeImage;
+    const key = `node:${expected}:${this.platform}`;
+    const saved = await this.inventory?.cached(key, this.platform, signal, preferred);
+    if (saved) { this.nodeReference = saved.reference; return saved.digest; }
+    let reference = PINNED_NODE_IMAGE;
     let verifiedDigest: string | undefined;
     // .Id semantics differ between containerd and classic image stores (manifest
     // digest versus config digest); an image whose RepoDigests carry the pinned
@@ -254,7 +269,8 @@ export class DockerRuntime {
         `pinned Node image resolved to ${digest}; expected ${expected}`,
       );
     }
-    this.nodeReference = reference;
+    const retained = await this.inventory?.retain(reference, this.platform, signal, { key, preferred, removeAlias: verifiedDigest === expected });
+    this.nodeReference = retained?.reference ?? reference;
     return digest;
   }
 
@@ -264,6 +280,9 @@ export class DockerRuntime {
     signal: AbortSignal,
     observe?: (source: PreparationCacheSource) => void,
     scope?: DockerImageScope,
+    installation?: RuntimeInstallation,
+    expectedBaseDigest?: string,
+    preferred?: string,
   ): Promise<PreparedRuntimeImage> {
     signal.throwIfAborted();
     validateRequirements(requirements, this.platform);
@@ -271,45 +290,77 @@ export class DockerRuntime {
     const baseDigest = inspected.stdout.trim();
     if (!/^sha256:[a-f0-9]{64}$/u.test(baseDigest))
       throw new DockerRuntimeError("ENV_IMAGE_REFERENCE_INVALID", `Docker returned an invalid image ID for ${baseImage}`);
+    if (expectedBaseDigest && expectedBaseDigest !== baseDigest)
+      throw new DockerRuntimeError("ENV_IMAGE_REFERENCE_INVALID", `Base image changed while preparing ${baseImage}`);
     const nodeDigest = await this.nodeImageDigest(signal);
     // containerd may not register the selected child manifest as an image reference.
     const user = await dockerImageUser(this.command, baseImage, this.platform, signal);
+    const solver = installation ? await prepareSolverLayer(installation, this.platform, signal) : undefined;
+    const network = dockerBuildNetwork(this.network);
+    let recipe = this.dockerfile(user);
+    if (solver) {
+      recipe = recipe.replace("FROM ${BASE_IMAGE}", `${solver.installStage}\nFROM \${BASE_IMAGE}`);
+      recipe = `${recipe.slice(0, -`USER ${user}\n`.length)}${solver.copy}\nUSER ${user}\n${solver.probe}\n`;
+      recipe = network.recipe(recipe);
+    }
     const runtimeHash = createHash("sha256")
       .update(this.platform)
-      .update(this.dockerfile(user))
-      .update(helperSource)
-      .update(workspaceHelperSource)
-      .update(forwarderSource)
-      .update(nodeCpuViewSource)
+      .update(recipe)
+      .update(this.helperIdentity)
       .digest("hex");
-    const key = createHash("sha256").update(JSON.stringify({ baseDigest, nodeDigest, runtimeHash })).digest("hex");
-    const tag = dockerImageName(scope ? "runtime" : "solve-runtime", key, scope);
-    const image = await this.imageCache.getImage(this.dockerExecutable, tag, signal, buildSignal => this.build(baseImage, baseDigest, tag, user, buildSignal, observe), observe);
-    return { ...image, runtimes: this.runtimeMetadata(requirements) };
+    const key = createHash("sha256").update(JSON.stringify({ baseDigest, nodeDigest, runtimeHash,
+      ...(solver ? { solver: solver.identity, installer: solver.installer, network: network.identity } : {}) })).digest("hex");
+    const kind = solver ? "agent" : "runtime";
+    const tag = dockerImageName(scope ? kind : `solve-${kind}`, key, scope);
+    const image = await this.imageCache.getImage(this.dockerExecutable, tag, signal, buildSignal =>
+      this.build(baseImage, baseDigest, tag, recipe, solver, network, buildSignal, observe, preferred), observe);
+    return { ...image, runtimes: this.runtimeMetadata(requirements), ...(solver ? { installation: solver.runtime } : {}) };
   }
 
   private async build(
     baseImage: string,
     baseDigest: string,
     tag: string,
-    user: string,
+    recipe: string,
+    solver: Awaited<ReturnType<typeof prepareSolverLayer>> | undefined,
+    network: ReturnType<typeof dockerBuildNetwork>,
     signal: AbortSignal,
     observe?: (source: PreparationCacheSource) => void,
+    preferred?: string,
   ): Promise<RuntimeImageIdentity> {
-    try {
-      const existing = await this.command(["image", "inspect", "--platform", this.platform, tag, "--format", "{{.Id}}"], { signal });
-      const digest = existing.stdout.trim();
-      if (/^sha256:[a-f0-9]{64}$/u.test(digest)) { observe?.("image"); return { image: tag, digest, baseDigest }; }
-    } catch {}
+    const retention = { key: tag, removeAlias: true, ...(preferred ? { preferred } : {}) };
+    const cached = await this.inventory?.cached(tag, this.platform, signal, preferred);
+    if (cached) { observe?.("image"); return { image: cached.reference, digest: cached.digest, baseDigest }; }
+    const existing = await this.command(["image", "inspect", "--platform", this.platform, tag, "--format", "{{.Id}}"], { signal })
+      .catch(() => undefined);
+    const existingId = existing?.stdout.trim();
+    if (existingId && /^sha256:[a-f0-9]{64}$/u.test(existingId)) {
+      const image = await this.inventory?.retain(tag, this.platform, signal, retention);
+      observe?.("image");
+      return { image: image?.reference ?? tag, digest: existingId, baseDigest };
+    }
     signal.throwIfAborted();
     const context = await mkdtemp(join(tmpdir(), "ember-runtime-"));
+    let temporaryBase: string | undefined;
+    const output = preferred && this.inventory ? `ember-evaluator/staging:${randomUUID()}` : tag;
     try {
+      let input = baseImage;
+      if (this.inventory && !baseImage.startsWith("ember-evaluator/") && !/@sha256:[a-f0-9]{64}$/u.test(baseImage)) {
+        const root = (await this.command(["image", "inspect", baseImage, "--format", "{{.Id}}"], { signal })).stdout.trim();
+        if (!/^sha256:[a-f0-9]{64}$/u.test(root)) throw new DockerRuntimeError("ENV_IMAGE_REFERENCE_INVALID", `Invalid image identity for ${baseImage}`);
+        temporaryBase = `ember-evaluator/staging:${randomUUID()}`;
+        await this.command(["image", "tag", root, temporaryBase], { signal });
+        const actual = await this.command(["image", "inspect", "--platform", this.platform, temporaryBase, "--format", "{{.Id}}"], { signal });
+        if (actual.stdout.trim() !== baseDigest) throw new DockerRuntimeError("ENV_IMAGE_REFERENCE_INVALID", `Image changed while preparing ${baseImage}`);
+        input = temporaryBase;
+      }
       await Promise.all([
         writeFile(join(context, "docker-process.mjs"), helperSource, { mode: 0o600 }),
         writeFile(join(context, "workspace-transfer.mjs"), workspaceHelperSource, { mode: 0o600 }),
         writeFile(join(context, "model-forwarder.mjs"), forwarderSource, { mode: 0o600 }),
         writeFile(join(context, "cpu-view.cjs"), nodeCpuViewSource, { mode: 0o444 }),
-        writeFile(join(context, "Dockerfile"), this.dockerfile(user), "utf8"),
+        writeFile(join(context, "Dockerfile"), recipe, "utf8"),
+        solver?.write(context, signal),
       ]);
       await this.command(
         [
@@ -317,29 +368,37 @@ export class DockerRuntime {
           "--platform",
           this.platform,
           "--tag",
-          tag,
+          output,
           "--build-arg",
           `NODE_IMAGE=${this.nodeImage}`,
           "--build-arg",
-          `BASE_IMAGE=${baseImage}`,
+          `BASE_IMAGE=${input}`,
+          ...(solver ? network.buildArgs : []),
           context,
         ],
-        { signal, maxBuffer: 8 * 1024 * 1024 },
+        { signal, maxBuffer: 8 * 1024 * 1024, env: { ...network.environment } },
       );
-      const digest = (await this.command(["image", "inspect", "--platform", this.platform, tag, "--format", "{{.Id}}"], { signal })).stdout.trim();
+      const digest = (await this.command(["image", "inspect", "--platform", this.platform, output, "--format", "{{.Id}}"], { signal })).stdout.trim();
       if (!/^sha256:[a-f0-9]{64}$/u.test(digest))
         throw new DockerRuntimeError("ENV_IMAGE_REFERENCE_INVALID", `Docker returned an invalid derived image ID for ${tag}`);
       observe?.("built");
-      return { image: tag, digest, baseDigest };
+      const image = await this.inventory?.retain(output, this.platform, signal,
+        { ...retention, ...(output === tag ? {} : { temporary: true }) });
+      return { image: image?.reference ?? output, digest, baseDigest };
     } catch (error) {
       if (error instanceof DockerRuntimeError) throw error;
       throw new DockerRuntimeError("ENV_RUNTIME_INSTALL_FAILED", `cannot add the evaluator runtime to ${baseImage}`, error);
     } finally {
-      await rm(context, { recursive: true, force: true });
+      try {
+        try { if (output !== tag) await this.inventory?.discardStaging(output, AbortSignal.timeout(30_000)); }
+        finally { if (temporaryBase) await this.inventory?.discardStaging(temporaryBase, AbortSignal.timeout(30_000)); }
+      }
+      finally { await rm(context, { recursive: true, force: true }); }
     }
   }
 
-  private runtimeMetadata(requirements: RuntimeRequirement[]): { name: string; version: string; executable: string }[] {
+  runtimeMetadata(requirements: RuntimeRequirement[]): { name: string; version: string; executable: string }[] {
+    validateRequirements(requirements, this.platform);
     return requirements.map(requirement =>
       requirement.name === "node"
         ? { name: "node", version: "24.22.1", executable: "/usr/local/bin/node" }

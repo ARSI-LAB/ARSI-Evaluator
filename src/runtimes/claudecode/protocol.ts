@@ -5,6 +5,7 @@ import type { JsonValue } from "../../core/contracts/task.js";
 import { classifyError } from "../../core/errors/classify.js";
 import { redactDiagnostic } from "../../core/errors/diagnostics.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
+import { unsupportedToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { consumeCliJsonl, record, tokenCount, type CliEvent } from "../shared/cli-jsonl.js";
 
 function usageFrom(value: JsonValue | undefined): Usage {
@@ -18,13 +19,20 @@ function usageFrom(value: JsonValue | undefined): Usage {
   return { inputTokens, outputTokens, totalTokens };
 }
 
-export function consumeClaudeCode(handle: ProcessHandle, context: AttemptContext, secret: string): Promise<SolveResult> {
+export function consumeClaudeCode(
+  handle: ProcessHandle, context: AttemptContext, secret: string, requiredWebTools: readonly string[] = [],
+): Promise<SolveResult> {
   let result: CliEvent | undefined;
   return consumeCliJsonl(handle, context, [secret], {
     solver: "claudecode",
     label: "Claude Code",
     accept(event) {
       if (event.type === "assistant" || event.type === "user") context.activity?.({});
+      if (requiredWebTools.length && event.type === "system" && event.subtype === "init") {
+        const tools = Array.isArray(event.tools) ? event.tools : [];
+        const missing = requiredWebTools.filter(name => !tools.includes(name));
+        if (missing.length) unsupportedToolPolicy("claudecode", `${missing.join(", ")} is unavailable for the selected model service`);
+      }
       if (event.type !== "result") return;
       if (result) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "Claude Code emitted multiple result events");
       result = event;

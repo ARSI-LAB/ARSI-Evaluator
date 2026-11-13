@@ -1,7 +1,9 @@
 import { NetworkRuntime } from "../../src/infrastructure/network/runtime.js";
+import { createHash } from "node:crypto";
+import { create } from "tar";
 import { networkDocument } from "../../src/config/network-schema.js";
 import type { SpawnOptions } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -26,47 +28,73 @@ const fs = require("node:fs");
 const args = process.argv.slice(1);
 const log = process.env.EVALUATOR_TEST_BUILD_LOG;
 const digest = "sha256:" + "a".repeat(64);
+const isPin = ref => ref.startsWith("ember-evaluator/") && !ref.startsWith("ember-evaluator/shared:");
+const pinFile = ref => log + ".pin-" + require("node:crypto").createHash("sha256").update(ref).digest("hex");
 if (process.env.EVALUATOR_TEST_COMMAND_LOG) fs.appendFileSync(process.env.EVALUATOR_TEST_COMMAND_LOG, JSON.stringify(args) + "\n");
 if (args[0] === process.env.EVALUATOR_TEST_FAILED_OPERATION) {
   console.error(process.env.EVALUATOR_TEST_DOCKER_ERROR); process.exit(17);
 }
-if (args[0] === "load") { fs.writeFileSync(log + ".loaded", "yes"); console.log("Loaded image: fixture/archive:arm64"); }
+if (args[0] === "load") {
+  const bytes = fs.readFileSync(args.at(-1));
+  const text = bytes.toString("utf8");
+  const tag = text.match(/ember-evaluator\/staging:[a-f0-9-]{36}/u)[0];
+  fs.writeFileSync(pinFile(tag), process.env.EVALUATOR_TEST_ARCHIVE_ID);
+}
 else if (args[0] === "version") console.log(args.at(-1).includes("APIVersion") ? "1.52 1.52" : process.env.EVALUATOR_TEST_DAEMON_PLATFORM || "linux/amd64");
 else if (args[0] === "info") console.log(args.at(-1) === "{{.ID}}" ? log : JSON.stringify([process.env.EVALUATOR_TEST_NODE_MIRROR].filter(Boolean)));
 else if (args[0] === "build") {
+  const tag = args[args.indexOf("--tag") + 1];
   if (process.env.EVALUATOR_TEST_BUILD_GATE) {
     fs.appendFileSync(log + ".builds", args[args.indexOf("--tag") + 1] + "\n");
     while (!fs.existsSync(process.env.EVALUATOR_TEST_BUILD_GATE)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  fs.writeFileSync(log, fs.readFileSync(args[args.indexOf("--file") + 1], "utf8"));
+  const recipe = args.includes("--file") ? args[args.indexOf("--file") + 1] : require("node:path").join(args.at(-1), "Dockerfile");
+  fs.writeFileSync(log, fs.readFileSync(recipe, "utf8"));
+  if (isPin(tag)) fs.writeFileSync(pinFile(tag),
+    args.some(arg => arg.startsWith("NODE_IMAGE=")) && process.env.EVALUATOR_TEST_RUNTIME_ID || digest);
   const constraints = require("node:path").join(args.at(-1), ".evaluator-pip-constraints.txt");
   if (fs.existsSync(constraints)) fs.writeFileSync(log + ".constraints", fs.readFileSync(constraints));
 } else if (args[0] === "create" || args[0] === "stop" || args[0] === "rm") {
   console.log("probe");
 } else if (args[0] === "start") {
   console.log(process.env.EVALUATOR_TEST_PROBE_PLATFORM || "linux/x64");
+} else if (args[0] === "image" && args[1] === "tag" && isPin(args[3])) {
+  fs.writeFileSync(pinFile(args[3]), args[2]);
+} else if (args[0] === "image" && args[1] === "rm" && isPin(args.at(-1))) {
+  fs.rmSync(pinFile(args.at(-1)), { force: true });
+} else if (args[0] === "ps") {
+  console.log("");
 } else if (args[0] === "image" && args[1] === "inspect") {
+  const reference = args[args.includes("--platform") ? 4 : 2];
+  const format = args.at(-1);
+  const actual = reference === "fixture/arm-only" ? process.env.EVALUATOR_TEST_IMAGE_PLATFORM :
+    args.includes("--platform") ? args[3] : "linux/amd64";
+  if (process.env.EVALUATOR_TEST_NODE_MIRROR && reference.startsWith("node:")) { console.error("No such image"); process.exit(1); }
+  if (reference.includes(":solve-task-") || process.env.EVALUATOR_TEST_RUNTIME_ID && reference.includes("-runtime-")) { console.error("No such image"); process.exit(1); }
   if (args.some(arg => arg.includes("-archive-")) && !fs.existsSync(log + ".loaded")) { console.error("No such image"); process.exit(1); }
+  if (isPin(reference) && !fs.existsSync(pinFile(reference))) { console.error("No such image"); process.exit(1); }
   if (process.env.EVALUATOR_TEST_SIDECAR_INDEX) {
-    const reference = args[args.includes("--platform") ? 4 : 2];
     const selected = "sha256:" + "e".repeat(64);
     const root = "sha256:" + "b".repeat(64);
     if (reference === selected) { console.error("No such image: " + reference); process.exit(1); }
-    if (reference.startsWith("fixture/kafka") || reference.includes("-service-kafka-")) {
+    if (reference === root || reference.startsWith("fixture/kafka") || reference.includes("-service-kafka-")) {
       const format = args.at(-1);
       if (format === "{{.Os}}/{{.Architecture}}") console.log("linux/amd64");
-      else if (format.includes("RepoTags")) console.log(JSON.stringify([root, [], []]));
-      else if (format.includes("RepoDigests")) console.log(JSON.stringify([selected, ["fixture/kafka@sha256:" + "d".repeat(64)], "linux", "amd64"]));
+      else if (format.includes("RepoTags")) console.log(JSON.stringify([process.env.EVALUATOR_TEST_SIDECAR_ROOT || root, [], []]));
+      else if (format.includes("RepoDigests")) console.log(selected + " " + JSON.stringify(["fixture/kafka@sha256:" + "d".repeat(64)]));
+      else if (format.includes("Architecture")) console.log(JSON.stringify([selected, "linux", "amd64"]));
       else console.log(args.includes("--platform") ? selected : process.env.EVALUATOR_TEST_SIDECAR_ROOT || root);
       process.exit(0);
     }
   }
-  if (args.at(-1) === "[{{json .Id}},{{json .RepoTags}},{{json .RepoDigests}}]") { console.log(JSON.stringify([digest, [], []])); process.exit(0); }
-  if (args.at(-1) === "[{{json .Id}},{{json .Os}},{{json .Architecture}}]") { console.log(JSON.stringify([digest, "linux", "amd64"])); process.exit(0); }
+  const id = reference === "fixture/mutable" && process.env.EVALUATOR_TEST_MUTABLE_ID ||
+    reference.includes("-runtime-") && process.env.EVALUATOR_TEST_RUNTIME_ID ||
+    isPin(reference) && fs.readFileSync(pinFile(reference), "utf8") || digest;
+  if (format === "[{{json .Id}},{{json .RepoTags}},{{json .RepoDigests}}]") { console.log(JSON.stringify([id, [reference], []])); process.exit(0); }
+  if (format === "[{{json .Id}},{{json .Os}},{{json .Architecture}}]") { console.log(JSON.stringify([id, ...actual.split("/")])); process.exit(0); }
   if (args.at(-1) === "{{json .Config.User}}") { console.log(JSON.stringify("")); process.exit(0); }
-  if (process.env.EVALUATOR_TEST_NODE_MIRROR && args[4].startsWith("node:")) process.exit(1);
-  if (args[4].includes(":solve-task-") && !fs.existsSync(log)) process.exit(1);
-  console.log(args.at(-1).includes(".Architecture") ? process.env.EVALUATOR_TEST_IMAGE_PLATFORM || args[3] : args.at(-1).includes("RepoDigests") ? args[4].split("@")[1] + " []" : digest);
+  console.log(format.includes(".Architecture") ? actual : format.includes("RepoDigests") ?
+    id + " " + JSON.stringify([reference.replace(/:[^/@]+@/u, "@")]) : id);
 } else if (args[0] !== "image" || !["tag", "rm"].includes(args[1])) process.exit(2);
 `;
 
@@ -140,26 +168,41 @@ test("pip constraints for another task do not alter an explicit pytest>=9 build"
   expect(built).toContain("RUN pip install 'pytest>=9'");
 });
 
-test("materialization names identify task, phase and service and base pins remain unique", async () => {
+test("materialization reuses a source reference and shares the solve result across tasks", async () => {
   const { environment, spec, log } = await fixture("FROM fixture/base\n");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
+  vi.stubEnv("EVALUATOR_TEST_RUNTIME_ID", "sha256:" + "f".repeat(64));
   const signal = AbortSignal.timeout(15_000);
   const context = { taskId: "terminal-bench/atrx-vep-crispr", phase: "solve" as const };
   const main = { ...spec, image: "fixture/base", services: { redis: { image: "fixture/redis", properties: {} } } };
   const a = await environment.materialize(main, signal, undefined, undefined, context);
-  const b = await environment.materialize(main, signal, undefined, undefined, context);
+  const b = await environment.materialize(main, signal, undefined, undefined, { ...context, taskId: "terminal-bench/other" });
   const verify = await environment.materialize(main, signal, undefined, undefined, { ...context, phase: "verify" });
-  expect(a.prepared).toMatchObject({ baseImage: { pinnedReference: expect.stringMatching(/\/atrx-vep-crispr:solve-base-/u) },
-    runtime: { image: expect.stringMatching(/\/atrx-vep-crispr:solve-runtime-/u) } });
-  expect(verify.prepared).toMatchObject({ baseImage: { pinnedReference: expect.stringMatching(/\/atrx-vep-crispr:verify-base-/u) },
-    runtime: { image: expect.stringMatching(/\/atrx-vep-crispr:verify-runtime-/u) } });
-  expect(a.prepared).not.toEqual(b.prepared);
+  expect(a.prepared).toMatchObject({ baseImage: { pinnedReference: "fixture/base" },
+    runtime: { image: "ember-evaluator/base:linux-amd64-solver-runtime" } });
+  expect(verify.prepared).toMatchObject({ baseImage: { pinnedReference: "fixture/base" },
+    runtime: { image: "ember-evaluator/base:linux-amd64-solver-runtime" } });
+  expect(a.prepared).toEqual(b.prepared);
   const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
   const tags = calls.filter(args => args[0] === "image" && args[1] === "tag").map(args => args[3]);
-  expect(tags.filter(tag => tag?.includes(":solve-base-"))).toHaveLength(2);
+  expect(tags.filter(tag => !tag?.startsWith("ember-evaluator/staging:"))).toEqual(["ember-evaluator/base:linux-amd64-solver-runtime"]);
   expect(new Set(tags).size).toBe(tags.length);
-  expect(tags.some(tag => tag?.includes(":verify-service-redis-base-"))).toBe(true);
-  expect(tags.every(tag => tag?.startsWith("ember-evaluator/atrx-vep-crispr:"))).toBe(true);
+  expect(calls.some(args => args[1] === "inspect" && args.includes("fixture/redis"))).toBe(true);
+});
+
+test("moving a source tag gives the next task a different final image key", async () => {
+  const { environment, spec, log } = await fixture("FROM fixture/base\n");
+  vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
+  const signal = AbortSignal.timeout(15_000);
+  const main = { ...spec, image: "fixture/mutable" };
+  const firstId = `sha256:${"a".repeat(64)}`;
+  const secondId = `sha256:${"c".repeat(64)}`;
+  const first = await environment.materialize(main, signal, undefined, undefined, { taskId: "first", phase: "solve" });
+  vi.stubEnv("EVALUATOR_TEST_MUTABLE_ID", secondId);
+  const second = await environment.materialize(main, signal, undefined, undefined, { taskId: "second", phase: "solve" });
+  expect(first.prepared).toMatchObject({ baseImage: { id: firstId, pinnedReference: "fixture/mutable" } });
+  expect(second.prepared).toMatchObject({ baseImage: { id: secondId, pinnedReference: "fixture/mutable" } });
+  expect(first.prepared).not.toEqual(second.prepared);
 });
 
 test.each([
@@ -182,7 +225,7 @@ test.each([
   expect(ready.prepared).toMatchObject({ platform: "linux/amd64", serviceImages: { kafka: rootId } });
   const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
   expect(calls.some(args => args.includes(image) && args.includes("--platform") && args.includes("linux/amd64"))).toBe(true);
-  expect(calls.some(args => args[0] === "image" && args[1] === "inspect" && args[2]?.includes(":solve-service-kafka-base-") && args.at(-1) === "{{.Id}}" && !args.includes("--platform"))).toBe(true);
+  expect(calls.some(args => args[0] === "image" && args[1] === "inspect" && args[2] === image && args.at(-1) === "{{.Id}}" && !args.includes("--platform"))).toBe(true);
 
   const prepared = ready.prepared;
   if (!prepared || typeof prepared !== "object" || Array.isArray(prepared)) throw new Error("Missing preparation receipt");
@@ -224,9 +267,9 @@ test("task Dockerfile downloads inherit configured build proxy and network", asy
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(15_000));
   const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  const build = calls.find(args => args[0] === "build" && args.some(arg => arg.includes(":solve-task-")));
+  const build = calls.find(args => args[0] === "build" && !args.some(arg => arg.startsWith("NODE_IMAGE=")));
   expect(build).toEqual(expect.arrayContaining(["--network", "host", "HTTP_PROXY", "HTTPS_PROXY"]));
-  const firstTag = build?.find(arg => arg.includes(":solve-task-"));
+  const firstTag = calls.find(args => args[0] === "image" && args[1] === "inspect" && args[4]?.includes(":solve-task-"))?.[4];
   vi.stubEnv("HTTPS_PROXY", "http://127.0.0.1:7891");
   await new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(15_000));
   const subsequent: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -295,18 +338,21 @@ test("rejects a Dockerfile whose only FROM appears in a comment", async () => {
 });
 
 test("independent evaluator environments build a shared task image once", async () => {
-  const { spec, log, cache } = await fixture("FROM fixture/base\n");
+  const { spec, log } = await fixture("FROM fixture/base\n");
   const gate = log + ".release";
   vi.stubEnv("EVALUATOR_TEST_BUILD_GATE", gate);
+  vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   const jobs = Array.from({ length: 3 }, () => new DockerEnvironment({ dockerExecutable: "fixture-docker" }).materialize(spec, AbortSignal.timeout(15000)));
   const completed = Promise.all(jobs);
   void completed.catch(() => {});
   try {
     await vi.waitFor(async () => expect((await readFile(log + ".builds", "utf8")).trim().split("\n")).toHaveLength(1), { timeout: 5000 });
-    await vi.waitFor(async () => expect((await readdir(join(cache, "image-builds"))).filter(file => file.endsWith(".tmp"))).toHaveLength(2), { timeout: 5000 });
+    await vi.waitFor(async () => expect((await readFile(log + ".commands", "utf8")).split("\n")
+      .filter(line => line.includes('"version"') && line.includes("Server.Os"))).toHaveLength(3), { timeout: 5000 });
     expect((await readFile(log + ".builds", "utf8")).trim().split("\n")).toHaveLength(1);
   } finally { await writeFile(gate, "release\n"); await Promise.allSettled(jobs); }
-  await completed;
+  const results = await completed;
+  expect(results.every(result => JSON.stringify(result.prepared) === JSON.stringify(results[0]?.prepared))).toBe(true);
   expect((await readFile(log + ".builds", "utf8")).trim().split("\n")).toHaveLength(1);
 });
 
@@ -368,7 +414,6 @@ test("DocOps materializes with the Docker build hook and inherits runtime instal
     return { stdout: `sha256:${"a".repeat(64)}`, stderr: "" };
   });
   const environment = new DocOpsDockerEnvironment(parseDocOpsDockerConfig({ dockerExecutable: "fixture-docker" }), undefined, command);
-  expect(environment.installRuntime).toBe(DockerEnvironment.prototype.installRuntime);
   const prepared = await environment.materialize(spec, AbortSignal.timeout(15_000));
   expect(prepared.prepared).toMatchObject({ kind: "docker" });
   expect(command).toHaveBeenCalledWith(["image", "inspect", "harbor-codex-base:2.1.114", "--format", "{{.Id}}"], expect.anything());
@@ -523,27 +568,26 @@ test("task build caches are isolated by target platform in a shared environment"
   expect(new Set(tags).size).toBe(2);
 });
 
-test("identical public corpora build once across task IDs and retain per-task aliases", async () => {
+test("identical public corpora build once and use the same image references across tasks", async () => {
   const { environment, spec, log } = await fixture("FROM fixture/base\nCOPY corpus /corpus\n");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   const publicSpec = { ...spec, build: { ...spec.build, visibility: "public" as const } };
+  const receipts = [];
   for (const taskId of ["qid_7", "qid_9"])
-    await environment.materialize(publicSpec, AbortSignal.timeout(15_000), undefined, undefined, { taskId, phase: "solve" });
+    receipts.push((await environment.materialize(publicSpec, AbortSignal.timeout(15_000), undefined, undefined, { taskId, phase: "solve" })).prepared);
+  expect(receipts[0]).toEqual(receipts[1]);
   const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
-  const builds = calls.filter(args => args[0] === "build" && args.some(arg => arg.includes(":solve-task-")));
+  const builds = calls.filter(args => args[0] === "build" && !args.some(arg => arg.startsWith("NODE_IMAGE=")));
   expect(builds).toHaveLength(1);
   const aliases = calls.filter(args => args[0] === "image" && args[1] === "tag" && args[3]?.includes(":solve-task-"));
-  expect(aliases.map(args => args[3])).toEqual(expect.arrayContaining([
-    expect.stringContaining("/qid-7:solve-task-"), expect.stringContaining("/qid-9:solve-task-"),
-  ]));
-  expect(new Set(aliases.map(args => args[2])).size).toBe(1);
+  expect(aliases).toEqual([]);
 }, 30_000);
 
 test("an image whose actual architecture differs from the resolved target is invalid infrastructure", async () => {
   const { environment, spec } = await fixture("FROM fixture/base\n");
   vi.stubEnv("EVALUATOR_TEST_IMAGE_PLATFORM", "linux/arm64");
   await expect(environment.materialize({ ...spec, image: "fixture/arm-only" }, AbortSignal.timeout(10_000)))
-    .rejects.toMatchObject({ code: "ENV_ARCH_UNSUPPORTED", message: expect.stringContaining("resolved target is linux/amd64") });
+    .rejects.toMatchObject({ code: "ENV_ARCH_UNSUPPORTED", message: expect.stringContaining("linux/amd64") });
 });
 
 
@@ -579,15 +623,15 @@ test.skipIf(process.platform === "win32")("strict umask preserves source modes i
   const run = vi.spyOn(DockerRuntime.prototype, "prepare");
   const originalSpawn = (await import("node:child_process")).spawn;
   const probe = vi.spyOn(await import("node:child_process"), "spawn").mockImplementation((executable, args, options) => {
-    if (executable === "fixture-docker" && args?.[0] === "build") {
+    if (executable === "fixture-docker" && args?.[0] === "build" && args.includes("--file")) {
       const context = args.at(-1);
       if (!context) throw new Error("Missing context");
-      const inspect = String.raw`const fs = require('node:fs'); const path = require('node:path'); const root = process.argv[1];
+      const inspect = String.raw`{ const fs = require('node:fs'); const path = require('node:path'); const root = process.argv[1];
         for (const [name, mode] of [['data', 0o750], ['data/model.urdf', 0o644], ['run.sh', 0o751]]) {
           if ((fs.statSync(path.join(root, name)).mode & 0o777) !== mode) process.exit(42);
         }
-        fs.writeFileSync(process.env.EVALUATOR_TEST_BUILD_LOG, fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8'));`;
-      return originalSpawn(process.execPath, ["-e", inspect, context], options);
+      }`;
+      return originalSpawn(process.execPath, ["-e", inspect + "\nprocess.argv.splice(1, 1);\n" + fakeDocker, context, ...args], options);
     }
     return originalSpawn(executable, args, options);
   });
@@ -607,7 +651,13 @@ test("archive selection uses the requested platform and bypasses an existing pin
   const network = new NetworkRuntime(networkDocument({ docker: { benchmarks: {
     terminalbench: { method: "archive", provider: "modelscope", baseUrl: "https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0" },
   } } }, {}));
-  const fetch = vi.spyOn(network, "fetch").mockResolvedValue(new Response("opaque archive bytes"));
+  const config = JSON.stringify({ architecture: "arm64", os: "linux" });
+  const archive = join(spec.build.context, "fixture.tar.gz");
+  await writeFile(join(spec.build.context, "config.json"), config);
+  await writeFile(join(spec.build.context, "manifest.json"), JSON.stringify([{ Config: "config.json", Layers: [], RepoTags: ["publisher:old"] }]));
+  await create({ cwd: spec.build.context, file: archive, gzip: true }, ["config.json", "manifest.json"]);
+  vi.stubEnv("EVALUATOR_TEST_ARCHIVE_ID", "sha256:" + createHash("sha256").update(config).digest("hex"));
+  const fetch = vi.spyOn(network, "fetch").mockResolvedValue(new Response(await readFile(archive)));
   try {
     const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", benchmarkName: "terminalbench",
       network, platform: "linux/arm64", allowEmulation: false });
@@ -616,7 +666,7 @@ test("archive selection uses the requested platform and bypasses an existing pin
       AbortSignal.timeout(15000), undefined, undefined, { taskId: "terminal-bench/task-a", phase: "solve" });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(String(fetch.mock.calls[0]![0])).toBe("https://modelscope.cn/datasets/team/images/resolve/master/terminalbench4.0/task-a/linux/arm64/solve.tar.gz");
-    expect(prepared.prepared).toMatchObject({ baseImage: { pinnedReference: expect.stringMatching(/:solve-archive-/u) } });
+    expect(prepared.prepared).toMatchObject({ baseImage: { pinnedReference: "ember-evaluator/base:linux-arm64-base" } });
     const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(calls.some(args => args.includes(sourceImage))).toBe(false);
     expect(calls.filter(args => args[0] === "load")).toHaveLength(1);

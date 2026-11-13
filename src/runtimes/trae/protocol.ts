@@ -17,6 +17,8 @@ function usageFrom(value: JsonValue | undefined): Usage {
 
 export function consumeTrae(handle: ProcessHandle, context: AttemptContext, secret: string): Promise<SolveResult> {
   let finalText: string | undefined;
+  let turnText: string | undefined;
+  let turnStarted = false;
   let terminal: "turn.completed" | "turn.failed" | undefined;
   let usage = usageFrom(undefined);
   let diagnostic = "";
@@ -26,18 +28,30 @@ export function consumeTrae(handle: ProcessHandle, context: AttemptContext, secr
     accept(event) {
       const { type } = event;
       if (type === "turn.started" || type.startsWith("item.")) context.activity?.({});
+      if (type === "turn.started") {
+        if (turnStarted && terminal === undefined)
+          throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "TRAE CLI started a turn before the previous turn ended");
+        turnStarted = true;
+        terminal = undefined;
+        turnText = undefined;
+        diagnostic = "";
+      }
       if (type === "item.completed" && terminal === undefined) {
         const item = record(event.item);
-        if (item?.type === "agent_message" && typeof item.text === "string") finalText = item.text;
+        if (item?.type === "agent_message" && typeof item.text === "string") turnText = item.text;
       }
       if (type === "error" || type === "turn.failed") {
         const message = record(event.error)?.message ?? event.message;
         if (typeof message === "string") diagnostic = redactDiagnostic(message, [secret]);
       }
       if (type === "turn.completed" || type === "turn.failed") {
-        if (terminal !== undefined) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "TRAE CLI emitted multiple terminal turn events");
+        if (terminal !== undefined) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "TRAE CLI emitted multiple terminal events for one turn");
         terminal = type;
-        if (type === "turn.completed") usage = usageFrom(event.usage);
+        if (type === "turn.completed") {
+          if (turnText !== undefined) finalText = turnText;
+          // TRAE reports session totals, including previous turns.
+          usage = usageFrom(event.usage);
+        }
       }
     },
     finish(exit, stderr) {

@@ -285,6 +285,10 @@ async function prepareHarborStage(
     if (typeof users.verify === "string") verifyEnv.executionUsers = { verify: users.verify };
   }
   const hooks = document.verifier && declaredVerifier.collect !== undefined ? declaredVerifier.collect : [];
+  const [namespace, ...taskPath] = id.split("/");
+  const imageScope = { dataset: config.dataset, taskPath: taskPath.length ? taskPath.join("/") : namespace! };
+  solveEnv.imageScope = imageScope;
+  if (verifyEnv) verifyEnv.imageScope = imageScope;
   if (!Array.isArray(hooks)) invalid("verifier.collect must be an array");
   // Git treats a trailing /* as a pattern, so it cannot be trusted literally.
   const collectGitConfig = workdir.endsWith("/*") ? null : "'safe.directory=" + workdir.replaceAll("'", "'\\''") + "'";
@@ -335,7 +339,7 @@ async function prepareHarborStage(
     invalid("Invalid verifier.import_path");
   const descriptor = await verifier.prepare({ id, taskDir, ...(stepDir ? { stepName: posix.basename(stepDir.replaceAll("\\", "/")) } : {}), datasetDir, workdir, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
     ...(typeof importPath === "string" ? { importPath } : {}) }, signal);
-  const verification = { descriptor, env: environmentVariables(declaredVerifier.env, "verifier.env"),
+  const verification = { descriptor, imageScope, env: environmentVariables(declaredVerifier.env, "verifier.env"),
     ...(testsInImage ? { testsInImage: true } : {}) };
   return { input: { id, prompt: await readPublicInstruction(stepDir ?? taskDir, () => new HarborTaskError("TASK_DATA_INVALID", "Empty instruction.md")),
     ...(typeof declaredEnvironment.skills_dir === "string" ? { skillsDirectories: [declaredEnvironment.skills_dir] } : {}),

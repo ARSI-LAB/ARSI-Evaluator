@@ -9,6 +9,7 @@ import { HuggingFaceFilesSource } from "../../../infrastructure/datasets/sources
 import { HttpZipJsonSource } from "../../../infrastructure/datasets/sources/http/zip-json-source.js";
 import { dropDefinition } from "./definitions/drop.js";
 import { expectRecord, rejectUnknown, expectNonEmptyString } from "../../../core/validation/input.js";
+import { EvaluatorError } from "../../../core/errors/evaluator-error.js";
 import { type PluginFactoryContext } from "../../../core/contracts/plugin.js";
 import { readProfileDirectory } from "../../../infrastructure/profiles/read.js";
 import { harborConfigTransport } from "./protocols/harbor/config-transport.js";
@@ -18,7 +19,7 @@ export async function apply(ctx: Context): Promise<void> {
   for (const profile of await readProfileDirectory(new URL("./profiles/", import.meta.url))) ctx.evaluator.registerProfile(profile);
   ctx.evaluator.register("benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
     new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
-      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network),
+      ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network, runtime.imageConfigFingerprint),
     { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport });
   ctx.evaluator.register("benchmark", "drop", value => {
     const config = expectRecord(value, "drop");
@@ -42,27 +43,38 @@ export async function apply(ctx: Context): Promise<void> {
   for (const { definition, source } of DEFINED_BENCHMARKS) {
     const name = definition.name;
     const requiresJudge = ["healthbench", "simpleqa", "math500"].includes(name);
+    const supportsSolveNetwork = name === "mmlu_pro";
     ctx.evaluator.register(
       "benchmark",
       name,
       (value: unknown) => {
         const config = expectRecord(value, name);
-        rejectUnknown(config, ["cacheDir", "hfToken", "dockerExecutable", "localPath", ...(requiresJudge ? ["judgeService"] : [])], name);
+        rejectUnknown(config, ["cacheDir", "hfToken", "dockerExecutable", "localPath",
+          ...(requiresJudge ? ["judgeService"] : []), ...(supportsSolveNetwork ? ["solveNetwork"] : [])], name);
+        if (config.solveNetwork !== undefined && config.solveNetwork !== "model-api") {
+          throw new TypeError(`${name}.solveNetwork must be model-api`);
+        }
         const cacheDir = expectNonEmptyString(config.cacheDir ?? ".cache/huggingface", `${name}.cacheDir`);
         const dockerExecutable = expectNonEmptyString(config.dockerExecutable ?? "docker", `${name}.dockerExecutable`);
         return { cacheDir, dockerExecutable, ...localDatasetConfig(config),
+          ...(config.solveNetwork === "model-api" ? { solveNetwork: "model-api" as const } : {}),
           ...(config.hfToken === undefined ? {} : { hfToken: expectNonEmptyString(config.hfToken, `${name}.hfToken`) }),
           ...(requiresJudge ? { judgeService: expectNonEmptyString(config.judgeService, `${name}.judgeService`) } : {}) };
       },
-      (config, runtime) =>
-        new DefinedBenchmark(
+      (config, runtime) => {
+        if (config.solveNetwork !== undefined && runtime.environmentName !== "docker") {
+          throw new EvaluatorError("CONFIG_INVALID", "mmlu_pro solveNetwork: model-api requires environment: docker");
+        }
+        return new DefinedBenchmark(
           definition,
           config.localPath === undefined
             ? new HuggingFaceFilesSource(runtime.resolvePath(config.cacheDir), name, source, config.hfToken ?? process.env.HF_TOKEN, undefined, runtime.network)
             : new LocalRecordSource(runtime.resolvePath(config.localPath), source),
           { network: runtime.network, dockerExecutable: config.dockerExecutable,
+            ...(config.solveNetwork === undefined ? {} : { solveNetwork: config.solveNetwork }),
             ...(config.judgeService === undefined ? {} : { judgeService: config.judgeService, judge: requireJudgeService(runtime, config.judgeService) }) },
-        ),
+        );
+      },
       { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport },
     );
   }

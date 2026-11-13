@@ -1,9 +1,23 @@
-# 目录和文件名使用 mmlu-pro，配置中的注册名为 mmlu_pro。
+# MMLU-Pro 使用无工具作答，求解容器只访问模型 API。
 services:
   default:
     model: ${MODEL_NAME}
     base_url: ${MODEL_ENDPOINT}
     api_key: ${MODEL_API_KEY}
+    api: openai-completions
 benchmark:
   name: mmlu_pro
-environment: local
+  config:
+    solveNetwork: model-api
+  solver:
+    name: simpleagent
+    config:
+      tools: none
+      webSearch: disabled
+      webFetch: disabled
+environment:
+  name: docker
+  config:
+    image: node:24.22.1-bookworm-slim
+run:
+  solveTimeoutSeconds: 240

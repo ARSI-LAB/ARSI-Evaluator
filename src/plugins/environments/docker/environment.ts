@@ -16,12 +16,12 @@ import { applyBuildPipConstraints, parseBuildPipConstraints } from "../../../inf
 import { readDirectoryModes, restoreDirectoryModes } from "../../../infrastructure/filesystem/directory-modes.js";
 import { createDockerImagePuller, type DockerImagePull } from "../../../infrastructure/containers/image-pull.js";
 import { DockerTaskArchive } from "../../../infrastructure/containers/task-archive.js";
-import { dockerImageName, type DockerImageScope } from "../../../infrastructure/containers/image-name.js";
-import { resolvePinnedTaskImage } from "../../../infrastructure/containers/base-image.js";
+import { acquireBaseImage } from "../../../infrastructure/containers/base-image.js";
+import { dockerImageName, dockerImageReference, type DockerImageScope } from "../../../infrastructure/containers/image-name.js";
 import { dockerActivity, observeDockerCommand, withDockerActivity } from "../../../infrastructure/containers/progress.js";
 import type { ActivityListener } from "../../../core/contracts/activity.js";
 import { constrainDockerCpus, cpuBudgetNodeOptions, cpuCountForBudget } from "../../../infrastructure/containers/cpu.js";
-import type { ContainerPlatform, Environment, EnvironmentSession, EnvironmentSpec, EnvironmentPreparationTimings, EnvironmentImageReady, EnvironmentPreparationContext, PreparationCacheSource, RuntimeInstallation, RuntimeRequirement } from "../../../core/contracts/environment.js";
+import type { ContainerPlatform, Environment, EnvironmentSession, EnvironmentSpec, EnvironmentPreparationTimings, EnvironmentImageReady, EnvironmentPreparationContext, PreparationCacheSource, RuntimeRequirement } from "../../../core/contracts/environment.js";
 import type { AttemptKey, AttemptPaths } from "../../../core/contracts/result.js";
 import type { JsonValue } from "../../../core/contracts/task.js";
 import { validateNetworkPolicy } from "../../../core/policies/network-policy.js";
@@ -33,7 +33,6 @@ import { DockerBuildCache } from "../../../infrastructure/containers/build-cache
 import { DOCKER_PLATFORM, EVALUATOR_NODE_EXECUTABLE, PROCESS_HELPER, type DockerCommand, type PreparedRuntimeImage } from "../../../infrastructure/containers/runtime-contract.js";
 import { DockerRuntime } from "../../../infrastructure/containers/runtime.js";
 import { PlatformCapabilityDetector, parseDockerPlatform, parseDockerEmulation, resolveDockerPlatform, nodePlatform, type DockerPlatformSelection, type PlatformResolution } from "../../../infrastructure/containers/platform.js";
-import { DockerSolverRuntime } from "../../../infrastructure/containers/solver-runtime.js";
 import { DockerComposeProject, recoverComposeNetworks } from "../../../infrastructure/containers/compose.js";
 import { platformImageCommand } from "../../../infrastructure/containers/image-inspect.js";
 import { DockerImageInventory } from "../../../infrastructure/containers/image-inventory.js";
@@ -147,7 +146,7 @@ type DockerPreparationReceipt = {
   gatewayDigest: string | null;
   baseImage: ResolvedBaseImage;
   runtime: PreparedRuntimeImage;
-  solverImage: Awaited<ReturnType<DockerSolverRuntime["prepare"]>> | null;
+  solverImage: { image: string; digest: string; runtime: NonNullable<PreparedRuntimeImage["installation"]> } | null;
   serviceImages?: Record<string, string>;
 };
 
@@ -243,6 +242,7 @@ function composeMainOptions(spec: EnvironmentSpec, launch: DockerContainerLaunch
 
 export type DockerEnvironmentOptions = {
   imageConfigFingerprint?: string;
+  solverName?: string;
   /** Fetch external base images before an uncached build; never allocate task containers here. */
   prepareBuild?: (spec: EnvironmentSpec, signal: AbortSignal, activity?: ActivityListener) => Promise<void>;
   /** Supplement the benchmark requirement when EnvironmentSpec has no platform. */
@@ -315,13 +315,14 @@ export class DockerEnvironment implements Environment {
   private readonly containerEnv: Record<string, string>;
   private readonly buildPipConstraints: Record<string, string[]>;
   private readonly imageOverrides: Record<string, string>;
-  private readonly taskImageCache = new DockerBuildCache<string>();
+  private readonly taskImageCache = new DockerBuildCache<string>(false);
+  private readonly verificationImages = new DockerBuildCache<{ baseImage: ResolvedBaseImage; runtime: PreparedRuntimeImage }>(false);
   private capacity: Promise<DockerCapacity> | undefined;
-  private readonly attemptBaseImages = new Map<string, Promise<ResolvedBaseImage>>();
   private readonly dockerExecutable: string;
   private readonly command: DockerCommand;
   private readonly imageInventory: DockerImageInventory;
   private readonly imageConfigFingerprint: string | undefined;
+  private readonly solverName: string;
   private readonly network: NetworkAccess;
   private readonly pullImage: DockerImagePull;
   private readonly pullTaskImage: DockerImagePull;
@@ -330,7 +331,7 @@ export class DockerEnvironment implements Environment {
   private readonly allowEmulation: boolean;
   private readonly capabilities: PlatformCapabilityDetector;
   private readonly nodeImage: string;
-  private readonly runtimes = new Map<ContainerPlatform, { runtime: DockerRuntime; solverRuntime: DockerSolverRuntime }>();
+  private readonly runtimes = new Map<ContainerPlatform, DockerRuntime>();
   /** Configured model endpoint; required by the "model-api" network policy. */
   private readonly modelEndpoint: string | null;
   /** Base task image used when the benchmark's environment spec has no image. */
@@ -358,9 +359,10 @@ export class DockerEnvironment implements Environment {
     this.imageInventory = new DockerImageInventory(this.command);
     this.command = this.imageInventory.command;
     this.imageConfigFingerprint = options.imageConfigFingerprint;
+    this.solverName = options.solverName ?? "runtime";
     this.pullImage = createDockerImagePuller(this.command, { network: this.network });
     const acquisition = options.benchmarkName ? this.network.settings.docker.benchmarks[options.benchmarkName] : undefined;
-    this.taskArchive = acquisition?.method === "archive" ? new DockerTaskArchive(this.command, acquisition, this.network) : undefined;
+    this.taskArchive = acquisition?.method === "archive" ? new DockerTaskArchive(this.command, this.imageInventory, acquisition, this.network) : undefined;
     this.pullTaskImage = createDockerImagePuller(this.command, { network: this.network,
       acquisition: acquisition?.method === "archive" ? undefined : acquisition });
     this.nodeImage = new DockerRuntime(this.command, options.nodeImage, DOCKER_PLATFORM, this.pullImage, this.dockerExecutable).nodeImage;
@@ -368,33 +370,25 @@ export class DockerEnvironment implements Environment {
     this.modelEndpoint = options.modelEndpoint ?? null;
     this.defaultImage = options.image ?? null;
   }
-  private async resolvePlatform(spec: Pick<EnvironmentSpec, "platform">, signal: AbortSignal): Promise<PlatformResolution> {
+  private async resolvePlatform(spec: Pick<EnvironmentSpec, "platform" | "image" | "build">, signal: AbortSignal): Promise<PlatformResolution> {
     const native = await this.capabilities.nativePlatform(signal);
-    return resolveDockerPlatform(this.platformSelection, this.taskArchive ? undefined : spec.platform, native, this.allowEmulation);
+    return resolveDockerPlatform(this.platformSelection, this.taskArchive && (spec.image !== null || spec.build) ? undefined : spec.platform, native, this.allowEmulation);
   }
   private async preparePlatform(resolution: PlatformResolution, signal: AbortSignal) {
-    let runtimes = this.runtimes.get(resolution.platform);
-    if (!runtimes) {
-      const runtime = new DockerRuntime(this.command, this.nodeImage, resolution.platform, this.pullImage, this.dockerExecutable);
-      runtimes = { runtime, solverRuntime: new DockerSolverRuntime(this.command, runtime, this.network) };
-      this.runtimes.set(resolution.platform, runtimes);
+    let runtime = this.runtimes.get(resolution.platform);
+    if (!runtime) {
+      runtime = new DockerRuntime(this.command, this.nodeImage, resolution.platform, this.pullImage, this.dockerExecutable,
+        this.network, this.imageInventory);
+      this.runtimes.set(resolution.platform, runtime);
     }
-    const { runtime, solverRuntime } = runtimes;
+    const prepared = runtime;
     await this.capabilities.ensure(resolution, signal, async active => {
-      await runtime.nodeImageDigest(active);
-      return this.addressableImage(runtime.nodeImage, active);
+      await prepared.nodeImageDigest(active);
+      return this.addressableImage(prepared.nodeImage, active);
     });
-    return { runtime, solverRuntime };
+    return prepared;
   }
-  async installRuntime(installation: RuntimeInstallation, signal: AbortSignal, spec?: EnvironmentSpec, activity?: ActivityListener): Promise<void> {
-    return this.imageInventory.use(undefined, signal, () => withDockerActivity(activity, () => this.installRuntimeObserved(installation, signal, spec)));
-  }
-  acquireImageLease(signal: AbortSignal) { return this.imageInventory.lease(signal); }
-  private async installRuntimeObserved(installation: RuntimeInstallation, signal: AbortSignal, spec?: EnvironmentSpec): Promise<void> {
-    signal.throwIfAborted();
-    const { solverRuntime } = await this.preparePlatform(await this.resolvePlatform(spec ?? {}, signal), signal);
-    await solverRuntime.install(installation, signal);
-  }
+  acquireImageLease(signal: AbortSignal) { return this.imageInventory.lease(signal, undefined, this.imageConfigFingerprint); }
   async recoverAttempts(keys: AttemptKey[], signal: AbortSignal): Promise<void> {
     // Load from the installed Evaluator so this path does not change the
     // bundled verifier's bytes and block resume of existing runs.
@@ -407,12 +401,7 @@ export class DockerEnvironment implements Environment {
     // their socket volumes need an explicit sweep.
     await cleanupGatewayVolumes(this.command, keys, signal);
   }
-  private async taskImage(spec: EnvironmentSpec, platform: ContainerPlatform, signal: AbortSignal, observe?: (source: PreparationCacheSource) => void, useImageOverrides = true, scope?: DockerImageScope): Promise<string> {
-    if (spec.image !== null) {
-      observe?.("reference");
-      const override = useImageOverrides && Object.hasOwn(this.imageOverrides, spec.image) ? this.imageOverrides[spec.image] : undefined;
-      return override ?? spec.image;
-    }
+  private async describeTaskBuild(spec: EnvironmentSpec, platform: ContainerPlatform, signal: AbortSignal, scope?: DockerImageScope) {
     if (!spec.build) throw new DockerEnvironmentError("ENV_IMAGE_REFERENCE_INVALID", "Docker environment requires image or build");
     const constraintTaskId = scope && Object.hasOwn(this.buildPipConstraints, scope.taskId) ? scope.taskId : "*";
     const pipConstraints = scope?.service ? [] : this.buildPipConstraints[constraintTaskId] ?? [];
@@ -444,11 +433,24 @@ export class DockerEnvironment implements Environment {
         }),
       )
       .digest("hex");
-    const tag = dockerImageName(scope ? "task" : "solve-task", key, scope);
-    // Public contexts with identical bytes can contain a large shared corpus.
-    // Build and snapshot them once; retain task-specific aliases for inspection.
-    const buildTag = spec.build.visibility === "public" ? dockerImageName("solve-task", key) : tag;
-    const reference = await this.taskImageCache.getImage(this.dockerExecutable, buildTag, signal, async buildSignal => {
+    const buildTag = spec.build.visibility === "public" || !scope
+      ? dockerImageName("solve-task", key)
+      : dockerImageName("task", key, scope);
+    return { context, sourceModes, pipConstraints, network, buildTag };
+  }
+
+  private async taskImage(spec: EnvironmentSpec, platform: ContainerPlatform, signal: AbortSignal,
+    observe?: (source: PreparationCacheSource) => void, useImageOverrides = true, scope?: DockerImageScope,
+    described?: Awaited<ReturnType<DockerEnvironment["describeTaskBuild"]>>, preferred?: string): Promise<string> {
+    if (spec.image !== null) {
+      observe?.("reference");
+      return useImageOverrides && Object.hasOwn(this.imageOverrides, spec.image) ? this.imageOverrides[spec.image]! : spec.image;
+    }
+    const { context, sourceModes, pipConstraints, network, buildTag } = described ?? await this.describeTaskBuild(spec, platform, signal, scope);
+    const buildInput = scope?.phase === "verify" && !scope.service;
+    return await this.taskImageCache.getImage(this.dockerExecutable, buildTag, signal, async buildSignal => {
+      const cached = await this.imageInventory.cached(buildTag, platform, buildSignal, buildInput ? undefined : preferred);
+      if (cached) { observe?.("image"); return cached.reference; }
       try {
         await this.command(["image", "inspect", "--platform", platform, buildTag, "--format", "{{.Id}}"], { signal: buildSignal });
         observe?.("image");
@@ -456,6 +458,8 @@ export class DockerEnvironment implements Environment {
       } catch {}
       buildSignal.throwIfAborted();
       const staging = await mkdtemp(join(tmpdir(), "ember-docker-context-"));
+      const output = preferred ? `ember-evaluator/staging:${randomUUID()}` : buildTag;
+      let keepBuildInput = false;
       try {
         const snapshot = join(staging, "context");
         await cp(context.context, snapshot, {
@@ -488,70 +492,37 @@ export class DockerEnvironment implements Environment {
         await applyBuildPipConstraints(snapshot, dockerfile, pipConstraints, buildSignal);
         const buildArgs = network.buildArgs;
         await writeFile(dockerfile, network.recipe(await readFile(dockerfile, "utf8")));
-        await this.command(["build", "--platform", platform, ...(spec.build?.noCache ? ["--no-cache"] : []), ...buildArgs, "--tag", buildTag, "--file", dockerfile, snapshot], {
+        await this.command(["build", "--platform", platform, ...(spec.build?.noCache ? ["--no-cache"] : []), ...buildArgs, "--tag", output, "--file", dockerfile, snapshot], {
           env: network.environment,
           signal: buildSignal,
           maxBuffer: 8 * 1024 * 1024,
         });
         observe?.("built");
-        return buildTag;
+        const retained = await this.imageInventory.retain(output, platform, buildSignal,
+          { key: buildTag, removeAlias: true, buildInput, acquiredInput: buildInput, ...(preferred ? { preferred } : {}),
+            ...(output !== buildTag && !buildInput ? { temporary: true } : {}) });
+        keepBuildInput = buildInput && retained.reference === output;
+        return retained.reference;
       } finally {
-        await rm(staging, { recursive: true, force: true });
+        try {
+          if (output !== buildTag && (!keepBuildInput || buildSignal.aborted))
+            await this.imageInventory.discardStaging(output, AbortSignal.timeout(30_000));
+        } finally { await rm(staging, { recursive: true, force: true }); }
       }
     }, observe);
-    if (reference !== tag) await this.command(["image", "tag", reference, tag], { signal });
-    return tag;
   }
-  private async baseImage(spec: EnvironmentSpec, platform: ContainerPlatform, key: AttemptKey, signal: AbortSignal, observe?: (source: PreparationCacheSource) => void, useImageOverrides = true, scope?: DockerImageScope): Promise<ResolvedBaseImage> {
-    if (this.taskArchive && scope) return this.taskArchive.load(scope, platform, signal, observe);
-    // Validate the public build context on every phase before consulting the
-    // task-image cache, while keeping a mutable image tag pinned per attempt.
-    const reference = await this.taskImage(spec, platform, signal, observe, useImageOverrides, scope);
-    const pull: DockerImagePull = (image, target, active) => this.pullTaskImage(image, target, active, scope);
-    const pinned = await resolvePinnedTaskImage(this.command, reference, platform, scope, signal, observe, pull);
-    if (pinned) return pinned;
-    const attempt = JSON.stringify([key.runId, key.taskId, key.attemptId, platform, reference, scope]);
-    const cached = this.attemptBaseImages.get(attempt);
-    if (cached) return await cached;
-    const resolution = (async () => {
-      let localReference = reference;
-      let inspected;
-      try {
-        inspected = await this.command(["image", "inspect", "--platform", platform, reference, "--format", "{{.Id}}"], { signal });
-      } catch (inspectError) {
-        try {
-          localReference = (await pull(reference, platform, signal)).reference;
-        } catch (pullError) {
-          throw new DockerEnvironmentError(
-            "ENV_IMAGE_PULL_FAILED",
-            `cannot inspect or pull Docker image ${reference}`,
-            new AggregateError([inspectError, pullError]),
-          );
-        }
-        inspected = await this.command(["image", "inspect", "--platform", platform, localReference, "--format", "{{.Id}}"], { signal });
-      }
-      const id = inspected.stdout.trim();
-      if (!/^sha256:[a-f0-9]{64}$/u.test(id))
-        throw new DockerEnvironmentError("ENV_IMAGE_REFERENCE_INVALID", `Docker returned an invalid image ID for ${reference}`);
-      const actualPlatform = (await this.command(["image", "inspect", "--platform", platform, localReference,
-        "--format", "{{.Os}}/{{.Architecture}}"], { signal })).stdout.trim();
-      if (actualPlatform !== platform)
-        throw new EvaluatorError("ENV_ARCH_UNSUPPORTED",
-          `Task image ${reference} is ${actualPlatform || "unknown"}; resolved target is ${platform}`,
-          { component: "docker", operation: "image-inspect" });
-      const tagHash = createHash("sha256").update(`${attempt}\0${id}`).digest("hex").slice(0, 24);
-      const pinnedReference = dockerImageName(scope ? "base" : key.taskId === "gateway" ? "gateway-base" : "solve-base", tagHash, scope);
-      await this.command(["image", "tag", localReference, pinnedReference], { signal });
-      return { reference, pinnedReference, id };
-    })();
-    this.attemptBaseImages.set(attempt, resolution);
-    try {
-      return await resolution;
-    } catch (error) {
-      this.attemptBaseImages.delete(attempt);
-      throw error;
-    }
+  private async baseImage(spec: EnvironmentSpec, platform: ContainerPlatform, signal: AbortSignal,
+    observe?: (source: PreparationCacheSource) => void, scope?: DockerImageScope, usesTaskSource = true,
+    described?: Awaited<ReturnType<DockerEnvironment["describeTaskBuild"]>>, preferred?: string): Promise<ResolvedBaseImage> {
+    if (this.taskArchive && scope && usesTaskSource) return this.taskArchive.load(scope, platform, signal, observe, preferred);
+    const reference = await this.taskImage(spec, platform, signal, observe, usesTaskSource, scope, described, preferred);
+    const key = "source:" + createHash("sha256").update(JSON.stringify([reference, platform, usesTaskSource,
+      this.network.settings.docker])).digest("hex");
+    const pull = usesTaskSource ? this.pullTaskImage : this.pullImage;
+    const resolved = await acquireBaseImage(this.imageInventory, reference, platform, key, pull, signal, scope, preferred);
+    return { reference, pinnedReference: resolved.reference, id: resolved.digest };
   }
+
   private async addressableImage(reference: string, signal: AbortSignal): Promise<string> {
     // containerd may return a platform config ID from --platform that cannot
     // itself be used as an image reference. Use the addressable root ID to launch.
@@ -583,8 +554,7 @@ export class DockerEnvironment implements Environment {
       this.validatePreparation(spec, context?.phase);
       await this.admitResources(spec, signal);
       const resolution = await this.resolvePlatform(spec, signal);
-      const key = { runId: "preparation", taskId: context?.taskId ?? "shared", attemptId: randomUUID() };
-      const { prepared, preparationTiming } = await this.prepareDependencies(spec, resolution, key, signal, context, onImageReady);
+      const { prepared, preparationTiming } = await this.prepareDependencies(spec, resolution, signal, context, onImageReady);
       await this.imageInventory.associatePrepared(prepared, signal);
       return { ...spec, preparationTiming, prepared };
     }));
@@ -592,36 +562,94 @@ export class DockerEnvironment implements Environment {
   cleanupImages(request: import("../../../core/contracts/image-cleanup.js").ImageCleanupRequest, signal: AbortSignal) {
     return this.imageInventory.cleanup(request, signal);
   }
-  private async prepareDependencies(spec: EnvironmentSpec, resolution: PlatformResolution, key: AttemptKey,
+  private async prepareDependencies(spec: EnvironmentSpec, resolution: PlatformResolution,
     signal: AbortSignal, context?: EnvironmentPreparationContext, onImageReady?: (timing: EnvironmentImageReady) => void) {
     const { platform } = resolution;
-    const { runtime: nodeRuntime, solverRuntime } = await this.preparePlatform(resolution, signal);
+    const nodeRuntime = await this.preparePlatform(resolution, signal);
     const cache: NonNullable<EnvironmentPreparationTimings["cache"]> = {};
     const imageStarted = performance.now();
-    const baseImage = await this.baseImage(
-      spec.image === null && !spec.build && this.defaultImage !== null ? { ...spec, image: this.defaultImage } : spec, platform,
-      key, signal, source => { cache.image = source; }, true, context,
-    );
-    const imageMs = performance.now() - imageStarted;
-    signal.throwIfAborted();
-    onImageReady?.({ imageMs, ...(cache.image === undefined ? {} : { cache: cache.image }) });
-    const runtimeStarted = performance.now();
-    const runtime = await nodeRuntime.prepare(baseImage.pinnedReference, spec.runtime, signal, source => { cache.runtime = source; }, context);
-    const runtimeMs = performance.now() - runtimeStarted;
-    const solverStarted = performance.now();
-    const solverImage = spec.installation
-      ? await solverRuntime.prepare(runtime.image, runtime.digest, spec.installation, signal, source => { cache.solver = source; }, context)
-      : undefined;
-    const solverMs = spec.installation ? performance.now() - solverStarted : 0;
-    const launchImage = await this.addressableImage(solverImage?.image ?? runtime.image, signal);
+    const phase = context?.phase ?? "solve";
+    const hasTaskSource = spec.image !== null || Boolean(spec.build);
+    const imageScope = hasTaskSource ? spec.imageScope : undefined;
+    const baseName = dockerImageReference(platform, "base", imageScope);
+    const finalName = dockerImageReference(platform, phase === "verify" ? "verify" : `solver-${this.solverName}`, imageScope);
+    const defaultImage = this.defaultImage === null ? this.nodeImage : this.imageOverrides[this.defaultImage] ?? this.defaultImage;
+    const baseSpec = hasTaskSource ? spec : { ...spec, image: defaultImage };
+    let imageMs = 0;
+    let runtimeMs = 0;
+    const noteImage = () => {
+      imageMs = performance.now() - imageStarted;
+      onImageReady?.({ imageMs, ...(cache.image === undefined ? {} : { cache: cache.image }) });
+    };
+    const archive = this.taskArchive && context && hasTaskSource ? this.taskArchive.source(context, platform) : undefined;
+    const describe = baseSpec.image === null && !archive
+      ? await this.describeTaskBuild(baseSpec, platform, signal, context) : undefined;
+    const reference = baseSpec.image !== null && hasTaskSource && Object.hasOwn(this.imageOverrides, baseSpec.image)
+      ? this.imageOverrides[baseSpec.image]! : baseSpec.image;
+    const source = archive ?? describe?.buildTag ?? reference;
+    const acquireMain = async (active: AbortSignal): Promise<ResolvedBaseImage> => {
+      if (!hasTaskSource && (baseSpec.image === this.nodeImage || baseSpec.image === this.nodeImage.split("@")[0])) {
+        const id = await nodeRuntime.nodeImageDigest(active, baseName);
+        cache.image = "reference";
+        return { reference: baseSpec.image!, pinnedReference: nodeRuntime.nodeImage, id };
+      }
+      return this.baseImage(baseSpec, platform, active, cacheSource => { cache.image = cacheSource; }, context, hasTaskSource, describe,
+        phase === "verify" ? finalName : baseName);
+    };
+    const prepareMain = async (active: AbortSignal, verifyKey?: string) => {
+      const baseImage = !verifyKey && source
+        ? await this.imageInventory.withSource(source, platform, active, () => acquireMain(active))
+        : await acquireMain(active);
+      noteImage();
+      const started = performance.now();
+      const input = verifyKey ? await this.addressableImage(baseImage.pinnedReference, active) : undefined;
+      try {
+        const runtime = await nodeRuntime.prepare(baseImage.pinnedReference, spec.runtime, active,
+          source => { if (spec.installation) cache.solver = source; else cache.runtime = source; }, context, spec.installation, baseImage.id, finalName);
+        if (verifyKey) await this.imageInventory.retain(runtime.image, platform, active,
+          { key: verifyKey, source: { reference: baseImage.reference, id: baseImage.id } });
+        return { baseImage, runtime };
+      } finally {
+        runtimeMs = performance.now() - started;
+        if (input) await this.imageInventory.releaseBuildInput(baseImage.pinnedReference, input, AbortSignal.timeout(30_000));
+      }
+    };
+    const verifyKey = "verify:" + createHash("sha256").update(JSON.stringify([
+      archive ?? describe?.buildTag ?? reference, platform, this.nodeImage, nodeRuntime.helperIdentity, spec.runtime, this.network.settings.docker,
+    ])).digest("hex");
+    const { baseImage, runtime } = phase === "verify"
+      ? await this.verificationImages.getImage(this.dockerExecutable, verifyKey, signal, async active => {
+        const saved = await this.imageInventory.cached(verifyKey, platform, active, finalName);
+        if (saved?.source) {
+          let current: string | undefined;
+          if (reference && !archive) {
+            try {
+              current = (await this.command(["image", "inspect", "--platform", platform, reference, "--format", "{{.Id}}"], { signal: active })).stdout.trim();
+            } catch (error) {
+              active.throwIfAborted();
+              if (!(error instanceof Error) || !/no such (?:image|object)|not found/iu.test(error.message)) throw error;
+            }
+          }
+          if (current === undefined || current === saved.source.id) {
+            cache.image = "image";
+            noteImage();
+            return { baseImage: { ...saved.source, pinnedReference: saved.source.reference },
+              runtime: { image: saved.reference, digest: saved.digest, baseDigest: saved.source.id, runtimes: nodeRuntime.runtimeMetadata(spec.runtime) } };
+          }
+        }
+        return source ? this.imageInventory.withSource(source, platform, active, () => prepareMain(active, verifyKey))
+          : prepareMain(active, verifyKey);
+      })
+      : await prepareMain(signal);
+    const solverMs = spec.installation ? runtimeMs : 0;
+    if (spec.installation) runtimeMs = 0;
+    const solverImage = runtime.installation ? { image: runtime.image, digest: runtime.digest, runtime: runtime.installation } : null;
+    const launchImage = await this.addressableImage(runtime.image, signal);
     let gatewayImage: string | null = null;
     let gatewayDigest: string | null = null;
     if (needsModelGateway(spec)) {
-      // A task image mapping must never replace the pinned internal gateway.
-      const gateway = await this.baseImage({ ...spec, image: nodeRuntime.nodeImage }, platform,
-        { ...key, taskId: "gateway" }, signal, undefined, false);
-      gatewayDigest = gateway.id;
-      gatewayImage = await this.addressableImage(gateway.pinnedReference, signal);
+      gatewayDigest = await nodeRuntime.nodeImageDigest(signal);
+      gatewayImage = await this.addressableImage(nodeRuntime.nodeImage, signal);
     }
     const serviceImages: Record<string, string> = {};
     for (const [name, service] of Object.entries(spec.services ?? {})) {
@@ -629,7 +657,14 @@ export class DockerEnvironment implements Environment {
       const sidecar: EnvironmentSpec = { workdir: "/", image: service.image, initialFiles: [], runtime: [],
         ...(service.build ? { build: service.build } : {}) };
       const scope: DockerImageScope = { taskId: context?.taskId ?? "shared", phase: context?.phase ?? "solve", service: name };
-      const resolved = await this.baseImage(sidecar, platform, key, signal, undefined, true, scope);
+      const describeSidecar = sidecar.image === null && !this.taskArchive
+        ? await this.describeTaskBuild(sidecar, platform, signal, scope) : undefined;
+      const sidecarSource = this.taskArchive ? this.taskArchive.source(scope, platform) : describeSidecar?.buildTag ??
+        (sidecar.image === null ? null : this.imageOverrides[sidecar.image] ?? sidecar.image);
+      if (sidecarSource === null) throw new DockerEnvironmentError("ENV_IMAGE_REFERENCE_INVALID", `Missing Docker image for service ${name}`);
+      const resolved = await this.imageInventory.withSource(sidecarSource, platform, signal,
+        () => this.baseImage(sidecar, platform, signal, undefined, scope, true, describeSidecar,
+          dockerImageReference(platform, `${scope.phase}-service-${name}`, imageScope)));
       serviceImages[name] = await this.addressableImage(resolved.pinnedReference, signal);
     }
     const prepared: DockerPreparationReceipt = {
@@ -654,12 +689,12 @@ export class DockerEnvironment implements Environment {
     const { value: session } = await this.imageInventory.hold(receipt ? undefined : this.imageOwner(context), signal,
       release => withDockerActivity(activity, async () => {
         await this.admitResources(spec, signal);
-        const images = await this.resolveLaunchImages(spec, receipt, key, context, signal);
+        const images = await this.resolveLaunchImages(spec, receipt, context, signal);
         return this.startSession(spec, paths, key, phase, workdir, images, release, signal);
       }));
     return session;
   }
-  private async resolveLaunchImages(spec: EnvironmentSpec, receipt: DockerPreparationReceipt | undefined, key: AttemptKey,
+  private async resolveLaunchImages(spec: EnvironmentSpec, receipt: DockerPreparationReceipt | undefined,
     context: EnvironmentPreparationContext, signal: AbortSignal): Promise<DockerLaunchImages> {
     const resolution = await this.resolvePlatform(spec, signal);
     if (receipt) {
@@ -669,7 +704,7 @@ export class DockerEnvironment implements Environment {
       const launchImage = receipt.launchImage;
       await this.capabilities.ensure(resolution, signal, async () => launchImage);
     } else {
-      ({ prepared: receipt } = await this.prepareDependencies(spec, resolution, key, signal, context));
+      ({ prepared: receipt } = await this.prepareDependencies(spec, resolution, signal, context));
       await this.imageInventory.associatePrepared(receipt, signal);
     }
     return { resolution, launchImage: receipt.launchImage, gatewayImage: needsModelGateway(spec) ? receipt.gatewayImage : null,

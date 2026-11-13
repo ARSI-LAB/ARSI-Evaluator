@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { expect, test } from "vitest";
 import { DockerRuntime } from "../../src/infrastructure/containers/runtime.js";
 import { EVALUATOR_NODE_EXECUTABLE, PROCESS_HELPER } from "../../src/infrastructure/containers/runtime-contract.js";
-import { DockerSolverRuntime } from "../../src/infrastructure/containers/solver-runtime.js";
 import { startDockerProcess } from "../../src/infrastructure/containers/process.js";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";
 import { readProcess } from "../../src/infrastructure/process/output.js";
@@ -27,12 +26,11 @@ test.skipIf(process.env.EVALUATOR_COMPOSE_DOCKER_TESTS !== "1")("a shadowing tas
     await node.nodeImageDigest(signal);
     await writeFile(join(context, "Dockerfile"), `FROM ${node.nodeImage}\nRUN mkdir -p /opt/conda/bin && printf '#!/bin/sh\\necho shadow-node\\nexit 73\\n' > /opt/conda/bin/node && chmod 755 /opt/conda/bin/node\nENV PATH=/opt/conda/bin:$PATH\n`);
     await exec("docker", ["build", "--platform", platform, "--tag", tag, context], { signal });
-    const prepared = await node.prepare(tag, [{ name: "node", version: "24.x", platform }], signal);
     await writeFile(join(context, "package.json"), "{}");
-    const solver = await new DockerSolverRuntime(command, node).prepare(prepared.image, prepared.digest, {
+    const solver = await node.prepare(tag, [{ name: "node", version: "24.x", platform }], signal, undefined, undefined, {
       id: "shadow-node-regression", files: [{ source: join(context, "package.json"), target: "package.json" }], commands: [],
       probes: [{ executable: "node", args: ["-e", "if(!process.version.startsWith('v24.'))process.exit(74)"] }],
-    }, signal);
+    });
     container = (await exec("docker", ["run", "--detach", "--network", "none", "--entrypoint", EVALUATOR_NODE_EXECUTABLE, solver.image, PROCESS_HELPER, "idle"], { signal })).stdout.trim();
     const execute = async (executable: string, args: string[]) => readProcess(await startDockerProcess({
       dockerExecutable: "docker", containerId: container ?? "", command,

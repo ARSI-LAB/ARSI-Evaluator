@@ -92,6 +92,10 @@ test("Codex validates service settings and supports preparation without credenti
     auth: { value: secret, reference: null },
   };
   expect(parseCodexConfig({})).toEqual({});
+  expect(parseCodexConfig({ shellTool: "default" })).toEqual({});
+  expect(parseCodexConfig({ shellTool: "disabled", webSearch: "disabled" }))
+    .toEqual({ shellTool: "disabled", webSearch: "disabled" });
+  expect(() => parseCodexConfig({ shellTool: false })).toThrow(/shellTool must be default or disabled/u);
   expect(() => parseCodexConfig({ executable: "codex" })).toThrow(/unknown field executable/u);
   expect(() => new CodexSolver({ ...binding, model: { ...binding.model, api: "openai-completions" } })).toThrow(/openai-responses/u);
   expect(() => new CodexSolver({ ...binding, model: { ...binding.model, maxTokens: 50 } })).toThrow(/maxTokens/u);

@@ -43,7 +43,7 @@ test.each(["", "nobody", "1001:1002"])("runtime helpers preserve USER %j when pl
   expect((await runtime.prepare("fixture/base", [], new AbortController().signal)).image).toBe(tag);
 });
 
-test("runtime cache names distinguish tasks and purposes while reusing each completed image", async () => {
+test("runtime builds are shared across tasks and remain separate by phase", async () => {
   const images = new Set<string>();
   const builds: string[] = [];
   const command: DockerCommand = async args => {
@@ -67,7 +67,7 @@ test("runtime cache names distinguish tasks and purposes while reusing each comp
   expect(builds).toHaveLength(1);
   const verify = await runtime.prepare("base", [], signal, undefined, { ...scope, phase: "verify" });
   const other = await runtime.prepare("base", [], signal, undefined, { ...scope, taskId: "terminal-bench/other" });
-  expect(verify.image).toMatch(/\/atrx-vep-crispr:verify-runtime-/u);
-  expect(other.image).toMatch(/\/other:solve-runtime-/u);
-  expect(builds).toHaveLength(3);
+  expect(verify.image).toMatch(/\/shared:verify-runtime-/u);
+  expect(other.image).toBe(first.image);
+  expect(builds).toHaveLength(2);
 });

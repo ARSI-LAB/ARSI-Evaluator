@@ -6,7 +6,7 @@ import { startModelRelay } from "./model-relay.mjs";
 import { stageAttachments } from "./stage-attachments.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, inputModalities, prompt, token, media = [] } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, inputModalities, prompt, token, media = [], toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
 const settings = join(home, ".zcode", "cli");
 await mkdir(home, { mode: 0o700 });
 let relay;
@@ -47,10 +47,21 @@ try {
   }), { mode: 0o600 });
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:ZCODE_|OTEL_)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
+  // Registration-level exclusions for the locked CLI, including tools exposed when Bash is removed.
+  const denied = toolPolicy.tools === "none" ? [
+    "AskUserQuestion", "Bash", "PowerShell", "Edit", "EnterPlanMode", "ExitPlanMode", "Read", "TaskOutput",
+    "TaskStop", "TodoRead", "TodoWrite", "WebFetch", "WebSearch", "Write", "Glob", "Grep", "MultiEdit",
+    "NotebookEdit", "Agent", "Task", "Skill", "LSP", "ToolSearch", "ListSessions", "ReadSession",
+    "CreateSession", "ForkSession", "SendToSession", "WaitSessions", "InterruptSession", "RenameSession", "ListModels",
+  ] : [
+    ...(toolPolicy.webSearch === "disabled" ? ["WebSearch"] : []),
+    ...(toolPolicy.webFetch === "disabled" ? ["WebFetch"] : []),
+  ];
   const attachmentPaths = await stageAttachments(home, media);
   const child = spawn(process.execPath, [
     join(import.meta.dirname, "cli.mjs"), entry,
     "--cwd", process.cwd(), "--mode", "yolo", "--workflow-mode", "disabled", "--output-format", "stream-json", "--no-color",
+    ...(denied.length ? ["--disallowed-tools", denied.join(",")] : []),
   ], {
     env: {
       ...env, HOME: home, USERPROFILE: home, ZCODE_DATA_BASE_DIR: home,
