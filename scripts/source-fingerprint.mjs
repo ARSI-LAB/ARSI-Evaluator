@@ -16,7 +16,7 @@ const buildInputs = [
   "tsconfig.build.json",
 ];
 
-const generatedDirectories = new Set(["__pycache__", "node_modules", "dist"]);
+const generatedDirectories = new Set(["__pycache__", "node_modules", "dist", ".scratch", ".rsi"]);
 
 async function filesAt(path, files) {
   const stat = await lstat(path);
