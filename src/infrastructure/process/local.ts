@@ -162,15 +162,13 @@ function spawnPosix(command: CommandSpec): Spawned {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const pid = child.pid;
-  if (pid === undefined) throw new Error("spawn did not return a process ID");
   return {
     child,
     async terminateGracefully() {
-      killGroup(pid, "SIGTERM");
+      if (child.pid !== undefined) killGroup(child.pid, "SIGTERM");
     },
     async terminateForcibly() {
-      killGroup(pid, "SIGKILL");
+      if (child.pid !== undefined) killGroup(child.pid, "SIGKILL");
     },
     async cleanup() {
       await Promise.resolve();
