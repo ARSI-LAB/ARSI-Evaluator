@@ -140,10 +140,32 @@ class BoundedTail implements AsyncIterable<Uint8Array> {
 
 type Spawned = {
   child: ChildProcessWithoutNullStreams;
+  startup: ReturnType<typeof guardStartupPipes>;
   terminateGracefully(): Promise<void>;
   terminateForcibly(): Promise<void>;
   cleanup(): Promise<void>;
 };
+
+function guardStartupPipes(child: ChildProcessWithoutNullStreams) {
+  let failure: Error | undefined;
+  const failed = (error: Error) => { failure ??= error; };
+  const stdinFailed = (error: Error) => { if (!errno(error, "EPIPE")) failed(error); };
+  // Windows spawn is async because it writes its Job Object launcher first.
+  // Pipe errors can arrive before the caller installs its normal consumers.
+  child.on("error", failed);
+  child.stdin.on("error", stdinFailed);
+  child.stdout.on("error", failed);
+  child.stderr.on("error", failed);
+  return {
+    check() { if (failure) throw failure; },
+    release() {
+      child.off("error", failed);
+      child.stdin.off("error", stdinFailed);
+      child.stdout.off("error", failed);
+      child.stderr.off("error", failed);
+    },
+  };
+}
 
 function killGroup(pid: number, signal: NodeJS.Signals): void {
   try {
@@ -162,10 +184,12 @@ function spawnPosix(command: CommandSpec): Spawned {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const startup = guardStartupPipes(child);
   const pid = child.pid;
   if (pid === undefined) throw new Error("spawn did not return a process ID");
   return {
     child,
+    startup,
     async terminateGracefully() {
       killGroup(pid, "SIGTERM");
     },
@@ -392,8 +416,10 @@ async function spawnWindows(command: CommandSpec): Promise<Spawned> {
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
+  const startup = guardStartupPipes(child);
   return {
     child,
+    startup,
     async terminateGracefully() {
       await writeFile(control, "term", "utf8");
     },
@@ -453,9 +479,21 @@ export async function startLocalProcess(
   const spawned = process.platform === "win32" ? await spawnWindows(effectiveCommand) : spawnPosix(effectiveCommand);
   const { child } = spawned;
   try {
+    spawned.startup.check();
     await waitForSpawn(child);
+    spawned.startup.check();
   } catch (error) {
-    await spawned.cleanup();
+    try {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+        const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+        // This is exactly our child. Closing the Windows launcher also closes
+        // its kill-on-close Job Object, including any child it already created.
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else await spawned.terminateForcibly();
+        await Promise.race([closed, wait(FORCE_WAIT_MS)]);
+      }
+      await spawned.cleanup();
+    } finally { spawned.startup.release(); }
     throw error;
   }
 
@@ -528,6 +566,7 @@ export async function startLocalProcess(
   child.stdin.on("error", error => {
     if (!errno(error, "EPIPE")) child.emit("error", error);
   });
+  spawned.startup.release();
   if (command.input === null) child.stdin.end();
   else child.stdin.end(command.input);
   if (signal.aborted) abort();
