@@ -19,7 +19,7 @@ test.skipIf(process.env.EVALUATOR_TEST_DOCKER !== "1")("private verifier logs av
   try {
     const spec = await environment.materialize({ image: PINNED_NODE_IMAGE, workdir: "/workspace", initialFiles: [], runtime: [], network: "none", resources: { cpus: 1, memory: "512m" } }, signal);
     session = await environment.prepare(spec, paths, "verify", signal);
-    expect(session.metadata.verifierLogs?.storage).toBe("container");
+    expect(session.metadata).toMatchObject({ verifierLogs: { storage: "container" } });
     const process = await session.start({ executable: "node", args: ["-e", "require('node:fs').writeFileSync('/logs/verifier/pg.log','fixture evidence',{mode:0o600})"], cwd: "/workspace", env: {}, input: null }, signal);
     expect((await readProcess(process, signal)).code).toBe(0);
     await session.dispose(signal);session = undefined;
