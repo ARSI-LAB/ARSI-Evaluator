@@ -8,27 +8,34 @@ function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-async function owner(path: string): Promise<{ pid: number; host: string; token: string } | null> {
-  try {
-    if ((await lstat(path)).isSymbolicLink()) throw new Error("Runtime lock cannot be a symlink");
-    const value: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !("pid" in value) ||
-      !("host" in value) ||
-      !("token" in value) ||
-      typeof value.pid !== "number" ||
-      !Number.isSafeInteger(value.pid) ||
-      value.pid < 1 ||
-      typeof value.host !== "string" ||
-      typeof value.token !== "string"
-    )
-      throw new Error("Invalid runtime lock ownership");
-    return { pid: value.pid, host: value.host, token: value.token };
-  } catch (error) {
-    if (errno(error, "ENOENT")) return null;
-    throw error;
+async function owner(path: string, signal?: AbortSignal): Promise<{ pid: number; host: string; token: string } | null> {
+  for (let retry = 0; ; retry++) {
+    signal?.throwIfAborted();
+    try {
+      if ((await lstat(path)).isSymbolicLink()) throw new Error("Runtime lock cannot be a symlink");
+      const value: unknown = JSON.parse(await readFile(path, "utf8"));
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("pid" in value) ||
+        !("host" in value) ||
+        !("token" in value) ||
+        typeof value.pid !== "number" ||
+        !Number.isSafeInteger(value.pid) ||
+        value.pid < 1 ||
+        typeof value.host !== "string" ||
+        typeof value.token !== "string"
+      )
+        throw new Error("Invalid runtime lock ownership");
+      return { pid: value.pid, host: value.host, token: value.token };
+    } catch (error) {
+      if (errno(error, "ENOENT")) return null;
+      // Windows may briefly deny reads while another process closes a handle.
+      // An unreadable owner is never evidence that its lock can be reclaimed.
+      if (process.platform !== "win32" || retry >= 39 ||
+        !["EPERM", "EACCES", "EBUSY"].some(code => errno(error, code))) throw error;
+      await delay(25);
+    }
   }
 }
 
@@ -61,11 +68,11 @@ export async function acquireRuntimeLock(path: string, signal: AbortSignal): Pro
       } catch (error) {
         if (!errno(error, "EEXIST")) throw error;
       }
-      if (dead(await owner(path))) {
+      if (dead(await owner(path, signal))) {
         // Serializing recovery prevents a second reclaimer deleting a new owner (ABA).
         const release = await acquireRuntimeLock(`${path}.recovery`, signal);
         try {
-          if (dead(await owner(path))) await rm(path);
+          if (dead(await owner(path, signal))) await rm(path);
         } finally {
           await release();
         }
