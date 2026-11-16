@@ -110,5 +110,9 @@ export { attemptStatus, attemptTimeoutKind } from "./core/results/evaluation-out
 export { parseKernelContract, parseKernelAssessment, kernelContractDigest, KERNEL_CHECK_IDS, KERNEL_ENVIRONMENT_FIELDS, KERNEL_TENSOR_DTYPES } from "./plugins/benchmarks/operator/kernel/strict.js";
 export type { KernelContract, KernelAssessment, KernelCheck, KernelEffectiveProtocol, KernelEnvironment, KernelTensorDtype } from "./plugins/benchmarks/operator/kernel/strict.js";
 
-export { parseKernelTimingEvidence, auditKernelTimingSample } from "./plugins/benchmarks/operator/kernel/timing.js";
-export type { KernelTimingEvidence, KernelTimingSample, KernelTimingRow } from "./plugins/benchmarks/operator/kernel/timing.js";
+export { parseKernelTimingEvidence, auditKernelTimingSample, parseKernelScopeTiming } from "./plugins/benchmarks/operator/kernel/timing.js";
+export type { KernelTimingEvidence, KernelTimingSample, KernelTimingRow, KernelScopeStats, KernelScopeTiming } from "./plugins/benchmarks/operator/kernel/timing.js";
+
+export { parseKernelErrorStats } from "./plugins/benchmarks/operator/kernel/result.js";
+export { KERNEL_TOLERANCE_MODES, KERNEL_DTYPE_TOLERANCES, parseKernelTolerance, resolveTolerance } from "./plugins/benchmarks/operator/kernel/tolerance.js";
+export type { KernelTolerance, KernelToleranceConfig, KernelToleranceMode } from "./plugins/benchmarks/operator/kernel/tolerance.js";
