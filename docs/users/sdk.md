@@ -63,6 +63,26 @@ Set the YAML model variables in the current terminal as shown in [quick start](q
 
 ## Options and Paths
 
+For a local run, operational scheduling can be changed without changing the saved
+benchmark/model configuration or its resume fingerprint:
+
+```js
+const result = await evaluator.run({
+  configPath: "/path/to/original-config.yaml",
+  resume: "existing-run-id",
+  scheduling: { concurrency: 16, preparationConcurrency: 16, reason: "Operator-approved capacity change" },
+});
+console.log(result.scheduling);
+```
+
+The base config remains immutable and still passes the normal source, task,
+solver, plugin and writer-lock checks. Only local execution and preparation
+limits change. A reason is required; progress and returned results include the
+operational receipt and base configuration fingerprint. Preparation overrides
+require an explicit preparation policy. Timeouts, retry limits, model options and
+completed task records are not changed. Resource capacity is still the caller's
+responsibility.
+
 `EvaluatorRunOptions`, `ProgressEvent`, and `ProgressListener` are exported from the package root.
 
 | Option | Meaning |

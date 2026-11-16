@@ -1,4 +1,5 @@
 export type * from "./core/contracts/hardware.js";
+export { SCHEDULING_OVERRIDES_API_VERSION, type SchedulingOptions, type SchedulingReceipt } from "./application/scheduling.js";
 export type * from "./core/contracts/task.js";
 export { parseTaskAttachments, parseInputModalities } from "./core/validation/multimodal.js";
 export type * from "./core/contracts/result.js";
