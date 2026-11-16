@@ -167,6 +167,72 @@ def positive_measurement(value):
     return float(value)
 
 
+def timing_config(request):
+    """Scope and launch-count settings; device timing remains mandatory for candidates."""
+    config = request.get("timing") or {}
+    scopes = tuple(config.get("scopes") or ("device",))
+    statistics = tuple(config.get("statistics") or ("mean", "p50", "p95"))
+    launch_count = request.get("launchCount", 1)
+    if "device" not in scopes:
+        raise ValueError("Candidate timing requires the device scope")
+    return scopes, statistics, launch_count
+
+
+def request_tolerance(request):
+    """Resolve the effective tolerance from the request and contract dtype."""
+    module = load_module(Path(__file__).with_name("tolerance.py"), "kernel_tolerance")
+    config = request.get("tolerance") or {}
+    explicit = (request.get("rtol", 0.0), request.get("atol", 0.0))
+    frozen = (config.get("rtol", explicit[0]), config.get("atol", explicit[1]))
+    return module.resolve_tolerance(request.get("contract"), mode=config.get("mode", "explicit"),
+                                    explicit=explicit, frozen=frozen,
+                                    safety_factor=config.get("safetyFactor", 10.0))
+
+
+_ERROR_THRESHOLDS = (("1e-4", 1e-4), ("5e-4", 5e-4), ("1e-3", 1e-3))
+_QUANTILE_SAMPLE_LIMIT = 2 ** 24
+
+
+def _error_parts(expected, actual, torch, parts):
+    if isinstance(expected, torch.Tensor):
+        if not isinstance(actual, torch.Tensor) or expected.shape != actual.shape or not expected.is_floating_point():
+            return
+        left = expected.detach().to(torch.float32).reshape(-1)
+        if left.numel():
+            parts.append((left, actual.detach().to(torch.float32).reshape(-1)))
+    elif isinstance(expected, (list, tuple)) and type(expected) is type(actual) and len(expected) == len(actual):
+        for left, right in zip(expected, actual):
+            _error_parts(left, right, torch, parts)
+    elif isinstance(expected, dict) and isinstance(actual, dict) and expected.keys() == actual.keys():
+        for key in expected:
+            _error_parts(expected[key], actual[key], torch, parts)
+
+
+def error_stats(expected, actual, torch):
+    """Aggregate absolute/relative error over floating tensor leaves.
+
+    Values are reported, not judged: the policy decides whether the distribution is
+    acceptable for one tolerance mode or another.
+    """
+    parts = []
+    _error_parts(expected, actual, torch, parts)
+    stats = {"count": 0, "maxAbs": 0.0, "maxRel": 0.0,
+             **{f"mismatch_gt_{label}": 0.0 for label, _ in _ERROR_THRESHOLDS}}
+    if not parts:
+        return stats
+    abs_values = torch.cat([(right - left).abs() for left, right in parts])
+    rel_values = abs_values / torch.cat([left.abs() for left, _ in parts]).clamp_min(1e-12)
+    # Quantiles run on the host sample: NPU backends do not guarantee sort/quantile support.
+    sample = abs_values[::max(1, -(-abs_values.numel() // _QUANTILE_SAMPLE_LIMIT))].detach().to("cpu")
+    stats.update(count=int(abs_values.numel()), maxAbs=float(abs_values.max()), maxRel=float(rel_values.max()),
+                 p50Abs=float(torch.quantile(sample, 0.5)),
+                 p90Abs=float(torch.quantile(sample, 0.9)),
+                 p99Abs=float(torch.quantile(sample, 0.99)))
+    for label, threshold in _ERROR_THRESHOLDS:
+        stats[f"mismatch_gt_{label}"] = float((abs_values > threshold).to(torch.float32).mean())
+    return stats
+
+
 def bench(request, profile_root):
     """Time candidate Triton kernels with seeded inputs, without reference execution."""
     verify_hashes(request["hashes"])
@@ -185,6 +251,7 @@ def bench(request, profile_root):
     except Exception as exc:
         raise CandidateError(f"{type(exc).__name__}: {exc}") from exc
     timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
+    scopes, statistics, launch_count = timing_config(request)
     with torch.inference_mode():
         seed = request["seeds"][0]
         random.seed(seed)
@@ -195,18 +262,21 @@ def bench(request, profile_root):
             raise TypeError("get_inputs must return a positional argument list")
         inputs = clone_tree(inputs, torch)
         options = dict(warmup=request["warmup"], active=request["repeat"],
-                       prof_dir=str(profile_root / "profile-candidate"), keep_res=True, triton_only=True)
+                       prof_dir=str(profile_root / "profile-candidate"), keep_res=True, triton_only=True,
+                       scopes=scopes, statistics=statistics, launch_count=launch_count)
         if request.get("contract", {}).get("inputUnmodified", True):
-            ms = timer.bench_kernel_ms(lambda: candidate_call(candidate, inputs), **options)
+            measured = timer.bench_kernel_scopes(lambda: candidate_call(candidate, inputs), **options)
         else:
             audit = {}
-            ms = timer.bench_prepared_kernel_ms(lambda trial: candidate_call(candidate, trial),
+            measured = timer.bench_prepared_kernel_scopes(lambda trial: candidate_call(candidate, trial),
                 lambda: clone_tree(inputs, torch), audit=audit, **options)
             if audit.get("stepLayout") != "prepare-then-run":
                 raise RuntimeError("Mutable-input timer must emit prepare-then-run timing evidence")
-        candidate_ms = positive_measurement(ms)
+        candidate_ms = positive_measurement(measured["timing"]["device"]["meanMs"])
     verify_hashes(request["hashes"])
-    return {"status": "completed", "error": "", "candidateMs": candidate_ms}
+    return {"status": "completed", "error": "", "candidateMs": candidate_ms,
+            "timing": measured["timing"], "timingScope": measured["timingScope"],
+            "launchCount": measured["timing"]["launchCount"]}
 
 
 def evaluate(request, profile_root=Path(".")):
@@ -239,6 +309,8 @@ def evaluate(request, profile_root=Path(".")):
 
     reference = None
     timing_inputs = None
+    tolerance = request_tolerance(request)
+    error_evidence = None
     with torch.inference_mode():
         for seed in request["seeds"]:
             random.seed(seed)
@@ -262,29 +334,38 @@ def evaluate(request, profile_root=Path(".")):
                     torch.npu.synchronize()
                 except Exception as exc:
                     raise CandidateError(str(exc)) from exc
+                outputs = select_outputs(actual, request["outputIndices"])
+                error_evidence = error_stats(expected, outputs, torch)
                 try:
-                    compare_tree(expected, select_outputs(actual, request["outputIndices"]), torch, request["rtol"], request["atol"])
+                    compare_tree(expected, outputs, torch, tolerance["rtol"], tolerance["atol"])
                     compare_tree(inputs, trial, torch, 0, 0)
                 except (AssertionError, ValueError, IndexError) as exc:
-                    return {"status": "incorrect", "error": str(exc)}
+                    return {"status": "incorrect", "error": str(exc),
+                            "tolerance": tolerance, "errorStats": error_evidence}
             timing_inputs = inputs
 
         if reference is None or timing_inputs is None:
             raise RuntimeError("No correctness cases executed")
         if operation == "precision":
             verify_hashes(request["hashes"])
-            return {"status": "passed", "error": ""}
+            return {"status": "passed", "error": "", "tolerance": tolerance, "errorStats": error_evidence}
         timer = load_module(Path(__file__).with_name("timing.py"), "kernel_timer")
+        scopes, statistics, launch_count = timing_config(request)
         reference_ms = positive_measurement(timer.bench_kernel_ms(
             lambda: reference(*timing_inputs), warmup=request["warmup"], active=request["repeat"],
             prof_dir=str(profile_root / "profile-reference"), keep_res=True, triton_only=False,
         ))
-        candidate_ms = positive_measurement(timer.bench_kernel_ms(
+        measured = timer.bench_kernel_scopes(
             lambda: candidate_call(candidate, timing_inputs), warmup=request["warmup"], active=request["repeat"],
             prof_dir=str(profile_root / "profile-candidate"), keep_res=True, triton_only=False,
-        ))
+            scopes=scopes, statistics=statistics, launch_count=launch_count,
+        )
+        candidate_ms = positive_measurement(measured["timing"]["device"]["meanMs"])
         result = {"status": "passed", "error": "", "referenceMs": reference_ms,
-                  "candidateMs": candidate_ms, "speedup": positive_measurement(reference_ms / candidate_ms)}
+                  "candidateMs": candidate_ms, "speedup": positive_measurement(reference_ms / candidate_ms),
+                  "timing": measured["timing"], "timingScope": measured["timingScope"],
+                  "launchCount": measured["timing"]["launchCount"],
+                  "tolerance": tolerance, "errorStats": error_evidence}
         # TypeScript owns detailed profiling (adapters/kernel/profile.ts / evaluator kernel profile).
         # This acceptance path records profiling.enabled only as requested; the TypeScript
         # kernelVerdict supplies an explicit failed fallback rather than invoking a missing profiling worker.
