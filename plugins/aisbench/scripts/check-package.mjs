@@ -64,7 +64,7 @@ try {
     dependencies: { [host.name]: "file:../tarballs/host.tgz", [plugin.name]: "file:../tarballs/plugin.tgz" },
   }, null, 2));
   // JSON is valid YAML; pnpm 11 reads settings here, not package.json.pnpm.
-  await writeFile(join(consumer, "pnpm-workspace.yaml"), JSON.stringify({ packages: ["."], overrides }, null, 2));
+  await writeFile(join(consumer, "pnpm-workspace.yaml"), JSON.stringify({ packages: ["."], overrides, blockExoticSubdeps: false }, null, 2));
   pnpm(["install", "--ignore-scripts", "--config.auto-install-peers=false", ...(values.offline ? ["--offline"] : [])], consumer);
   const installedHost = await realpath(join(consumer, "node_modules", host.name));
   const installedPlugin = await realpath(join(consumer, "node_modules", plugin.name));
@@ -76,7 +76,7 @@ try {
   assert.equal(installedMetadata.peerDependencies[host.name], host.version);
   assert(!installedMetadata.dependencies?.[host.name]?.startsWith("link:"));
   for (const asset of [
-    "dist/index.js", "dist/profiles/aisbench.yaml", "dist/runtime/remote.py",
+    "dist/index.js", "dist/profiles/aisbench.yaml", "dist/runtime/remote.py", "dist/runtime/synthetic.py",
     "dist/runtime/upstream/aisbench_test.py", "dist/runtime/upstream/generate_dataset.py",
     "dist/runtime/upstream/data_picker.py", "dist/runtime/upstream/default_api.py",
     "dist/runtime/upstream/cal_prefix_hit_rate.py", "dist/runtime/upstream/save_file.py",
@@ -91,11 +91,11 @@ try {
   delete env.AISBENCH_OFFLINE_KEY;
   const result = execFileSync(process.execPath, [
     "--import", pathToFileURL(join(consumer, "no-external.mjs")).href,
-    join(consumer, "consumer.mjs"), "all", consumer, join(installedPlugin, "cordis.patch.yaml"),
+    join(consumer, "consumer.mjs"), "all", consumer,
   ], { cwd: consumer, env, encoding: "utf8", timeout: 100000, maxBuffer: 4 * 1024 * 1024 });
   assert.equal(JSON.parse(result).passed, true);
   console.log(JSON.stringify({ passed: true, isolated: true, host: host.version, plugin: plugin.version,
-    dependencyOverrides: Object.keys(overrides), checks: ["resources", "no-patch", "providers", "doctor", "dry-run", "offline-report", "provider-version"] }));
+    dependencyOverrides: Object.keys(overrides), checks: ["resources", "no-patch", "providers", "dry-run", "offline-report", "provider-version"] }));
 } catch (error) {
   failure = error;
   throw error;

@@ -53,6 +53,10 @@ test("source fingerprint tracks plugin sources but ignores generated plugin outp
     await writeFile(join(root, "plugins/demo/node_modules/dependency/index.js"), "dependency\n");
     await mkdir(join(root, "plugins/demo/__pycache__"));
     await writeFile(join(root, "plugins/demo/__pycache__/module.pyc"), "bytecode");
+    for (const name of [".scratch", ".rsi"]) {
+      await mkdir(join(root, "plugins/demo", name));
+      await writeFile(join(root, "plugins/demo", name, "run.json"), "runtime state");
+    }
     expect(await fingerprint()).toBe(edited);
   } finally {
     await rm(root, { recursive: true, force: true });

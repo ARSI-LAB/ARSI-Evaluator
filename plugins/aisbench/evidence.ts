@@ -36,6 +36,37 @@ export function parseAisbenchSummary(value: unknown): AisbenchSummary {
   if (!last?.total_req?.trim() || !last.qps?.trim() || Number(last.total_req) !== workload.dataCount ||
     !Number.isFinite(Number(last.qps)) || Number(last.qps) <= 0)
     throw new TypeError("AISBench final CSV row requires matching total_req and positive measured qps");
+  if (workload.dataset === "synthetic") {
+    if (!last ||
+      !last.failed_req?.trim() || Number(last.failed_req) !== 0 || Number(last.total_input_tokens) !== workload.inputLength * workload.dataCount ||
+      Number(last.total_output_tokens) !== workload.outputLength * workload.dataCount ||
+      !Number.isFinite(Number(last.output_throughput)) || Number(last.output_throughput) <= 0)
+      throw new TypeError("Synthetic AISBench requires complete request/token totals and positive throughput");
+    for (const field of ["TTFT P90", "TPOT SLO_P90", "E2EL P90"])
+      if (!last[field]?.trim() || !Number.isFinite(Number(last[field])) || Number(last[field]) < 0)
+        throw new TypeError(`Missing synthetic latency metric ${field}`);
+  }
   return { schemaVersion: 1, kind: "aisbench", workload, bundleDigest,
     aisbenchVersion: expectNonEmptyString(v.aisbenchVersion, "AISBench version"), rows };
+}
+
+/** Normalize the final measured row; evidence pointers are relative to the metric point. */
+export function normalizedMetrics(summary: AisbenchSummary): Record<string, { value: number | null; unit: string; source: string }> {
+  const fields = [
+    ["requestThroughput", "qps", "requests/sec"],
+    ["inputThroughput", "input_token_throughput", "tokens/sec"],
+    ["outputThroughput", "output_throughput", "tokens/sec"],
+    ["totalThroughput", "E2E_throughput", "tokens/sec"],
+    ["ttftP90", "TTFT P90", "ms"],
+    ["tpotP90", "TPOT SLO_P90", "ms"],
+    ["requestLatencyP90", "E2EL P90", "ms"],
+  ] as const;
+  const index = summary.rows.length - 1;
+  const row = summary.rows[index];
+  return Object.fromEntries(fields.map(([id, column, unit]) => {
+    const raw = row?.[column];
+    const value = raw?.trim() ? Number(raw) : NaN;
+    return [id, { value: Number.isFinite(value) && value >= 0 ? value : null, unit,
+      source: `/measurement/rows/${index}/${column.replaceAll("~", "~0").replaceAll("/", "~1")}` }];
+  }));
 }

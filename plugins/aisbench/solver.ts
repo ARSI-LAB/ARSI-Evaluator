@@ -54,7 +54,8 @@ export class AisbenchSshSolver implements Solver {
         if (status.state !== "running") break;
         await setTimeout(this.config.remote.pollIntervalSeconds * 1000, undefined, { signal: context.signal });
       }
-      terminal = true;
+      terminal = ["completed", "failed", "cancelled"].includes(status.state);
+      if (!terminal) throw new Error("Remote measurement state is unconfirmed");
       await client.download(jobDir, fingerprint, root, context.signal); collected = true;
       if (status.state !== "completed" || status.exitCode !== 0) throw new Error(`AISBench remote measurement ${status.state} (exit ${status.exitCode}); see collected artifacts`);
       const rows = parseCsv(await readFile(join(root, "aisbench_result.csv"), "utf8"));
@@ -62,9 +63,15 @@ export class AisbenchSshSolver implements Solver {
       await writeFile(join(context.paths.agent, "aisbench-summary.json"), JSON.stringify(observations, null, 2) + "\n");
       return { finalText: `AISBench completed ${workload.dataCount} requests at concurrency ${workload.concurrency}`, usage: { inputTokens: null, outputTokens: null, totalTokens: null }, observations };
     } catch (error) {
-      if (started && context.signal.aborted && !terminal) {
-        try { await client.call("cancel", jobDir, fingerprint, {}, AbortSignal.timeout(30000)); }
-        catch { await log("\nRemote cancellation unconfirmed; inspect remote-job.json before restarting.\n"); }
+      if (started && !terminal) {
+        try {
+          await client.call("cancel", jobDir, fingerprint, {}, AbortSignal.timeout(30000));
+          const stopped = await client.status(jobDir, fingerprint, 0, AbortSignal.timeout(30000));
+          if (!["completed", "failed", "cancelled"].includes(stopped.state)) throw new Error("Cancellation not terminal");
+        } catch {
+          await writeFile(join(root, "cleanup-unconfirmed.json"), JSON.stringify({ jobDir, fingerprint }));
+          await log("\nRemote cancellation unconfirmed; inspect remote-job.json before restarting.\n");
+        }
       }
       if (started && !collected) {
         try { await client.download(jobDir, fingerprint, root, AbortSignal.timeout(30000)); }

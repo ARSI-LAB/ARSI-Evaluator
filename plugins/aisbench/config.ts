@@ -3,6 +3,7 @@ import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknow
 
 export type AisbenchWorkload = {
   inputLength: number; outputLength: number; dataCount: number; concurrency: number; requestRate: number; testType: "stream" | "text";
+  dataset?: "synthetic"; warmups?: number;
   prefixCache: { enabled: boolean; prefixCount: number; prefixRatio: number; warmup: boolean; dp: number; seed: number };
 };
 function boolean(value: unknown, fallback: boolean, name: string): boolean {
@@ -16,13 +17,18 @@ function number(value: unknown, name: string): number {
 }
 export function parseWorkload(value: unknown): AisbenchWorkload {
   const v = expectRecord(value, "aisbench.workload");
-  rejectUnknown(v, ["inputLength", "outputLength", "dataCount", "concurrency", "requestRate", "testType", "prefixCache"], "workload");
+  rejectUnknown(v, ["inputLength", "outputLength", "dataCount", "concurrency", "requestRate", "testType", "prefixCache", "dataset", "warmups"], "workload");
+  if (v.dataset !== undefined && v.dataset !== "synthetic") throw new TypeError("Unknown AISBench dataset");
+  if (v.dataset === undefined && v.warmups !== undefined) throw new TypeError("warmups requires dataset=synthetic");
+  const warmups = number(v.warmups ?? 0, "warmups");
+  if (!Number.isSafeInteger(warmups) || warmups < 0) throw new TypeError("warmups must be a nonnegative integer");
   const c = expectRecord(v.prefixCache ?? {}, "prefixCache");
   rejectUnknown(c, ["enabled", "prefixCount", "prefixRatio", "warmup", "dp", "seed"], "prefixCache");
   const enabled = boolean(c.enabled, false, "enabled");
   const warmup = boolean(c.warmup, false, "warmup");
   const ratio = number(c.prefixRatio ?? (enabled ? 0.5 : 0), "prefixRatio");
   if (ratio < 0 || ratio > 1 || (enabled && ratio === 0) || (!enabled && (warmup || ratio !== 0))) throw new TypeError("Invalid prefixCache ratio or warmup");
+  if (v.dataset === "synthetic" && (enabled || v.testType === "text")) throw new TypeError("Synthetic measurements require streaming and no generated shared prefixes");
   const seed = number(c.seed ?? 42, "seed");
   if (!Number.isSafeInteger(seed) || seed < 0) throw new TypeError("seed must be a nonnegative safe integer");
   const requestRate = number(v.requestRate ?? 0, "requestRate");
@@ -30,7 +36,7 @@ export function parseWorkload(value: unknown): AisbenchWorkload {
   if (v.testType !== undefined && v.testType !== "text" && v.testType !== "stream") throw new TypeError("testType must be text or stream");
   const inputLength = expectPositiveInteger(v.inputLength ?? 2048, "inputLength");
   if (enabled && (Math.floor(inputLength * ratio) < 1 || (ratio < 1 && inputLength - Math.floor(inputLength * ratio) < 4))) throw new TypeError("inputLength too short for prefix and suffix");
-  return { inputLength, outputLength: expectPositiveInteger(v.outputLength ?? 512, "outputLength"), dataCount: expectPositiveInteger(v.dataCount ?? 160, "dataCount"),
+  return { ...(v.dataset === "synthetic" ? { dataset: "synthetic" as const, warmups } : {}), inputLength, outputLength: expectPositiveInteger(v.outputLength ?? 512, "outputLength"), dataCount: expectPositiveInteger(v.dataCount ?? 160, "dataCount"),
     concurrency: expectPositiveInteger(v.concurrency ?? 16, "concurrency"), requestRate, testType: v.testType === "text" ? "text" : "stream",
     prefixCache: { enabled, warmup, prefixRatio: ratio, seed, prefixCount: expectPositiveInteger(c.prefixCount ?? 1, "prefixCount"), dp: expectPositiveInteger(c.dp ?? 1, "dp") } };
 }
