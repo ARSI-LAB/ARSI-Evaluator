@@ -22,6 +22,7 @@ const absent = (error: unknown) => error instanceof Error && /no such (?:image|o
 export class DockerImageInventory {
   private readonly scope = new AsyncLocalStorage<Scope>();
   private identity: Promise<{ id: string; path: string }> | undefined;
+  private edits: Promise<void> = Promise.resolve();
   constructor(private readonly raw: DockerCommand, private readonly root = join(process.env.EVALUATOR_CACHE_DIR ?? applicationCacheRoot(), "docker-images")) {}
 
   private location(signal: AbortSignal) {
@@ -60,6 +61,25 @@ export class DockerImageInventory {
     finally { await rm(temp, { force: true }); }
   }
   private async edit<T>(signal: AbortSignal, action: (data: Inventory) => Promise<T> | T, save = true): Promise<T> {
+    signal.throwIfAborted();
+    // Preserve arrival order in this process: otherwise new image observations
+    // repeatedly win the filesystem lock while lease release is polling it.
+    return new Promise<T>((resolve, reject) => {
+      let started = false;
+      const abort = () => { if (!started) reject(signal.reason); };
+      const operation = this.edits.then(() => {
+        started = true;
+        signal.removeEventListener("abort", abort);
+        return this.editLocked(signal, action, save);
+      });
+      this.edits = operation.then(() => {}, () => {});
+      signal.addEventListener("abort", abort, { once: true });
+      operation.then(resolve, reject);
+      if (signal.aborted) abort();
+    });
+  }
+  private async editLocked<T>(signal: AbortSignal, action: (data: Inventory) => Promise<T> | T, save: boolean): Promise<T> {
+    signal.throwIfAborted();
     const { id, path } = await this.location(signal);
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const release = await acquireRuntimeLock(`${path}.lock`, signal);

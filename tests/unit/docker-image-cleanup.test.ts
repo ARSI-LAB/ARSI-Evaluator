@@ -6,6 +6,8 @@ import { DockerImageInventory } from "../../src/infrastructure/containers/image-
 import type { DockerCommand } from "../../src/infrastructure/containers/runtime-contract.js";
 import { fingerprintImageConfig } from "../../src/core/policies/image-config.js";
 import { parseImageCleanupRequest, parseImageCleanupSummary } from "../../src/infrastructure/ray/image-cleanup.js";
+import { acquireRuntimeLock } from "../../src/infrastructure/runtime-installation/lock.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 const id = `sha256:${"a".repeat(64)}`, otherId = `sha256:${"b".repeat(64)}`;
 const source = "official/task:v1", base = "ember-evaluator/task:solve-base-a", agent = "ember-evaluator/task:solve-agent-a";
@@ -56,6 +58,44 @@ async function acquire(fake: ReturnType<typeof docker>, existing = false, config
   });
 }
 const selected = (execute = true, configFingerprint = owner().configFingerprint) => ({ all: false, execute, configFingerprint });
+
+test("an earlier lease release is not overtaken by new inventory writers after lock contention", async () => {
+  const fake = docker();
+  const releaseLease = await fake.inventory.lease(signal());
+  const file = (await readdir(directory)).find(file => file.endsWith(".json"))!;
+  const releaseBlocker = await acquireRuntimeLock(join(directory, file + ".lock"), signal());
+  const order: string[] = [];
+  const releasing = releaseLease().then(() => { order.push("release"); });
+  await delay(10);
+  await releaseBlocker();
+  const later = await fake.inventory.lease(signal());
+  order.push("later writer");
+  await later();
+  await releasing;
+  expect(order).toEqual(["release", "later writer"]);
+  expect(JSON.parse(await readFile(join(directory, file), "utf8")).leases).toEqual([]);
+});
+
+test("a cancelled queued inventory edit returns promptly and cannot publish a late lease", async () => {
+  const fake = docker();
+  await (await fake.inventory.lease(signal()))();
+  const file = (await readdir(directory)).find(file => file.endsWith(".json"))!;
+  const releaseBlocker = await acquireRuntimeLock(join(directory, file + ".lock"), signal());
+  const earlier = fake.inventory.lease(signal());
+  await delay(10);
+  const controller = new AbortController();
+  const cancelled = fake.inventory.lease(controller.signal).catch(error => error);
+  await delay(10);
+  const started = Date.now();
+  controller.abort();
+  const failure = await cancelled;
+  const elapsed = Date.now() - started;
+  await releaseBlocker();
+  await (await earlier)();
+  expect(failure).toMatchObject({ name: "AbortError" });
+  expect(elapsed).toBeLessThan(250);
+  expect(JSON.parse(await readFile(join(directory, file), "utf8")).leases).toEqual([]);
+});
 
 test("preview lists downloaded and derived references without modifying the receipt or removing images", async () => {
   const fake = docker(); await acquire(fake);
