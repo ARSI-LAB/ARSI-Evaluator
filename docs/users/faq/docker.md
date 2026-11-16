@@ -195,6 +195,12 @@ Find the exact unreadable file in `files.json`, then inspect task `USER`, owners
 
 Framework phase handoffs manage log permissions while retaining task/archive permissions. Python verifiers write as result-directory owners. Do not hide problems by recursively opening all files. Upgrades do not rewrite existing manifests; retain diagnostics and create new attempts.
 
+## Private Verifier Logs on Windows Shared Filesystems
+
+An access check on a writable host bind mount does not guarantee that a later file creation succeeds. For a diagnosed shared-filesystem I/O failure, a worker can explicitly set `EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE=container` and a non-empty `EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE_REASON`. The default remains `bind`.
+
+This operational override applies to separate, private Docker verifier sessions. `/logs/verifier` stays on the container's Linux filesystem; original log bytes are snapshotted back to the existing attempt directory before container removal. Failed exports retain the container for recovery, and interrupted recovery checks allocation identity and skips committed results. Shared solver/verifier log roots are unsupported by this option. Native metadata records the storage policy and reason without changing persisted configuration, resume fingerprints, resource limits or scoring.
+
 ## Build Networking or Older Docker API Incompatibility
 
 For local Linux daemons only, choose `scripts/toolbox/docker-host.sh` via environment.config.dockerExecutable. It provides host build networking/old-API platform inspection. See [management container](../deployment/container-toolbox.md#build-networking-and-older-docker-apis) for configuration/boundaries. Do not apply directly to remote daemons.

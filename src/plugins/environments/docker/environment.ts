@@ -42,6 +42,7 @@ import { GATEWAY_SOCKET_TARGET, MODEL_FORWARDER_PORT, cleanupGatewayVolumes, cre
 import { classifyError } from "../../../core/errors/classify.js";
 import { EvaluatorError } from "../../../core/errors/evaluator-error.js";
 import { DockerSession, type DockerMetadata } from "./session.js";
+import { parseVerifierLogStorage, prepareContainerVerifierLogs, type VerifierLogStorage } from "../../../infrastructure/containers/verifier-logs.js";
 import { assertLinkFree, within, containerWorkdir, containerFileTarget } from "./paths.js";
 
 // Direct egress to pypi.org/deb.debian.org is unreliable on CN networks, so the
@@ -242,6 +243,9 @@ function composeMainOptions(spec: EnvironmentSpec, launch: DockerContainerLaunch
 }
 
 export type DockerEnvironmentOptions = {
+  /** Worker-local private-verifier I/O policy; excluded from run fingerprints. */
+  verifierLogStorage?: "bind" | "container";
+  verifierLogStorageReason?: string;
   imageConfigFingerprint?: string;
   /** Fetch external base images before an uncached build; never allocate task containers here. */
   prepareBuild?: (spec: EnvironmentSpec, signal: AbortSignal, activity?: ActivityListener) => Promise<void>;
@@ -310,6 +314,7 @@ async function preflightRuntimes(
 }
 
 export class DockerEnvironment implements Environment {
+  private readonly verifierLogStorage: VerifierLogStorage | undefined;
   private readonly prepareBuild: DockerEnvironmentOptions["prepareBuild"];
   readonly supportsRuntimeInstallation = true;
   private readonly containerEnv: Record<string, string>;
@@ -336,6 +341,10 @@ export class DockerEnvironment implements Environment {
   /** Base task image used when the benchmark's environment spec has no image. */
   private readonly defaultImage: string | null;
   constructor(options: DockerEnvironmentOptions = {}) {
+    this.verifierLogStorage = parseVerifierLogStorage(
+      options.verifierLogStorage ?? process.env.EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE,
+      options.verifierLogStorageReason ?? process.env.EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE_REASON,
+    );
     this.network = options.network ?? new NetworkRuntime();
     this.prepareBuild = options.prepareBuild;
     this.platformSelection = parseDockerPlatform(options.platform);
@@ -843,6 +852,11 @@ export class DockerEnvironment implements Environment {
       ["phase", phase],
     ] as const;
     const mounts = await prepareLogMounts(paths, phase, agent, verifier, spec.sharedLogs);
+    const privateLogs = phase === "verify" ? this.verifierLogStorage : undefined;
+    if (privateLogs) {
+      if (spec.sharedLogs) throw new DockerEnvironmentError("ENV_CAPABILITY_UNSUPPORTED", "Container verifier logs require a private verifier environment");
+      mounts.splice(mounts.findIndex(mount => mount.target === "/logs/verifier"), 1);
+    }
     const { forwardedEnv, isolatedGateway, allowlist, modelPolicy, containerEnv } = await this.prepareLaunchEnvironment(spec, launchImage, signal);
     let gateway: GatewayHandle | undefined;
     let containerId: string | null = null;
@@ -869,6 +883,10 @@ export class DockerEnvironment implements Environment {
         labels: Object.fromEntries(labels.map(([name, value]) => [`ember.${name}`, value.replace(/[\u0000-\u001f\u007f]/gu, "_")])),
         environment: containerEnv, forwardedEnv, isolatedGateway, mounts, volumeMounts,
       };
+      if (privateLogs) {
+        launch.labels["ember.verifier-logs"] = "container";
+        launch.labels["ember.verifier-log-host"] = verifier;
+      }
       signal.throwIfAborted();
       // Docker create is intentionally allowed to return its ID after an
       // in-flight cancellation so the labeled partial resource can be removed.
@@ -879,8 +897,9 @@ export class DockerEnvironment implements Environment {
       if (!/^[a-f0-9]{12,64}$/u.test(containerId))
         throw new DockerEnvironmentError("ENV_CONTAINER_START_FAILED", "Docker returned an invalid container ID");
       await this.command(["start", containerId], { signal });
-      const logOwners = await captureDockerLogOwnership(this.command, containerId, mounts.map(mount => mount.target), signal);
+      const logOwners = mounts.length ? await captureDockerLogOwnership(this.command, containerId, mounts.map(mount => mount.target), signal) : [];
       await makeDockerLogsWritable(this.command, containerId, logOwners, signal);
+      if (privateLogs) await prepareContainerVerifierLogs(this.command, containerId, signal);
       const cpuVisibility = spec.resources?.cpus === undefined ? undefined
         : await constrainDockerCpus(this.command, containerId, spec.resources.cpus, signal);
       const runtimes = await preflightRuntimes(this.command, containerId, spec.runtime, signal, platform);
@@ -896,6 +915,7 @@ export class DockerEnvironment implements Environment {
       const modelEndpoint = this.modelEndpointMapping(spec, isolatedGateway, modelPolicy, gateway);
       signal.throwIfAborted();
       const metadata: DockerMetadata = {
+        ...(privateLogs ? { verifierLogs: { ...privateLogs, hostPath: verifier } } : {}),
         ...(spec.executionUsers === undefined ? {} : { executionUsers: spec.executionUsers }),
         kind: "docker",
         phase,
@@ -922,6 +942,7 @@ export class DockerEnvironment implements Environment {
         releaseImageLease,
         gateway,
         project,
+        privateLogs ? verifier : undefined,
       );
     } catch (error) {
       let failure = error;

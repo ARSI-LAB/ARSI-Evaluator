@@ -195,6 +195,12 @@ Harbor 任务从 `task.toml` 读取 CPU 预算，传给求解和验证环境。D
 
 框架按阶段交接日志目录权限，保留任务文件和归档的原权限；Python verifier 以结果目录属主写证据。不要用递归放宽全部任务文件权限来掩盖问题。已有 attempt 的文件清单不会因升级而自动改写，应保留原诊断；重新运行时使用新 attempt。
 
+## Windows 共享文件系统上的私有验证器日志
+
+宿主绑定目录通过可写检查，不保证之后的新建文件操作成功。诊断确认共享文件系统 I/O 故障后，可在单个 worker 中显式设置 `EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE=container`，并通过 `EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE_REASON` 提供非空审计原因；默认仍为 `bind`。
+
+该运行设置仅用于独立、私有的 Docker 验证环境。`/logs/verifier` 保留在容器的 Linux 文件系统中，删除容器前将原始日志快照回收至原 attempt 目录。导出失败时保留容器；中断恢复核对分配身份，并跳过已有提交结果。此选项不支持共享求解/验证日志根目录。原生元数据记录存储方式和原因，不改变持久配置、续跑指纹、资源上限或评分。
+
 ## 构建网络或旧 Docker API 不兼容怎么办？
 
 仅对本机 Linux Docker daemon，可以通过 `environment.config.dockerExecutable` 选择 `scripts/toolbox/docker-host.sh`。它提供 host 构建网络和旧 API 的镜像平台检查，配置方法与网络边界见[管理容器指南](../deployment/container-toolbox.zh-CN.md#构建网络与旧-docker-api-的兼容配置)。不要将该脚本直接套用于远程 daemon。

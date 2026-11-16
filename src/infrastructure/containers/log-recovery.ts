@@ -4,6 +4,7 @@ import { stopDockerContainer } from "./cleanup.js";
 import { DockerEnvironmentError } from "./error.js";
 import { restoreLogOwnersSource } from "./log-ownership.js";
 import { EVALUATOR_NODE_EXECUTABLE, type DockerCommand } from "./runtime-contract.js";
+import { recoverContainerVerifierLogs } from "./verifier-logs.js";
 
 const logPaths = new Set(["/logs", "/logs/agent", "/logs/verifier"]);
 const attemptMount = "/run/evaluator-attempt";
@@ -87,6 +88,11 @@ export async function restoreInterruptedDockerLogs(command: DockerCommand, keys:
       if (!container || !labels || !attempt || labels["ember.run"] !== run ||
           !["solve", "verify"].includes(labels["ember.phase"] ?? "") ||
           !attempts.has(JSON.stringify([labels["ember.task"], attempt]))) continue;
+      if (labels["ember.verifier-logs"] === "container") {
+        const host = labels["ember.verifier-log-host"], task = labels["ember.task"];
+        if (labels["ember.phase"] !== "verify" || !host || !task) throw new Error("Invalid container verifier log recovery labels");
+        await recoverContainerVerifierLogs(command, id, host, { runId: run, taskId: task, attemptId: attempt }, signal);
+      }
       const mounts = attemptLogMounts(container, attempt);
       if (mounts.length) containers.push({ id, image: container.Image, mounts });
     }
