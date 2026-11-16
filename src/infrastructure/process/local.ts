@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFile, rm } from "node:fs/promises";
+import { writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, isAbsolute, extname } from "node:path";
 import type { Readable } from "node:stream";
 
 import type { CommandSpec, ExitResult, ProcessHandle } from "../../core/contracts/environment.js";
@@ -365,11 +365,30 @@ function windowsPowerShell(): string {
   return join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
+async function windowsExecutable(command: CommandSpec): Promise<string> {
+  // CreateProcessW with a non-null application name does not search PATH or
+  // append .exe. Resolve before starting the job wrapper, using the command's
+  // environment rather than the coordinator's potentially different PATH.
+  const name = command.executable;
+  const cwd = resolve(command.cwd);
+  const explicit = isAbsolute(name) || /[\\/]/u.test(name) || /^[a-z]:/iu.test(name);
+  const path = Object.entries(command.env).find(([key]) => key.toUpperCase() === "PATH")?.[1] ?? "";
+  const directories = explicit ? [cwd] : [cwd, ...path.split(";").filter(Boolean).map(directory => directory.replace(/^"(.*)"$/u, "$1"))];
+  const suffixes = extname(name) ? [""] : [".com", ".exe"];
+  if (name) for (const directory of directories) for (const suffix of suffixes) {
+    const candidate = resolve(cwd, directory, name + suffix);
+    try { if ((await stat(candidate)).isFile()) return candidate; }
+    catch (error) { if (!errno(error, "ENOENT") && !errno(error, "ENOTDIR")) throw error; }
+  }
+  throw Object.assign(new Error(`spawn ${name} ENOENT`), { code: "ENOENT", syscall: "spawn", path: name });
+}
+
 async function spawnWindows(command: CommandSpec): Promise<Spawned> {
   for (const key of Object.keys(command.env)) {
     if (key.includes("=") || key.includes("\0"))
       throw new TypeError("environment variable names cannot contain '=' or NUL");
   }
+  const executable = await windowsExecutable(command);
   const identifier = randomUUID();
   const script = join(tmpdir(), `ember-job-${identifier}.ps1`);
   const spec = join(tmpdir(), `ember-job-${identifier}.json`);
@@ -382,7 +401,7 @@ async function spawnWindows(command: CommandSpec): Promise<Spawned> {
     await writeFile(
       spec,
       JSON.stringify({
-        executable: command.executable,
+        executable,
         args: command.args,
         cwd: command.cwd,
         env: command.env,
