@@ -148,9 +148,11 @@ export class DockerComposeProject {
   async start(service: string, command: CommandSpec, signal: AbortSignal): Promise<ProcessHandle> {
     const id = this.containers.get(service);
     if (!id || service === "main") throw new Error(`Unknown sidecar service: ${service}`);
+    // docker exec uses no relative host files. Attempt paths can exceed the
+    // Windows process cwd limit even though Node can read their files.
     return startLocalProcess({ executable: this.executable,
       args: ["exec", "--interactive", ...Object.entries(command.env).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
-        id, command.executable, ...command.args], cwd: this.paths.root, env: runtimeProcessEnvironment(), inheritEnv: false, input: command.input }, signal);
+        id, command.executable, ...command.args], cwd: process.cwd(), env: runtimeProcessEnvironment(), inheritEnv: false, input: command.input }, signal);
   }
   async snapshotArtifacts(mainId: string, spec: Extract<TransferSpec, { kind: "artifacts" }>, signal: AbortSignal): Promise<void> {
     for (const [source, service] of Object.entries(spec.services ?? {})) {

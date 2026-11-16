@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFile, rm } from "node:fs/promises";
+import { writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, isAbsolute, extname } from "node:path";
 import type { Readable } from "node:stream";
 
 import type { CommandSpec, ExitResult, ProcessHandle } from "../../core/contracts/environment.js";
@@ -140,10 +140,32 @@ class BoundedTail implements AsyncIterable<Uint8Array> {
 
 type Spawned = {
   child: ChildProcessWithoutNullStreams;
+  startup: ReturnType<typeof guardStartupPipes>;
   terminateGracefully(): Promise<void>;
   terminateForcibly(): Promise<void>;
   cleanup(): Promise<void>;
 };
+
+function guardStartupPipes(child: ChildProcessWithoutNullStreams) {
+  let failure: Error | undefined;
+  const failed = (error: Error) => { failure ??= error; };
+  const stdinFailed = (error: Error) => { if (!errno(error, "EPIPE")) failed(error); };
+  // Windows spawn is async because it writes its Job Object launcher first.
+  // Pipe errors can arrive before the caller installs its normal consumers.
+  child.on("error", failed);
+  child.stdin.on("error", stdinFailed);
+  child.stdout.on("error", failed);
+  child.stderr.on("error", failed);
+  return {
+    check() { if (failure) throw failure; },
+    release() {
+      child.off("error", failed);
+      child.stdin.off("error", stdinFailed);
+      child.stdout.off("error", failed);
+      child.stderr.off("error", failed);
+    },
+  };
+}
 
 function killGroup(pid: number, signal: NodeJS.Signals): void {
   try {
@@ -162,10 +184,12 @@ function spawnPosix(command: CommandSpec): Spawned {
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const startup = guardStartupPipes(child);
   const pid = child.pid;
   if (pid === undefined) throw new Error("spawn did not return a process ID");
   return {
     child,
+    startup,
     async terminateGracefully() {
       killGroup(pid, "SIGTERM");
     },
@@ -341,11 +365,30 @@ function windowsPowerShell(): string {
   return join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
+async function windowsExecutable(command: CommandSpec): Promise<string> {
+  // CreateProcessW with a non-null application name does not search PATH or
+  // append .exe. Resolve before starting the job wrapper, using the command's
+  // environment rather than the coordinator's potentially different PATH.
+  const name = command.executable;
+  const cwd = resolve(command.cwd);
+  const explicit = isAbsolute(name) || /[\\/]/u.test(name) || /^[a-z]:/iu.test(name);
+  const path = Object.entries(command.env).find(([key]) => key.toUpperCase() === "PATH")?.[1] ?? "";
+  const directories = explicit ? [cwd] : [cwd, ...path.split(";").filter(Boolean).map(directory => directory.replace(/^"(.*)"$/u, "$1"))];
+  const suffixes = extname(name) ? [""] : [".com", ".exe"];
+  if (name) for (const directory of directories) for (const suffix of suffixes) {
+    const candidate = resolve(cwd, directory, name + suffix);
+    try { if ((await stat(candidate)).isFile()) return candidate; }
+    catch (error) { if (!errno(error, "ENOENT") && !errno(error, "ENOTDIR")) throw error; }
+  }
+  throw Object.assign(new Error(`spawn ${name} ENOENT`), { code: "ENOENT", syscall: "spawn", path: name });
+}
+
 async function spawnWindows(command: CommandSpec): Promise<Spawned> {
   for (const key of Object.keys(command.env)) {
     if (key.includes("=") || key.includes("\0"))
       throw new TypeError("environment variable names cannot contain '=' or NUL");
   }
+  const executable = await windowsExecutable(command);
   const identifier = randomUUID();
   const script = join(tmpdir(), `arsi-evaluator-job-${identifier}.ps1`);
   const spec = join(tmpdir(), `arsi-evaluator-job-${identifier}.json`);
@@ -358,7 +401,7 @@ async function spawnWindows(command: CommandSpec): Promise<Spawned> {
     await writeFile(
       spec,
       JSON.stringify({
-        executable: command.executable,
+        executable,
         args: command.args,
         cwd: command.cwd,
         env: command.env,
@@ -392,8 +435,10 @@ async function spawnWindows(command: CommandSpec): Promise<Spawned> {
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
+  const startup = guardStartupPipes(child);
   return {
     child,
+    startup,
     async terminateGracefully() {
       await writeFile(control, "term", "utf8");
     },
@@ -453,9 +498,21 @@ export async function startLocalProcess(
   const spawned = process.platform === "win32" ? await spawnWindows(effectiveCommand) : spawnPosix(effectiveCommand);
   const { child } = spawned;
   try {
+    spawned.startup.check();
     await waitForSpawn(child);
+    spawned.startup.check();
   } catch (error) {
-    await spawned.cleanup();
+    try {
+      if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+        const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+        // This is exactly our child. Closing the Windows launcher also closes
+        // its kill-on-close Job Object, including any child it already created.
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else await spawned.terminateForcibly();
+        await Promise.race([closed, wait(FORCE_WAIT_MS)]);
+      }
+      await spawned.cleanup();
+    } finally { spawned.startup.release(); }
     throw error;
   }
 
@@ -528,6 +585,7 @@ export async function startLocalProcess(
   child.stdin.on("error", error => {
     if (!errno(error, "EPIPE")) child.emit("error", error);
   });
+  spawned.startup.release();
   if (command.input === null) child.stdin.end();
   else child.stdin.end(command.input);
   if (signal.aborted) abort();

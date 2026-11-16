@@ -14,6 +14,9 @@ import type { SchedulerContext } from "../../src/core/contracts/scheduler.js";
 import { BUILTIN_RUNTIME_ID } from "../../src/core/results/runtime-identity.js";
 import { PACKAGE_RUNTIME_ID } from "../../src/core/results/runtime-identity.js";
 import { assertWorkerVersions } from "../../src/infrastructure/ray/protocol.js";
+import { applyScheduling } from "../../src/application/scheduling.js";
+import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
+import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
 
 const roots: string[] = []; const stores: LocalRunStore[] = [];
 async function root() { const value = await mkdtemp(join(tmpdir(), "evaluator-resume-")); roots.push(value); return value; }
@@ -81,6 +84,33 @@ async function interrupted() {
   await store.close();
   return { ...value, resumeDirectory: join(value.config.experiment.output.directory, run.runId), run };
 }
+
+test("an operational concurrency override resumes the same run and preserves completed task bytes", async () => {
+  const value = await interrupted();
+  const savedPath = join(value.resumeDirectory, "tasks", safeTaskKey("a"), "attempts", "a-old", "result.json");
+  const saved = await readFile(savedPath);
+  value.config.experiment.scheduler.config.concurrency = 1;
+  value.config.experiment.run.preparation = { mode: "batch", concurrency: 1 };
+  const applied = applyScheduling(value.config, { concurrency: 16, preparationConcurrency: 16, reason: "approved continuation" });
+  value.components.scheduler = new LocalScheduler(applied.config.experiment.scheduler.config.concurrency as number);
+  const solve = value.components.solver.solve.bind(value.components.solver);
+  const bothEntered = Promise.withResolvers<void>();
+  let arrivals = 0, active = 0, peak = 0;
+  value.components.solver.solve = async (...args) => {
+    active++; peak = Math.max(peak, active);
+    if (++arrivals === 2) bothEntered.resolve();
+    await bothEntered.promise;
+    try { return await solve(...args); } finally { active--; }
+  };
+  const result = await runEngine({ ...value, config: applied.config, signal: new AbortController().signal });
+  expect(result.run.runId).toBe(value.run.runId);
+  expect(result.run.configFingerprint).toBe(value.run.configFingerprint);
+  expect(result.run.status).toBe("completed");
+  expect(peak).toBe(2);
+  expect(value.inputs.map(input => input.id).sort()).toEqual(["b", "c"]);
+  expect(await readFile(savedPath)).toEqual(saved);
+  expect(result.records.find(record => record.key.taskId === "a")?.key.attemptId).toBe("a-old");
+});
 
 test("engine resumes locked source and skips completed tasks while retaining historical attempts", async () => {
   const value = await interrupted();

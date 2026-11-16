@@ -18,13 +18,15 @@ import type { ProgressEvent, ProgressListener } from "../core/progress/progress.
 import { LiveOperation, safeProgress } from "../core/progress/live-progress.js";
 import { resolveResumeRun } from "../core/recovery/resume.js";
 import { ResumeError } from "../core/recovery/resume-error.js";
+import { applyScheduling, type SchedulingOptions, type SchedulingReceipt } from "./scheduling.js";
 import { openPluginRegistry, type PluginRegistry } from "./plugins/open-registry.js";
 import { saveReport } from "./report/index.js";
 import type { JobsExperimentResult } from "./ray/deployment.js";
 
-export type EvaluationResult =
+export type EvaluationResult = (
   | { kind: "local"; exitCode: number; runId: string; snapshot: ResultSnapshot; runDirectory: string; reportPath: string | null }
-  | ({ kind: "ray-jobs" } & JobsExperimentResult);
+  | ({ kind: "ray-jobs" } & JobsExperimentResult)
+) & { scheduling?: SchedulingReceipt };
 
 export type EvaluatorRunOptions = {
   configPath: string;
@@ -37,6 +39,8 @@ export type EvaluatorRunOptions = {
   signal?: AbortSignal;
   /** true selects the only existing run; a string selects a run ID. */
   resume?: boolean | string;
+  /** Explicit runtime scheduling limits; saved source/model/config identity stays locked. */
+  scheduling?: SchedulingOptions;
   onProgress?: ProgressListener;
 };
 
@@ -117,10 +121,12 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
   let result: EvaluationResult | null = null;
   let exitCode = 2;
   let reportAttempted = false;
+  let scheduling: SchedulingReceipt | undefined;
   const localResult = (snapshot: ResultSnapshot): EvaluationResult & { kind: "local" } => {
     if (!config) throw new Error("Configuration is not loaded");
     return { kind: "local", exitCode, runId: snapshot.run.runId, snapshot,
-      runDirectory: join(config.experiment.output.directory, snapshot.run.runId), reportPath: null };
+      runDirectory: join(config.experiment.output.directory, snapshot.run.runId), reportPath: null,
+      ...(scheduling ? { scheduling } : {}) };
   };
   try {
     signal.throwIfAborted();
@@ -132,6 +138,12 @@ export async function executeExperiment(options: ExecutionOptions): Promise<Exec
       ...(options.networkConfigPath === undefined ? {} : { networkConfigPath: options.networkConfigPath }),
       ...(patchPath === undefined ? {} : { patchPath }) });
     secrets.push(...networkSecrets(config.network), ...Object.values(config.auths).map(auth => auth.value));
+    if (options.scheduling) {
+      const applied = applyScheduling(config, options.scheduling);
+      config = applied.config;
+      scheduling = applied.receipt;
+      progress({ phase: "config", message: `Operational scheduling: concurrency=${scheduling.concurrency}; preparationConcurrency=${scheduling.preparationConcurrency ?? "unchanged"}; baseConfigFingerprint=${scheduling.baseConfigFingerprint}; reason=${scheduling.reason}` });
+    }
     options.onLoaded?.(config);
     if (options.taskIds !== undefined) {
       const run = { ...config.experiment.run };
