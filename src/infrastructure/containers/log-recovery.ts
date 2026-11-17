@@ -88,12 +88,14 @@ export async function restoreInterruptedDockerLogs(command: DockerCommand, keys:
       if (!container || !labels || !attempt || labels["ember.run"] !== run ||
           !["solve", "verify"].includes(labels["ember.phase"] ?? "") ||
           !attempts.has(JSON.stringify([labels["ember.task"], attempt]))) continue;
-      if (labels["ember.verifier-logs"] === "container") {
+      const service = labels["com.docker.compose.service"];
+      const ownsPrivateLogs = service === undefined || service === "main";
+      if (ownsPrivateLogs && labels["ember.verifier-logs"] === "container") {
         const host = labels["ember.verifier-log-host"], task = labels["ember.task"];
         if (labels["ember.phase"] !== "verify" || !host || !task) throw new Error("Invalid container verifier log recovery labels");
         await recoverContainerVerifierLogs(command, id, host, { runId: run, taskId: task, attemptId: attempt }, signal);
       }
-      if (labels["ember.agent-logs"] === "container") {
+      if (ownsPrivateLogs && labels["ember.agent-logs"] === "container") {
         const host = labels["ember.agent-log-host"], task = labels["ember.task"];
         if (labels["ember.phase"] !== "solve" || !host || !task) throw new Error("Invalid container agent log recovery labels");
         await recoverContainerVerifierLogs(command, id, host, { runId: run, taskId: task, attemptId: attempt }, signal, "agent");
