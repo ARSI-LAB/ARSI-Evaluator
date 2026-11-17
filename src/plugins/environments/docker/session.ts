@@ -22,6 +22,7 @@ import { exportContainerVerifierLogs } from "../../../infrastructure/containers/
 
 const PROCESS_STOP_GRACE_MS = 500;
 export type DockerMetadata = {
+  agentLogs?: { storage: "container"; reason: string; hostPath: string };
   verifierLogs?: { storage: "container"; reason: string; hostPath: string };
   executionUsers?: NonNullable<EnvironmentSpec["executionUsers"]>;
   kind: "docker";
@@ -119,6 +120,7 @@ export class DockerSession implements EnvironmentSession {
     gateway?: GatewayHandle,
     private readonly project?: DockerComposeProject,
     private readonly verifierLogDirectory?: string,
+    private readonly agentLogDirectory?: string,
   ) {
     this.metadata = metadata;
     if (metadata.installation) this.runtime = metadata.installation;
@@ -407,7 +409,7 @@ export class DockerSession implements EnvironmentSession {
     this.disposal = (async () => {
       this.quiesced = true;
       const failures: unknown[] = [];
-      let logsExported = this.verifierLogDirectory === undefined;
+      let logsExported = this.verifierLogDirectory === undefined && this.agentLogDirectory === undefined;
       try {
         await Promise.allSettled(this.starting);
         await Promise.all([...this.processes].map(handle => handle.stop(PROCESS_STOP_GRACE_MS).catch(() => {})));
@@ -419,11 +421,13 @@ export class DockerSession implements EnvironmentSession {
         await restoreDockerLogOwnership(this.command, this.id, this.logOwners, signal);
         if (this.verifierLogDirectory) {
           await exportContainerVerifierLogs(this.command, this.id, this.verifierLogDirectory, signal);
-          logsExported = true;
         }
+        if (this.agentLogDirectory)
+          await exportContainerVerifierLogs(this.command, this.id, this.agentLogDirectory, signal, "agent");
+        logsExported = true;
       } catch (error) { failures.push(error); }
       if (!logsExported) throw new DockerEnvironmentError("CLEANUP_FAILED",
-        `Verifier logs remain in container ${this.id}; export failed before container removal`, new AggregateError(failures), this.id);
+        `Private logs remain in container ${this.id}; export failed before container removal`, new AggregateError(failures), this.id);
       // The task's mount keeps the socket volume in use even after the gateway
       // stops. Remove the task first, sharing the caller's cleanup budget.
       try { await (this.project ? this.project.dispose(signal) : removeDockerContainer(this.command, this.id, signal)); }

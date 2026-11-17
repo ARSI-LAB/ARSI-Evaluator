@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportContainerVerifierLogs, parseVerifierLogStorage, recoverContainerVerifierLogs } from "../../src/infrastructure/containers/verifier-logs.js";
@@ -44,7 +44,7 @@ test("export failure is reported and does not delete the only container evidence
 });
 
 test("recovery rejects foreign allocations and never rewrites committed evidence", async () => {
-  const root = await mkdtemp(join(tmpdir(), "verifier-recovery-test-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "verifier-recovery-test-")));
   const key = { runId: "run", taskId: "task", attemptId: "attempt" };
   const target = join(root, key.attemptId, "verifier");
   const command = vi.fn<DockerCommand>();
@@ -57,5 +57,35 @@ test("recovery rejects foreign allocations and never rewrites committed evidence
     await recoverContainerVerifierLogs(command, "fixture", target, key, AbortSignal.timeout(5000));
     expect(command).not.toHaveBeenCalled();
     expect(await readFile(join(root, key.attemptId, "result.json"), "utf8")).toBe("immutable");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("agent log export uses its own private root and preserves host trajectory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-export-test-"));
+  const target = join(root, "agent");
+  await mkdir(target); await writeFile(join(target, "trajectory.jsonl"), "host trajectory");
+  const command = vi.fn<DockerCommand>(async args => {
+    if (args[0] === "cp") { await mkdir(args[2]!); await writeFile(join(args[2]!, "native.log"), "native evidence"); }
+    return { stdout: "", stderr: "" };
+  });
+  try {
+    await exportContainerVerifierLogs(command, "fixture", target, AbortSignal.timeout(5000), "agent");
+    expect(command.mock.calls.some(([args]) => args.slice(-2).every(value => value === "/logs/agent"))).toBe(true);
+    expect(await readFile(join(target, "trajectory.jsonl"), "utf8")).toBe("host trajectory");
+    expect(await readFile(join(target, "native.log"), "utf8")).toBe("native evidence");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("agent export refuses to overwrite saved coordinator evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-export-conflict-"));
+  const target = join(root, "agent");
+  await mkdir(target); await writeFile(join(target, "trajectory.jsonl"), "saved trajectory");
+  const command = vi.fn<DockerCommand>(async args => {
+    if (args[0] === "cp") { await mkdir(args[2]!); await writeFile(join(args[2]!, "trajectory.jsonl"), "different bytes"); }
+    return { stdout: "", stderr: "" };
+  });
+  try {
+    await expect(exportContainerVerifierLogs(command, "fixture", target, AbortSignal.timeout(5000), "agent")).rejects.toThrow("conflict");
+    expect(await readFile(join(target, "trajectory.jsonl"), "utf8")).toBe("saved trajectory");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

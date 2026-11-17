@@ -243,6 +243,9 @@ function composeMainOptions(spec: EnvironmentSpec, launch: DockerContainerLaunch
 }
 
 export type DockerEnvironmentOptions = {
+  /** Worker-local output I/O policy for separate solve environments only. */
+  agentLogStorage?: "bind" | "container";
+  agentLogStorageReason?: string;
   /** Worker-local private-verifier I/O policy; excluded from run fingerprints. */
   verifierLogStorage?: "bind" | "container";
   verifierLogStorageReason?: string;
@@ -315,6 +318,7 @@ async function preflightRuntimes(
 
 export class DockerEnvironment implements Environment {
   private readonly verifierLogStorage: VerifierLogStorage | undefined;
+  private readonly agentLogStorage: VerifierLogStorage | undefined;
   private readonly prepareBuild: DockerEnvironmentOptions["prepareBuild"];
   readonly supportsRuntimeInstallation = true;
   private readonly containerEnv: Record<string, string>;
@@ -344,6 +348,10 @@ export class DockerEnvironment implements Environment {
     this.verifierLogStorage = parseVerifierLogStorage(
       options.verifierLogStorage ?? process.env.EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE,
       options.verifierLogStorageReason ?? process.env.EVALUATOR_DOCKER_VERIFIER_LOG_STORAGE_REASON,
+    );
+    this.agentLogStorage = parseVerifierLogStorage(
+      options.agentLogStorage ?? process.env.EVALUATOR_DOCKER_AGENT_LOG_STORAGE,
+      options.agentLogStorageReason ?? process.env.EVALUATOR_DOCKER_AGENT_LOG_STORAGE_REASON,
     );
     this.network = options.network ?? new NetworkRuntime();
     this.prepareBuild = options.prepareBuild;
@@ -853,6 +861,9 @@ export class DockerEnvironment implements Environment {
     ] as const;
     const mounts = await prepareLogMounts(paths, phase, agent, verifier, spec.sharedLogs);
     const privateLogs = phase === "verify" ? this.verifierLogStorage : undefined;
+    // Preserve shared solve/verify mounts and task-visible shared artifacts.
+    const privateAgentLogs = phase === "solve" && !spec.sharedLogs ? this.agentLogStorage : undefined;
+    if (privateAgentLogs) mounts.splice(mounts.findIndex(mount => mount.target === "/logs/agent"), 1);
     if (privateLogs) {
       if (spec.sharedLogs) throw new DockerEnvironmentError("ENV_CAPABILITY_UNSUPPORTED", "Container verifier logs require a private verifier environment");
       mounts.splice(mounts.findIndex(mount => mount.target === "/logs/verifier"), 1);
@@ -887,6 +898,10 @@ export class DockerEnvironment implements Environment {
         launch.labels["ember.verifier-logs"] = "container";
         launch.labels["ember.verifier-log-host"] = verifier;
       }
+      if (privateAgentLogs) {
+        launch.labels["ember.agent-logs"] = "container";
+        launch.labels["ember.agent-log-host"] = agent;
+      }
       signal.throwIfAborted();
       // Docker create is intentionally allowed to return its ID after an
       // in-flight cancellation so the labeled partial resource can be removed.
@@ -900,6 +915,7 @@ export class DockerEnvironment implements Environment {
       const logOwners = mounts.length ? await captureDockerLogOwnership(this.command, containerId, mounts.map(mount => mount.target), signal) : [];
       await makeDockerLogsWritable(this.command, containerId, logOwners, signal);
       if (privateLogs) await prepareContainerVerifierLogs(this.command, containerId, signal);
+      if (privateAgentLogs) await prepareContainerVerifierLogs(this.command, containerId, signal, "agent");
       const cpuVisibility = spec.resources?.cpus === undefined ? undefined
         : await constrainDockerCpus(this.command, containerId, spec.resources.cpus, signal);
       const runtimes = await preflightRuntimes(this.command, containerId, spec.runtime, signal, platform);
@@ -915,6 +931,7 @@ export class DockerEnvironment implements Environment {
       const modelEndpoint = this.modelEndpointMapping(spec, isolatedGateway, modelPolicy, gateway);
       signal.throwIfAborted();
       const metadata: DockerMetadata = {
+        ...(privateAgentLogs ? { agentLogs: { ...privateAgentLogs, hostPath: agent } } : {}),
         ...(privateLogs ? { verifierLogs: { ...privateLogs, hostPath: verifier } } : {}),
         ...(spec.executionUsers === undefined ? {} : { executionUsers: spec.executionUsers }),
         kind: "docker",
@@ -943,6 +960,7 @@ export class DockerEnvironment implements Environment {
         gateway,
         project,
         privateLogs ? verifier : undefined,
+        privateAgentLogs ? agent : undefined,
       );
     } catch (error) {
       let failure = error;

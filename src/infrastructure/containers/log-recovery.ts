@@ -93,6 +93,11 @@ export async function restoreInterruptedDockerLogs(command: DockerCommand, keys:
         if (labels["ember.phase"] !== "verify" || !host || !task) throw new Error("Invalid container verifier log recovery labels");
         await recoverContainerVerifierLogs(command, id, host, { runId: run, taskId: task, attemptId: attempt }, signal);
       }
+      if (labels["ember.agent-logs"] === "container") {
+        const host = labels["ember.agent-log-host"], task = labels["ember.task"];
+        if (labels["ember.phase"] !== "solve" || !host || !task) throw new Error("Invalid container agent log recovery labels");
+        await recoverContainerVerifierLogs(command, id, host, { runId: run, taskId: task, attemptId: attempt }, signal, "agent");
+      }
       const mounts = attemptLogMounts(container, attempt);
       if (mounts.length) containers.push({ id, image: container.Image, mounts });
     }

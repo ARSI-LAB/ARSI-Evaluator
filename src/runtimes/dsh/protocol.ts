@@ -1,5 +1,6 @@
 import type { ErrorCode } from "../../core/errors/registry.js";
-import { mkdtemp, open, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, open, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 
@@ -16,7 +17,10 @@ type JsonRecord = { [key: string]: JsonValue };
 type DshAttemptContext = AttemptContext & { environment?: EnvironmentSession };
 
 async function inspectToolOutput(context: DshAttemptContext, reference: string): Promise<FileEntry> {
-  try {
+  const metadata = context.environment?.metadata;
+  const logs = metadata !== null && typeof metadata === "object" && !Array.isArray(metadata) ? metadata?.agentLogs : undefined;
+  const privateLogs = logs !== null && typeof logs === "object" && !Array.isArray(logs) && logs?.storage === "container";
+  if (!privateLogs) try {
     return await inspectFile(context.paths.root, reference);
   } catch (error) {
     // Non-root container exports retain 0700/0600 until quiescence. Read that
@@ -28,8 +32,18 @@ async function inspectToolOutput(context: DshAttemptContext, reference: string):
   }
   const staging = await mkdtemp(join(tmpdir(), "evaluator-dsh-tool-output-"));
   try {
+    if (!context.environment) throw new Error("Tool output environment is unavailable");
     const source = posix.join(context.environment.agentOutputDir, reference.slice("agent/".length));
     await context.environment.download(source, join(staging, "output"), context.signal);
+    if (privateLogs) {
+      // Publish the original host reference only after complete bytes arrive.
+      // The host trajectory and previously saved output files remain immutable.
+      const directory = join(context.paths.agent, "tool-outputs");
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      if ((await lstat(directory)).isSymbolicLink()) throw new Error("Tool output export target cannot be a symlink");
+      await copyFile(join(staging, "output"), join(context.paths.root, reference), constants.COPYFILE_EXCL);
+      return await inspectFile(context.paths.root, reference);
+    }
     return await inspectFile(staging, "output");
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
