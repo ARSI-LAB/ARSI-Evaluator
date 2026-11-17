@@ -53,7 +53,11 @@ try {
   const { lastAssistantStreamChunk } = await import(pathToFileURL(require.resolve("@deepseek-ai/dsh-llm/assistant-stream")).href);
   harness = new DeepSeekHarness({ dshBin: input.dsh, dshHome: input.home, profile: input.profile,
     patches: input.patches, cwd: input.workdir, processCwd: input.workdir,
-    provider: input.provider, model: input.model, env: process.env });
+    provider: input.provider, model: input.model, env: { ...process.env,
+      ...(process.env.EVALUATOR_DSH_PROVIDER_OUTPUT === undefined ? {} : {
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(input.outputHook).href}`.trim(),
+      }),
+    } });
   const stop = () => { void harness.close(); };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);

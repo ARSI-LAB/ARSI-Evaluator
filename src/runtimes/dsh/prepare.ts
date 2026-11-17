@@ -87,6 +87,8 @@ export async function prepareDsh(
     DSH_PERMISSION_MODE: permissionMode,
     DSH_TELEMETRY_DISABLED: "1",
     AGENT_BUNDLE_REGISTRY: path(state, "registry.json"),
+    ...(preparation.model.endpoint !== null && preparation.model.api === "openai-completions" && preparation.model.maxTokens === undefined
+      ? { EVALUATOR_DSH_PROVIDER_OUTPUT: JSON.stringify({ provider: "ember-evaluator", model: preparation.model.name }) } : {}),
   };
   const start = session.start.bind(session);
   const command = (args: string[]) => ({
@@ -169,7 +171,7 @@ export async function prepareDsh(
             env: { ...env, [DSH_AUTH_ENV]: preparation.auth.value }, inheritEnv: false,
             input: Buffer.from(JSON.stringify({ dsh, home, profile, key: context.key, patches: [modelOverlay, patch, sdkOverlay],
               moduleBase: local && preparation.localDsh ? preparation.localDsh.entry : path(runtime.root, "package.json"),
-              workdir: session.workdir, outputDir: session.agentOutputDir, prompt: input.prompt, media,
+              workdir: session.workdir, outputDir: session.agentOutputDir, outputHook, prompt: input.prompt, media,
               provider: preparation.model.endpoint === null ? preparation.model.provider : "ember-evaluator", model: preparation.model.name })), }, signal);
         }
         return start(

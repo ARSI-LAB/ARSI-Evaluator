@@ -6,6 +6,28 @@ import { isAbsolute, join } from "node:path";
 const MAX_STRING_BYTES = 8 * 1024;
 const MAX_EVENT_BYTES = 32 * 1024;
 const handlerKey = Symbol.for("ember.evaluator.dsh.tool-output.v1");
+const streamKey = Symbol.for("ember.evaluator.dsh.provider-output.v1");
+
+/** Model capability metadata is not an explicit per-request output ceiling. */
+export function streamWithProviderOutput(owner, model, context, options, selected) {
+  if (selected === undefined || selected.provider !== model.provider || selected.model !== model.id ||
+      model.api !== "openai-completions" || options.maxTokens !== undefined)
+    return owner.streamSimple(model, context, options);
+  return owner.streamSimple(model, context, { ...options, onPayload: async (payload, ...args) => {
+    const adjusted = await options.onPayload?.(payload, ...args) ?? payload;
+    if (!adjusted || typeof adjusted !== "object" || Array.isArray(adjusted)) return adjusted;
+    const copy = { ...adjusted };
+    delete copy.max_tokens;
+    delete copy.max_completion_tokens;
+    return copy;
+  } });
+}
+
+export function adaptProviderOutputSource(source) {
+  const seam = "snapshot.models.streamSimple(model, context, {";
+  if (source.split(seam).length !== 2) throw new Error("Unsupported DSH pi-ai adapter: unique streamSimple entry not found");
+  return source.replace(seam, `globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(streamKey))})](snapshot.models, model, context, {`);
+}
 
 function redact(text, secret) {
   if (!secret) return text;
@@ -75,17 +97,29 @@ export function serializeToolResult(event, outputDir, secret = "") {
 }
 
 const outputDir = process.env.EVALUATOR_DSH_OUTPUT_DIR;
-if (outputDir !== undefined) {
+const providerOutput = process.env.EVALUATOR_DSH_PROVIDER_OUTPUT;
+if (outputDir !== undefined || providerOutput !== undefined) {
   const secret = process.env.EMBER_EVALUATOR_API_KEY ?? "";
+  const selected = providerOutput === undefined ? undefined : JSON.parse(providerOutput);
+  if (selected !== undefined && (!selected || typeof selected.provider !== "string" || typeof selected.model !== "string"))
+    throw new Error("Invalid DSH provider output binding");
   // PATH shims require NODE_OPTIONS to preload in their child Node process.
   // Remove only our option before DSH launches tools; retain other Node options.
   const option = `--import=${import.meta.url}`;
   if (process.env.NODE_OPTIONS?.includes(option)) process.env.NODE_OPTIONS = process.env.NODE_OPTIONS.replace(option, "").trim();
   Object.defineProperty(globalThis, handlerKey, { value: event => serializeToolResult(event, outputDir, secret) });
+  Object.defineProperty(globalThis, streamKey, { value: (owner, model, context, options) =>
+    streamWithProviderOutput(owner, model, context, options, selected) });
   registerHooks({
     load(url, context, nextLoad) {
       const loaded = nextLoad(url, context);
       const pathname = new URL(url).pathname;
+      const adapter = /\/@deepseek-ai\/dsh-llm-pi-ai\/lib\/index\.js$/u.test(pathname) ||
+        /\/packages\/llm\/llm-pi-ai\/(?:src|lib)\/adapter\.[jt]s$/u.test(pathname);
+      if (selected !== undefined && adapter) {
+        const source = typeof loaded.source === "string" ? loaded.source : Buffer.from(loaded.source).toString("utf8");
+        return { ...loaded, source: adaptProviderOutputSource(source) };
+      }
       const headless = /\/@deepseek-ai\/dsh-headless\/lib\/json-stream(?:-[^/]+)?\.js$/u.test(pathname) ||
         /\/packages\/bundle\/headless\/(?:src|lib)\/json-stream\.[jt]s$/u.test(pathname);
       if (!headless) return loaded;

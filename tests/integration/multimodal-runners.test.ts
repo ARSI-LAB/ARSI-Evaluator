@@ -14,8 +14,8 @@ async function directory() { const root = await mkdtemp(join(tmpdir(), "multimod
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const image = { name: "figure.png", mediaType: "image/png", data: fixturePNG().toString("base64") };
 const key = { runId: "r", taskId: "t", attemptId: "a" };
-async function program(executable: string, args: string[], input: unknown, cwd: string) {
-  const child = spawn(executable, args, { cwd, env: { ...process.env, EVALUATOR_MEDIA_OUTPUT: cwd }, windowsHide: true });
+async function program(executable: string, args: string[], input: unknown, cwd: string, env: NodeJS.ProcessEnv = {}) {
+  const child = spawn(executable, args, { cwd, env: { ...process.env, EVALUATOR_MEDIA_OUTPUT: cwd, ...env }, windowsHide: true });
   const output: Buffer[] = []; const errors: Buffer[] = [];
   child.stdout.on("data", chunk => output.push(Buffer.from(chunk))); child.stderr.on("data", chunk => errors.push(Buffer.from(chunk)));
   child.stdin.on("error", () => {}); child.stdin.end(JSON.stringify(input));
@@ -68,7 +68,7 @@ test("Dify uploads image bytes with the workflow user, binds IDs in order, and r
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 30_000);
 
-test("DSH structured SDK entry retains image content, usage, evidence and close", async () => {
+test.each([false, true])("DSH structured SDK entry retains image content, usage, evidence and close (provider output: %s)", async providerOutput => {
   const root = await directory();
   const client = join(root, "node_modules/@deepseek-ai/dsh-sdk-client");
   const llm = join(root, "node_modules/@deepseek-ai/dsh-llm");
@@ -88,10 +88,13 @@ test("DSH structured SDK entry retains image content, usage, evidence and close"
     }`);
   const result = await program(process.execPath, [resolve("src/runtimes/dsh/assets/multimodal-runner.mjs")], {
     moduleBase: join(root, "package.json"), dsh: "fixture", home: root, profile: "candidate", patches: ["model", "permissions"],
-    workdir: root, outputDir: root, model: "vision", provider: "target", key, prompt: "look", media: [image],
-  }, root);
+    workdir: root, outputDir: root, outputHook: resolve("src/runtimes/dsh/assets/output-hook.mjs"),
+    model: "vision", provider: "target", key, prompt: "look", media: [image],
+  }, root, { EVALUATOR_DSH_PROVIDER_OUTPUT: providerOutput ? JSON.stringify({ provider: "target", model: "vision" }) : undefined });
   expect(result.code).toBe(0);
   expect(JSON.parse((await readFile(join(root, "captured.json"), "utf8")))).toMatchObject({ content: [{ type: "text", text: "look" }, { type: "image", data: image.data }] });
+  const captured = JSON.parse(await readFile(join(root, "captured.json"), "utf8"));
+  if (providerOutput) expect(captured.options.env.NODE_OPTIONS).toContain("--import=file:");
   expect(result.stdout).toContain('"totalTokens":10');
   expect(await readFile(join(root, "closed"), "utf8")).toBe("yes");
   const trajectory = await readFile(join(root, "trajectory.jsonl"), "utf8");
