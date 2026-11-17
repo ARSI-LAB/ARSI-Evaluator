@@ -75,6 +75,56 @@ test("accepts DSH's completed turn followed by an empty next turn and final", as
   expect(result.finalText).toBe("answer");
 });
 
+test("preserves DSH's terminal driver error after step_end with an unfinished tool call", async () => {
+  const value = await context();
+  const failure = { type: "status", phase: "turn_end", turn: 1,
+    reason: { kind: "error", error: { code: "UNKNOWN", message: "scheduler failed: secret" } } };
+  await expect(consumeDsh(handle([...opening,
+    { type: "tool_call", callId: "call", tool: "bash", input: {} }, closing[0], failure,
+    { type: "final", text: "" }], 1), value, "secret"))
+    .rejects.toMatchObject({ code: "SOLVER_RESULT_INCOMPLETE", cause: { message: "scheduler failed: [redacted]" } });
+  const session = await readFile(join(value.paths.agent, "session.jsonl"), "utf8");
+  const trajectory = await readFile(join(value.paths.agent, "trajectory.jsonl"), "utf8");
+  expect(session).toContain('"phase":"turn_end"');
+  expect(session).not.toContain("secret");
+  expect(trajectory).toContain('"kind":"error"');
+  expect(trajectory).not.toContain('"type":"tool_result"');
+  expect(trajectory).not.toContain('"status":"completed"');
+});
+
+test("records an aborted DSH turn without fabricating the missing tool result", async () => {
+  const value = await context();
+  await expect(consumeDsh(handle([...opening,
+    { type: "tool_call", callId: "call", tool: "bash", input: {} }, closing[0],
+    { type: "status", phase: "turn_end", turn: 1, reason: { kind: "aborted" } },
+    { type: "final", text: "" }], 1), value, ""))
+    .rejects.toMatchObject({ code: "SOLVER_RESULT_INCOMPLETE" });
+  expect(await readFile(join(value.paths.agent, "session.jsonl"), "utf8")).toContain('"kind":"aborted"');
+});
+
+test.each(["completed", "max-tokens"])("rejects %s with unresolved tool calls", async kind => {
+  await expect(consumeDsh(handle([...opening,
+    { type: "tool_call", callId: "call", tool: "bash", input: {} }, closing[0],
+    { type: "status", phase: "turn_end", turn: 1, reason: { kind } }, { type: "final", text: "answer" }]),
+  await context(), "")).rejects.toMatchObject({ code: "SOLVER_PROTOCOL_INVALID" });
+});
+
+test("rejects another step after an unresolved DSH tool call", async () => {
+  await expect(consumeDsh(handle([...opening,
+    { type: "tool_call", callId: "call", tool: "bash", input: {} }, closing[0],
+    { type: "status", phase: "step_start", turn: 1, step: 2 }]), await context(), ""))
+    .rejects.toMatchObject({ code: "SOLVER_PROTOCOL_INVALID" });
+});
+
+test("keeps the other runtime's pending-call step boundary strict", async () => {
+  const value = await context();
+  await expect(consumeDsh(handle([...opening,
+    { type: "tool_call", callId: "call", tool: "bash", input: {} }, closing[0],
+    { type: "status", phase: "turn_end", turn: 1, reason: { kind: "error" } }], 1),
+  value, "", undefined, "DEEPAGENTS")).rejects.toMatchObject({ code: "SOLVER_PROTOCOL_INVALID" });
+  expect(await readFile(join(value.paths.agent, "session.jsonl"), "utf8")).not.toContain('"phase":"turn_end"');
+});
+
 test("does not use an earlier completed turn to accept a partially executed next turn", async () => {
   await expect(consumeDsh(handle([...opening, ...closing,
     { type: "status", phase: "turn_start", turn: 2 },

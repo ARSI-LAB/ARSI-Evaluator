@@ -297,6 +297,8 @@ class DshStreamState {
   private async status(value: JsonRecord): Promise<void> {
     const phase = string(value.phase, "status.phase", true);
     const turn = integer(value.turn, "status.turn", 1);
+    if (this.activeStep === null && this.pendingCalls.size !== 0 && phase !== "turn_end")
+      throw malformed(this.label, `${phase} cannot occur while tool calls remain pending`);
     if (phase === "turn_start") {
       if (this.activeTurn !== null || this.activeStep !== null) {
         throw malformed(this.label, "turn_start cannot occur while a turn or step is active");
@@ -319,7 +321,10 @@ class DshStreamState {
       if (this.activeStep === null || step !== this.activeStep) {
         throw malformed(this.label, "step_end does not match the active step");
       }
-      if (this.pendingCalls.size !== 0)
+      // Native DSH emits step/end in a finally, including when its tool
+      // scheduler throws before recording a result. Read the terminal reason
+      // before rejecting that failed turn; never infer an outcome for the call.
+      if (this.pendingCalls.size !== 0 && this.label !== "DSH")
         throw malformed(this.label, "step_end cannot occur while tool calls remain pending");
       this.completedSteps += 1;
       const usage = parseUsage(value.usage);
@@ -332,6 +337,8 @@ class DshStreamState {
       if (this.activeStep !== null) throw malformed(this.label, "turn_end cannot occur while a step is active");
       const reason = record(value.reason, "status.reason");
       string(reason.kind, "status.reason.kind", true);
+      if (this.pendingCalls.size !== 0 && reason.kind !== "error" && reason.kind !== "aborted")
+        throw malformed(this.label, "turn_end cannot succeed while tool calls remain pending");
       this.lastReason = reason;
       this.activeTurn = null;
       this.nextTurn += 1;
