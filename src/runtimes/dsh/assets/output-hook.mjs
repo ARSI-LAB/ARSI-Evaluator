@@ -96,6 +96,17 @@ export function serializeToolResult(event, outputDir, secret = "") {
   }
 }
 
+/** DSH observer failures are otherwise swallowed while the Agent keeps running. */
+export function serializeToolResultOrError(event, outputDir, secret = "") {
+  try { return serializeToolResult(event, outputDir, secret); }
+  catch (error) {
+    const errno = error && typeof error === "object" && typeof error.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
+      ? error.code : "EXPORT_FAILED";
+    const detail = redact(error instanceof Error ? error.message : "Unknown tool output export failure", secret);
+    return JSON.stringify({ type: "error", message: `DSH tool output export failed (${errno}): ${preview(Buffer.from(detail), 1024)}` });
+  }
+}
+
 const outputDir = process.env.EVALUATOR_DSH_OUTPUT_DIR;
 const providerOutput = process.env.EVALUATOR_DSH_PROVIDER_OUTPUT;
 if (outputDir !== undefined || providerOutput !== undefined) {
@@ -107,7 +118,7 @@ if (outputDir !== undefined || providerOutput !== undefined) {
   // Remove only our option before DSH launches tools; retain other Node options.
   const option = `--import=${import.meta.url}`;
   if (process.env.NODE_OPTIONS?.includes(option)) process.env.NODE_OPTIONS = process.env.NODE_OPTIONS.replace(option, "").trim();
-  Object.defineProperty(globalThis, handlerKey, { value: event => serializeToolResult(event, outputDir, secret) });
+  Object.defineProperty(globalThis, handlerKey, { value: event => serializeToolResultOrError(event, outputDir, secret) });
   Object.defineProperty(globalThis, streamKey, { value: (owner, model, context, options) =>
     streamWithProviderOutput(owner, model, context, options, selected) });
   registerHooks({

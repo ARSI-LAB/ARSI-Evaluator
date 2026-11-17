@@ -103,7 +103,7 @@ test.each(["direct", "local-launcher", "path-shim", "checkout-ts"])("%s retains 
   await verifyFileManifest(paths.root, manifest);
 }, 30_000);
 
-test("a blocked output directory fails the process and never publishes a fabricated successful result", async () => {
+test("a blocked output directory fails evaluation and never publishes a fabricated successful result", async () => {
   const { root, paths, entry } = await fixture();
   await writeFile(join(paths.agent, "tool-outputs"), "blocked");
   const signal = AbortSignal.timeout(15_000);
@@ -112,7 +112,9 @@ test("a blocked output directory fails the process and never publishes a fabrica
     env: { EVALUATOR_DSH_OUTPUT_DIR: paths.agent },
     input: Buffer.from(JSON.stringify([{ type: "tool_result", callId: "call", status: "completed", result: "x".repeat(300 * 1024) }])) }, signal);
   await expect(consumeDsh(handle, { key: { runId: "run", taskId: "blocked", attemptId: "one" }, paths, signal }, ""))
-    .rejects.toMatchObject({ code: "SOLVER_PROCESS_CRASHED" });
-  expect(await readFile(join(paths.agent, "session.jsonl"), "utf8")).not.toContain('"type":"tool_result"');
-  expect(await readFile(join(paths.agent, "stderr.log"), "utf8")).toContain("EEXIST");
+    .rejects.toMatchObject({ code: "INTERNAL_ERROR", message: expect.stringContaining("DSH tool output export failed (EEXIST)") });
+  const evidence = await readFile(join(paths.agent, "session.jsonl"), "utf8");
+  expect(evidence).not.toContain('"type":"tool_result"');
+  expect(evidence).toContain('"type":"error"');
+  expect(evidence).toContain("EEXIST");
 });
