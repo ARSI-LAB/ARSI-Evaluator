@@ -86,6 +86,10 @@ export async function recoverContainerVerifierLogs(command: DockerCommand, id: s
     throw error;
   });
   if (committed && kind === "verifier") return;
+  const inspected = JSON.parse((await command(["inspect", id], { signal })).stdout) as { State?: { Status?: string; StartedAt?: string } }[];
+  // Preparation may stop after create, before the private directory is initialized.
+  // Do not start that task entrypoint just to export logs it could not have written.
+  if (inspected[0]?.State?.Status === "created" && inspected[0].State.StartedAt === "0001-01-01T00:00:00Z") return;
   await stopDockerContainer(command, id, signal);
   await command(["start", id], { signal });
   await exportContainerVerifierLogs(command, id, path, signal, kind);

@@ -25,6 +25,7 @@ test("native agent recovery checks allocations and leaves committed result bytes
   const key = { runId: "run", taskId: "task", attemptId: "attempt" };
   const target = join(root, key.attemptId, "agent");
   const command = vi.fn<DockerCommand>(async args => {
+    if (args[0] === "inspect") return { stdout: JSON.stringify([{ State: { Status: "exited", StartedAt: "2026-01-01T00:00:00Z" } }]), stderr: "" };
     if (args[0] === "cp") { await mkdir(args[2]!); await writeFile(join(args[2]!, "native.log"), "original bytes"); }
     return { stdout: "", stderr: "" };
   });

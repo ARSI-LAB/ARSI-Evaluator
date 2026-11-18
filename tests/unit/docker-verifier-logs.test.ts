@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportContainerVerifierLogs, parseVerifierLogStorage, recoverContainerVerifierLogs } from "../../src/infrastructure/containers/verifier-logs.js";
@@ -87,5 +87,24 @@ test("agent export refuses to overwrite saved coordinator evidence", async () =>
   try {
     await expect(exportContainerVerifierLogs(command, "fixture", target, AbortSignal.timeout(5000), "agent")).rejects.toThrow("conflict");
     expect(await readFile(join(target, "trajectory.jsonl"), "utf8")).toBe("saved trajectory");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test.each(["agent", "verifier"] as const)("recovery leaves a never-started %s container for cleanup without running its task entrypoint", async kind => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "unstarted-log-recovery-")));
+  const key = { runId: "run", taskId: "task", attemptId: "attempt" };
+  const target = join(root, key.attemptId, kind);
+  const command = vi.fn<DockerCommand>(async args => {
+    if (args[0] !== "inspect") throw new Error("A never-started task must not run for log recovery");
+    return { stdout: JSON.stringify([{ State: { Status: "created", StartedAt: "0001-01-01T00:00:00Z" } }]), stderr: "" };
+  });
+  try {
+    await mkdir(target, { recursive: true });
+    const allocation = JSON.stringify({ key });
+    await writeFile(join(root, key.attemptId, "allocation.json"), allocation);
+    await recoverContainerVerifierLogs(command, "fixture", target, key, AbortSignal.timeout(5000), kind);
+    expect(command.mock.calls.map(([args]) => args)).toEqual([["inspect", "fixture"]]);
+    expect(await readdir(target)).toEqual([]);
+    expect(await readFile(join(root, key.attemptId, "allocation.json"), "utf8")).toBe(allocation);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
