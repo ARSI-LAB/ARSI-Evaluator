@@ -29,6 +29,7 @@ async function fixture(): Promise<string> {
     await writeFile(join(assets, "launch.mjs"), "export {};\n");
   }
   await mkdir(join(root, "src/runtimes/shared/assets"), { recursive: true });
+  await writeFile(join(root, "src/runtimes/shared/assets/reasoning_effort.py"), "# Shared effort fixture\n");
   await writeFile(join(root, "src/runtimes/shared/assets/stage-attachments.mjs"), "export {};\n");
   await writeFile(join(root, "src/runtimes/pi/model-defaults.json"), "{}\n");
   await mkdir(join(root, "src/runtimes/agentx/assets"), { recursive: true });
@@ -91,6 +92,7 @@ test.skipIf(process.platform === "win32")("concurrent stale-checkout CLI starts 
   expect(await readFile(join(root, "dist/runtimes/dify/assets/runner.mjs"), "utf8")).toBe("export {};\n");
   expect(await readFile(join(root, "dist/runtimes/shared/assets/stage-attachments.mjs"), "utf8")).toBe("export {};\n");
   expect(await readFile(join(root, "dist/runtimes/agentx/assets/runner.py"), "utf8")).toBe("# AgentX bridge fixture\n");
+  expect(await readFile(join(root, "dist/runtimes/agentx/assets/reasoning_effort.py"), "utf8")).toBe("# Shared effort fixture\n");
   expect(await readFile(join(root, "dist/runtimes/hermes/assets/runner.py"), "utf8")).toBe("# Hermes output capture fixture\n");
   expect((await launch(root)).code).toBe(0);
   expect((await readFile(join(root, "builds.log"), "utf8")).trim().split("\n")).toHaveLength(1);

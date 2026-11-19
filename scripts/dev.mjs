@@ -31,6 +31,7 @@ const RUNTIME_FREE = args.includes("--help")
 const runtimeAssets = [
   "dist/adapters/harness/pi/runner.js",
   "dist/adapters/harness/pi/builtin-provenance.json",
+  "dist/runtimes/agentx/assets/reasoning_effort.py",
   "dist/package-provenance.json",
   "dist/bundled-plugins.patch.yaml",
 ].map(path => resolve(root, path));

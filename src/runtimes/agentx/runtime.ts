@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, lstat, mkdir, readFile, readdir, realpath } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -15,14 +15,14 @@ import { fetchHuggingFaceFile, fetchHuggingFaceMetadata, huggingfaceTransport } 
 import { AGENTX_VERSION } from "./versions.js";
 
 const execFileAsync = promisify(execFile);
-export const agentXAssets = fileURLToPath(new URL("./assets/", import.meta.url));
-const reasoningAsset = fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url));
+// Source-mode and packaged runs both install the bridge assembled by package-runtime.
+export const agentXAssets = fileURLToPath(new URL("../../../dist/runtimes/agentx/assets/", import.meta.url));
 
 export async function agentXBridgeDigest(signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
-  const manifest = await buildFileManifest(agentXAssets, []);
+  const manifest = await buildFileManifest(agentXAssets, ["reasoning_effort.py", "Dockerfile", "runner.py"]);
   if (manifest.missing.length) throw new Error("AgentX bridge assets are incomplete");
-  return fingerprintConfig({ files: manifest.files, reasoning: await readFile(reasoningAsset, "utf8") });
+  return fingerprintConfig(manifest.files);
 }
 
 export async function resolveAgentXPython(configured: string | undefined, signal: AbortSignal): Promise<{ executable: string; version: string }> {
@@ -46,7 +46,7 @@ export async function agentXLocalInstallation(configured: string | undefined, si
   const rootPython = process.platform === "win32" ? "{root}/venv/Scripts/python.exe" : "{root}/venv/bin/python";
   return { id: `agentx-${AGENTX_VERSION}-${python.version}-${await agentXBridgeDigest(signal)}`,
     cacheName: `agentx-${AGENTX_VERSION}-py${python.version.split(".").slice(0, 2).join(".")}`,
-    files: [{ source: agentXAssets, target: "bridge" }, { source: reasoningAsset, target: "bridge/reasoning_effort.py" }], commands: [{ executable: python.executable,
+    files: [{ source: agentXAssets, target: "bridge" }], commands: [{ executable: python.executable,
       args: ["{root}/bridge/install.py", "{root}/venv"], env: { PYTHONDONTWRITEBYTECODE: "1" } }],
     probes: [{ executable: rootPython, args: ["-c", `import importlib.metadata as m; assert m.version('agentx-harness') == '${AGENTX_VERSION}'; import evaluator_agentx`] }] };
 }

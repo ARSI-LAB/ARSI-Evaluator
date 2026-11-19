@@ -137,6 +137,8 @@ for (const directory of ["dsh", "deepagents", "dify", "jiuwenswarm", "hermes", "
   await cp(new URL(`../src/runtimes/${directory}/assets/`, import.meta.url), target, { recursive: true, filter: isRuntimeAsset });
   await normalizeRuntimeText(target);
 }
+await cp(new URL("runtimes/shared/assets/reasoning_effort.py", distribution),
+  new URL("runtimes/agentx/assets/reasoning_effort.py", distribution));
 const agentBundleAssets = new URL("../dist/runtimes/agentbundle/assets/", import.meta.url);
 await mkdir(agentBundleAssets, { recursive: true });
 await cp(new URL("../src/runtimes/agentbundle/assets/run.mjs", import.meta.url),

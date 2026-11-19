@@ -13,6 +13,7 @@ import type { JsonValue } from "../../src/core/contracts/task.js";
 import { fingerprintConfig } from "../../src/core/results/run-manifest.js";
 import { DockerEnvironment } from "../../src/plugins/environments/docker/environment.js";
 import { DockerComposeProject } from "../../src/infrastructure/containers/compose.js";
+import { DockerImageInventory } from "../../src/infrastructure/containers/image-inventory.js";
 import { DockerRuntime } from "../../src/infrastructure/containers/runtime.js";
 import { PINNED_NODE_IMAGE } from "../../src/infrastructure/containers/runtime-contract.js";
 import { readDirectoryModes } from "../../src/infrastructure/filesystem/directory-modes.js";
@@ -468,11 +469,29 @@ test.each([
   expect(ready.image).toBe(image);
 });
 
-test("image overrides cannot bypass public Dockerfile source validation", async () => {
-  const { spec } = await fixture("FROM fixture/base\n");
-  const environment = new DockerEnvironment({ dockerExecutable: "fixture-docker", image: "fixture/base", imageOverrides: { "fixture/base": "fixture/warm" } });
-  await expect(environment.materialize({ ...spec, build: { ...spec.build, sourceHash: "changed" } }, AbortSignal.timeout(10_000)))
-    .rejects.toThrow("source hash");
+test("Docker caches builds by actual context bytes even when the declared source hash stays fixed", async () => {
+  const { environment, spec, log } = await fixture("FROM fixture/base\nCOPY result.json /result.json\n");
+  vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
+  for (const contents of ["first", "first", "other"]) {
+    await writeFile(join(spec.build.context, "result.json"), contents);
+    await environment.materialize(spec, AbortSignal.timeout(15_000));
+  }
+  const calls: string[][] = (await readFile(log + ".commands", "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  const tags = calls.filter(args => args[0] === "build").map(args => args[args.indexOf("--tag") + 1]);
+  expect(tags).toHaveLength(2);
+  expect(new Set(tags).size).toBe(2);
+});
+
+test("Docker rejects a context changed between cache lookup and snapshot creation", async () => {
+  const { environment, spec, log, dockerfile } = await fixture("FROM fixture/base\n");
+  const lookup = vi.spyOn(DockerImageInventory.prototype, "cached").mockImplementationOnce(async () => {
+    await writeFile(dockerfile, "FROM fixture/changed\n");
+    return undefined;
+  });
+  try {
+    await expect(environment.materialize(spec, AbortSignal.timeout(10_000))).rejects.toMatchObject({ code: "SOURCE_CHANGED" });
+    await expect(readFile(log)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally { lookup.mockRestore(); }
 });
 
 test("a prebuilt image acquisition failure does not rebuild the available Dockerfile", async () => {

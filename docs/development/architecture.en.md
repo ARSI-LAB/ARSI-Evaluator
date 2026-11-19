@@ -89,6 +89,8 @@ Ray Jobs deployment and RayScheduler task dispatch operate at different levels. 
 
 Docker's `materialize()` and on-demand `prepare()` share `prepareDependencies()` to resolve images and runtimes for the main container, gateway, and Compose services. With a receipt, `prepare()` checks the local images before passing the resolved images to `startSession()`. Main and gateway containers start with `--pull never`. Compose also uses `--no-build`. On startup failure, the startup code cleans up containers, the Compose project, and the gateway before the image lease is released. On success, `DockerSession.dispose()` owns that cleanup and lease release.
 
+Docker reads the build directory's files and permissions to compute the image cache key. On a cache miss, `taskImage()` copies the directory to a snapshot and verifies its contents and permissions before building. AgentX uses the packaged bridge directory, which includes the shared `reasoning_effort.py` module.
+
 When `taskImage()` builds a local task snapshot, it starts a [package relay](../../src/infrastructure/containers/build-package-relay.ts) and supplies build arguments for recognized public PyPI or npm mirrors. The relay retries and falls back by request. `taskImage()` closes it on completion or cancellation. A cached or downloaded image skips this step.
 
 ## Benchmarks and Plugin Registration

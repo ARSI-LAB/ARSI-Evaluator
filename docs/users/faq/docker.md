@@ -175,7 +175,7 @@ environment:
       GOMAXPROCS: "2"
 ```
 
-Mappings default empty, match exactly once without recursion, and affect only task images, not fixed Node/gateway. Results save actual references/IDs; config retains mappings. Public build-context/content validation remains.
+Mappings default empty, match exactly once without recursion, and affect only task images, not fixed Node/gateway. Results save actual references/IDs; config retains mappings. Docker keys local builds by the files and permissions in the build directory and checks that the staged copy matches before building.
 
 Use original public task images, not containers after solving/hidden tests. Each new task gets independent writable layers; verifier caches do not return to solvers. Do not alter tests/budgets to inflate scores. Validate warmed images with the same saved patch, logs, identities, and scores.
 

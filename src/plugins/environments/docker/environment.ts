@@ -28,7 +28,7 @@ import type { AttemptKey, AttemptPaths } from "../../../core/contracts/result.js
 import type { JsonValue } from "../../../core/contracts/task.js";
 import { validateNetworkPolicy } from "../../../core/policies/network-policy.js";
 import { EGRESS_PROXY_ENV } from "../../../infrastructure/network/egress-proxy.js";
-import { buildFileManifest } from "../../../core/artifacts/artifacts.js";
+import { inspectFile } from "../../../core/artifacts/artifacts.js";
 import { fingerprintConfig } from "../../../core/results/run-manifest.js";
 import { recoverDockerAttempts } from "../../../infrastructure/containers/recovery.js";
 import { dockerAttemptLabels } from "../../../infrastructure/containers/attempt-labels.js";
@@ -137,6 +137,22 @@ async function validateBuildContext(
   return { context: root, dockerfile: actualFile };
 }
 
+
+async function inspectBuildContext(root: string, signal: AbortSignal, errorCode: "TRANSFER_UNSAFE" | "SOURCE_CHANGED") {
+  try {
+    const modes = await readDirectoryModes(root, signal);
+    const files = [];
+    for (const entry of modes) {
+      signal.throwIfAborted();
+      if (entry.kind === "file") files.push(await inspectFile(root, entry.path));
+    }
+    // Preserve existing cache keys when the old manifest covered the entire directory.
+    return { modes, hash: fingerprintConfig(files.sort((a, b) => a.path.localeCompare(b.path))) };
+  } catch (cause) {
+    signal.throwIfAborted();
+    throw new DockerEnvironmentError(errorCode, "Cannot inventory Docker build context: " + root, cause);
+  }
+}
 
 type ResolvedBaseImage = { reference: string; pinnedReference: string; id: string; fromArchiveFallback?: true };
 
@@ -412,16 +428,7 @@ export class DockerEnvironment implements Environment {
     const constraintTaskId = scope && Object.hasOwn(this.buildPipConstraints, scope.taskId) ? scope.taskId : "*";
     const pipConstraints = scope?.service ? [] : this.buildPipConstraints[constraintTaskId] ?? [];
     const context = await validateBuildContext(spec.build.context, spec.build.dockerfile);
-    const manifest = await buildFileManifest(context.context, []);
-    if (manifest.missing.length)
-      throw new DockerEnvironmentError("TRANSFER_UNSAFE", "Docker build context contains an unreadable or unsafe entry");
-    const actualSourceHash = fingerprintConfig(manifest.files as unknown as JsonValue);
-    if (actualSourceHash !== spec.build.sourceHash)
-      throw new DockerEnvironmentError(
-        "SOURCE_CHANGED",
-        "Docker build context no longer matches its public source hash",
-      );
-    const sourceModes = await readDirectoryModes(context.context, signal);
+    const { modes: sourceModes, hash: sourceHash } = await inspectBuildContext(context.context, signal, "TRANSFER_UNSAFE");
     let network;
     try { network = dockerBuildNetwork(this.network); }
     catch (cause) { throw new DockerEnvironmentError("CONFIG_INVALID", "Invalid Docker build network settings", cause); }
@@ -429,7 +436,7 @@ export class DockerEnvironment implements Environment {
     const key = createHash("sha256")
       .update(
         JSON.stringify({
-          sourceHash: spec.build.sourceHash,
+          sourceHash,
           permissions: sourceModes,
           mirrorPolicy: "ca-bootstrap-v5-apt-network-defaults",
           platform,
@@ -444,7 +451,7 @@ export class DockerEnvironment implements Environment {
     const buildTag = spec.build.visibility === "public" || !scope
       ? dockerImageName("solve-task", key)
       : dockerImageName("task", key, scope);
-    return { context, sourceModes, pipConstraints, network, packageSources, buildTag };
+    return { context, sourceModes, sourceHash, pipConstraints, network, packageSources, buildTag };
   }
 
   private async taskImage(spec: EnvironmentSpec, platform: ContainerPlatform, signal: AbortSignal,
@@ -454,7 +461,7 @@ export class DockerEnvironment implements Environment {
       observe?.("reference");
       return useImageOverrides && Object.hasOwn(this.imageOverrides, spec.image) ? this.imageOverrides[spec.image]! : spec.image;
     }
-    const { context, sourceModes, pipConstraints, network, packageSources, buildTag } = described ?? await this.describeTaskBuild(spec, platform, signal, scope);
+    const { context, sourceModes, sourceHash, pipConstraints, network, packageSources, buildTag } = described ?? await this.describeTaskBuild(spec, platform, signal, scope);
     const buildInput = scope?.phase === "verify" && !scope.service;
     return await this.taskImageCache.getImage(this.dockerExecutable, buildTag, signal, async buildSignal => {
       const cached = await this.imageInventory.cached(buildTag, platform, buildSignal, buildInput ? undefined : preferred);
@@ -479,14 +486,11 @@ export class DockerEnvironment implements Environment {
         });
         await assertLinkFree(snapshot, "Docker build context snapshot");
         await restoreDirectoryModes(snapshot, sourceModes, buildSignal);
-        const snapshotManifest = await buildFileManifest(snapshot, []);
+        const staged = await inspectBuildContext(snapshot, buildSignal, "SOURCE_CHANGED");
         if (
-          snapshotManifest.missing.length ||
-          fingerprintConfig(snapshotManifest.files as unknown as JsonValue) !== spec.build!.sourceHash ||
-          fingerprintConfig(await readDirectoryModes(context.context, buildSignal) as unknown as JsonValue) !==
-            fingerprintConfig(sourceModes as unknown as JsonValue) ||
-          fingerprintConfig(await readDirectoryModes(snapshot, buildSignal) as unknown as JsonValue) !==
-            fingerprintConfig(sourceModes as unknown as JsonValue)
+          staged.hash !== sourceHash ||
+          fingerprintConfig(await readDirectoryModes(context.context, buildSignal)) !== fingerprintConfig(sourceModes) ||
+          fingerprintConfig(staged.modes) !== fingerprintConfig(sourceModes)
         ) {
           throw new DockerEnvironmentError(
             "SOURCE_CHANGED",
@@ -494,7 +498,7 @@ export class DockerEnvironment implements Environment {
           );
         }
         const dockerfile = resolve(snapshot, relative(context.context, context.dockerfile));
-        await this.prepareBuild?.({ ...spec, build: { ...spec.build!, context: snapshot,
+        await this.prepareBuild?.({ ...spec, build: { ...spec.build!, context: snapshot, sourceHash,
           dockerfile: relative(snapshot, dockerfile).replaceAll("\\", "/") } }, buildSignal, dockerActivity());
         buildSignal.throwIfAborted();
         await applyBuildPipConstraints(snapshot, dockerfile, pipConstraints, buildSignal);
