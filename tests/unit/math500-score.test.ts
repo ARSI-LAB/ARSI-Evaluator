@@ -1,10 +1,13 @@
+import { prepareNativeResource } from "arsi-evaluator";
 import { beforeEach, expect, test, vi } from "vitest";
 import { completeJudge } from "../../src/infrastructure/models/judge.js";
 import { math500Definition } from "../../src/plugins/benchmarks/agent-harness/definitions/math500.js";
 import { MATH_QUERY_TEMPLATE } from "../../src/plugins/benchmarks/agent-harness/definitions/prompts.js";
 import { MATH_EQUALITY_TEMPLATE } from "../../src/plugins/benchmarks/agent-harness/definitions/scoring/judge-prompts.js";
 import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { workflowPlanCredentialNames } from "../../src/core/workflow/credentials.js";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -78,8 +81,8 @@ test("MATH-500 uses the complete upstream query template and redacts judge crede
 test("math500 configuration requires a named judge service", async () => {
   const registry = await openPluginRegistry();
   try {
-    expect(() => registry.ctx.evaluator.prepare("benchmark", { name: "math500", config: {} })).toThrow(/judgeService/);
-    expect(() => registry.ctx.evaluator.prepare("benchmark", { name: "math500", config: { judgeService: "grader" } })).not.toThrow();
+    expect(() => prepareNativeResource(registry.ctx, "benchmark", { name: "math500", config: {} })).toThrow(/judgeService/);
+    expect(() => prepareNativeResource(registry.ctx, "benchmark", { name: "math500", config: { judgeService: "grader" } })).not.toThrow();
   } finally { await registry.dispose(); }
 });
 
@@ -87,11 +90,14 @@ test("MATH-500 example resolves independent solver and judge credentials", async
   const env = { MODEL_NAME: "solver", MODEL_ENDPOINT: "https://solver.invalid", MODEL_API_KEY: "solver-secret",
     JUDGE_NAME: "grader", JUDGE_ENDPOINT: "https://judge.invalid", JUDGE_API_KEY: "judge-secret" };
   const path = resolve("playbook/math500/math500-simpleagent.yaml");
-  const loaded = await loadConfig(path, {}, env);
-  expect(loaded.experiment.benchmark.config.judgeService).toBe("judge");
-  expect(loaded.auths.default?.value).toBe("solver-secret");
-  expect(loaded.auths.judge?.value).toBe("judge-secret");
-  expect(JSON.stringify(loaded.persisted)).not.toContain("judge-secret");
+  const plan = await inspectWorkflow({ configPath: path, env });
+  expect(benchmarkExperiment(plan).benchmark.config.judgeService).toBe("judge");
+  expect(JSON.stringify(plan)).not.toContain("judge-secret");
+  expect(JSON.stringify(plan)).not.toContain("solver-secret");
+  const registry = await openPluginRegistry();
+  try {
+    expect(workflowPlanCredentialNames(plan, registry.ctx.evaluator.workflows)).toEqual(expect.arrayContaining(["MODEL_API_KEY", "JUDGE_API_KEY"]));
+  } finally { await registry.dispose(); }
   const { JUDGE_API_KEY: _key, ...withoutJudge } = env;
-  await expect(loadConfig(path, {}, withoutJudge)).rejects.toThrow(/JUDGE_API_KEY/);
+  expect((await inspectWorkflow({ configPath: path, env: withoutJudge })).document).toEqual(plan.document);
 });

@@ -16,7 +16,6 @@ work/
 └── evaluator-metrics/          # 独立插件项目；以下命令均在此目录执行
     ├── package.json
     ├── tsconfig.json
-    ├── src/context.ts
     ├── src/index.ts
     ├── cordis.patch.yaml
     └── experiment.yaml
@@ -77,34 +76,19 @@ work/
 
 ## 2. 实现并编译插件
 
-独立项目使用包根导出的组件类型。Cordis 的 `Context` 类型本身没有声明 Evaluator 注入的 `evaluator` 服务。在 `src/context.ts` 声明本例用到的 `register()` 签名，`inject` 会在运行时声明对该服务的依赖。
-
-```ts
-import type { Context } from "@deepseek-ai/cordis";
-import type { PluginConfigValidator, PluginFactory, PluginRole } from "arsi-evaluator";
-
-export type EvaluatorPluginContext = Context & {
-  evaluator: {
-    register<R extends PluginRole, T>(
-      role: R,
-      name: string,
-      validate: PluginConfigValidator<T>,
-      factory: PluginFactory<R, T>,
-    ): () => Promise<void>;
-  };
-};
-```
+从包根导入组件类型和 `registerNativeResource`，使用 Cordis 的 `Context` 类型。无需另写注册表类型声明；`inject` 声明运行时服务依赖。
 
 新建 `src/index.ts`，注册一个统计有效评分任务数的指标。
 
 ```ts
+import { registerNativeResource } from "arsi-evaluator";
 import type { Metrics } from "arsi-evaluator";
-import type { EvaluatorPluginContext } from "./context.js";
+import type { Context } from "@deepseek-ai/cordis";
 
 export const inject = ["evaluator"];
 
-export function apply(ctx: EvaluatorPluginContext): void {
-  ctx.evaluator.register(
+export function apply(ctx: Context): void {
+  registerNativeResource(ctx,
     "metrics",
     "valid-count",
     (config: unknown) => {
@@ -138,20 +122,21 @@ pnpm build
 
 首次安装后提交插件自己的 `pnpm-lock.yaml`，后续安装使用 `pnpm install --frozen-lockfile`。修改 TypeScript 后重新构建；Evaluator 拒绝直接加载 `.ts` 入口。Evaluator 根目录的构建不会自动编译这个独立项目。
 
-其他组件也使用相同的 `register(role, name, validate, factory)`。从包根导入公共类型，不导入 `arsi-evaluator/src/...`。`validate` 只校验配置，资源在工厂或运行阶段创建；工厂使用 `runtime.resolvePath()` 解析实验相对路径。持有长连接、临时目录等资源时，在插件作用域注册 `ctx.effect(() => () => resource.close())`；attempt 资源按对应 session 契约释放。详见[组件接口与生命周期](plugins.md)。
+其他组件也使用相同的 `registerNativeResource(ctx, role, name, validate, factory)`。从包根导入公共类型，不导入 `arsi-evaluator/src/...`。`validate` 只校验配置，资源在工厂或运行阶段创建；工厂使用 `runtime.resolvePath()` 解析实验相对路径。持有长连接、临时目录等资源时，在插件作用域注册 `ctx.effect(() => () => resource.close())`；attempt 资源按对应 session 契约释放。详见[组件接口与生命周期](plugins.md)。
 
 ### 独立项目中的 Solver
 
 沿用第 1 步的项目结构。把[固定回复 Solver 的实现](add-solver.md#最小示例)保存为独立项目中的 `src/fixed-answer.ts`，将 `Solver` 类型的导入改为 `import type { Solver } from "arsi-evaluator"`。将 `src/index.ts` 写成以下入口，并在独立项目中运行 `pnpm build`。
 
 ```ts
-import type { EvaluatorPluginContext } from "./context.js";
+import { registerNativeResource } from "arsi-evaluator";
+import type { Context } from "@deepseek-ai/cordis";
 import { createFixedAnswerSolver, parseFixedAnswerConfig } from "./fixed-answer.js";
 
 export const inject = ["evaluator"];
 
-export function apply(ctx: EvaluatorPluginContext): void {
-  ctx.evaluator.register("solver", "external-fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
+export function apply(ctx: Context): void {
+  registerNativeResource(ctx, "solver", "external-fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
 }
 ```
 
@@ -190,7 +175,7 @@ arsi-evaluator run experiment.yaml --patch cordis.patch.yaml
 | --- | --- | --- |
 | patch 的 `id` | `custom-metrics` | 插件模块标识，用于版本记录；在 patch 中唯一 |
 | patch 的 `name` | `./dist/index.js` 或 `@example/evaluator-metrics` | 要导入的模块 |
-| `register()` 与实验中的 `name` | `valid-count` | 实验要选择的组件；同一 role 下唯一 |
+| `registerNativeResource()` 与实验中的 `name` | `valid-count` | 实验要选择的组件；同一 role 下唯一 |
 
 一个模块可注册多个组件。当前 patch 仅支持 `insert`，条目仅接受 `id`、`name`；不能通过重复注册覆盖内置组件。使用自己的注册名，并在 YAML 中选择它。
 
@@ -199,28 +184,32 @@ arsi-evaluator run experiment.yaml --patch cordis.patch.yaml
 将下面内容保存为 `experiment.yaml`。先设置 `MODEL_NAME`、`MODEL_ENDPOINT`、`MODEL_API_KEY` 环境变量，方法见[快速开始](../users/quick-start.zh-CN.md)。
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: simpleagent
-    service: default
-environment: local
-scheduler:
-  name: local
-  concurrency: 1
-metrics:
-  - name: success-rate
-  - name: duration
-  - name: usage
-  - name: valid-count
-    config: {}
-run:
-  maxTasks: 1
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: simpleagent
+      service: default
+  environment: local
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics:
+    - name: success-rate
+    - name: duration
+    - name: usage
+    - name: valid-count
+      config: {}
+  run:
+    maxTasks: 1
+
 output:
   directory: ./results
 ```

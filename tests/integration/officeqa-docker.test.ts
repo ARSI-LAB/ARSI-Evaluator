@@ -6,10 +6,11 @@ import { OfficeQAProV2Benchmark, parseOfficeQAProV2Config } from "../../src/plug
 import { DockerEnvironment } from "../../src/plugins/environments/docker/environment.js";
 import { officeQAFiles, fixtureCSV } from "../fixtures/officeqa.js";
 import { harness } from "../fixtures/engine/fakes.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { readProcess } from "../../src/infrastructure/process/output.js";
 import { trajectoryLines } from "../fixtures/results/store-fixture.js";
-import { saveReport, rebuildReport } from "../../src/application/report/index.js";
+import { rebuildWorkflowReport } from "../../src/application/workflow-report.js";
+import { saveReport } from "../../src/plugins/workflows/benchmark/report.js";
 import { SuccessRateMetrics } from "../../src/plugins/metrics/success-rate.js";
 import { MarkdownReporter } from "../../src/plugins/reporters/markdown.js";
 
@@ -48,20 +49,21 @@ test.skipIf(!enabled).each(["parsed-json", "pdf"] as const)("OfficeQA %s Docker 
     };
     config.experiment.environment = { name: "docker", config: {} };
     config.experiment.run = { ...config.experiment.run, maxTasks: 2, timeoutSeconds: 300 };
-    config.persisted = { fixture: true, metrics: [{ name: "success-rate", config: {} }], reporter: { name: "markdown", config: {} } };
+    config.experiment.metrics = [{ name: "success-rate", config: {} }];
+    config.experiment.reporter = { name: "markdown", config: {} };
     components.metrics = [new SuccessRateMetrics()]; components.reporter = new MarkdownReporter();
     for (let repeat = 0; repeat < 2; repeat++) {
-      const snapshot = await runEngine({ components, config, signal: AbortSignal.timeout(600_000) });
+      const snapshot = await runBenchmarkFixture({ components, config, signal: AbortSignal.timeout(600_000) });
       expect(snapshot.records[0]?.errors).toEqual([]);
       expect(snapshot.records[0]).toMatchObject({ executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1, passed: true, details: { corpusFormat } } });
       expect(snapshot.records).toHaveLength(2);
       expect(snapshot.records.every(record => record.verdict?.passed === true)).toBe(true);
       expect(snapshot.records[0]?.task).toBeUndefined();
       await saveReport(components.store, components.metrics, components.reporter);
-      const runDir = join(config.experiment.output.directory, snapshot.run.runId);
+      const runDir = snapshot.nativeDirectory;
       expect(await readFile(join(runDir, "report.md"), "utf8")).toContain('| 正确率 | 100.00% |');
       await components.store.close();
-      await rebuildReport(runDir);
+      await rebuildWorkflowReport(snapshot.directory);
     }
     expect(images).toHaveLength(4);
     expect(images.every(image => typeof image === "string" && image.startsWith("sha256:"))).toBe(true);

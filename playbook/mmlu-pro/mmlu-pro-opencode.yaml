@@ -1,25 +1,30 @@
 # MMLU-Pro 使用无工具作答，求解容器只访问模型 API。
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-    api: openai-completions
-    reasoningEffort: low
-    maxTokens: 65536
-benchmark:
-  name: mmlu_pro
-  config:
-    solveNetwork: model-api
-  solver:
-    name: opencode
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+      api: openai-completions
+      reasoningEffort: low
+      maxTokens: 65536
+  benchmark:
+    name: mmlu_pro
     config:
-      tools: none
-      mcp: disabled
-      maxTurns: 2000
-environment:
-  name: docker
-  config:
-    image: node:24.22.1-bookworm-slim
-run:
-  solveTimeoutSeconds: 600
+      solveNetwork: model-api
+    solver:
+      name: opencode
+      config:
+        tools: none
+        mcp: disabled
+        maxTurns: 2000
+  environment:
+    name: docker
+    config:
+      image: node:24.22.1-bookworm-slim
+  run:
+    solveTimeoutSeconds: 600
+output:
+  directory: ../../results/mmlu_pro/mmlu-pro-opencode

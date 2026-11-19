@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { runCli } from "../../src/cli/main.js";
-import { executeWarmup, warmupSelectedTasks } from "../../src/application/warmup.js";
+import { warmupWorkflow } from "../../src/application/workflow-warmup.js";
+import { warmupSelectedTasks } from "../../src/plugins/workflows/benchmark/warmup.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import { harness } from "../fixtures/engine/fakes.js";
 import { EvaluatorError } from "../../src/core/errors/evaluator-error.js";
@@ -27,7 +28,7 @@ async function fixture(mode: "batch" | "pipeline" = "pipeline", budget = 10) {
   components.environment.materialize = async spec => spec;
   const forbidden = [vi.spyOn(components.solver, "solve"), vi.spyOn(components.environment, "prepare"),
     vi.spyOn(components.benchmark, "verify"),
-    vi.spyOn(components.scheduler, "executeReady"), vi.spyOn(components.store, "create"),
+    vi.spyOn(components.store, "create"),
     vi.spyOn(components.store, "allocate"), vi.spyOn(components.store, "updateRun"), vi.spyOn(components.reporter, "render")];
   return { ...value, root, forbidden };
 }
@@ -135,7 +136,7 @@ test.each(["batch", "pipeline"] as const)("%s enforces an explicit round deadlin
 
 test("remote schedulers without preparation initialization are rejected before downloading sources", async () => {
   const { components, config, events } = await fixture();
-  components.scheduler = { executionLocation: "remote", executeReady: components.scheduler.executeReady };
+  components.scheduler = { executionLocation: "remote" };
   await expect(warmupSelectedTasks(components, config, new AbortController().signal)).rejects.toThrow(/setupPreparation/);
   expect(events).toEqual([]);
 });
@@ -165,12 +166,12 @@ async function cliFixture() {
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const file = join(root, "experiment.yaml"), patch = join(root, "patch.yaml");
   const experiment = {
-    services: { default: { model: "unused-model", base_url: "http://model.invalid", api_key: "${WARMUP_MISSING_KEY}" } },
+    services: { default: { model: "unused-model", base_url: "http://model.invalid", apiKeyEnv: "WARMUP_MISSING_KEY" } },
     benchmark: { name: "warmup-fixture", config: {}, solver: { name: "warmup-fixture", service: "default", config: {} } },
     environment: { name: "warmup-fixture", config: {} }, scheduler: { name: "local", config: { concurrency: 2 } },
     run: { maxTasks: 1 }, output: { directory: join(root, "results") },
   };
-  await writeFile(file, JSON.stringify(experiment));
+  await writeFile(file, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: experiment }));
   await writeFile(patch, JSON.stringify([{ insert: [{ id: "warmup-fixture", name: join(import.meta.dirname, "../fixtures/warmup/plugin.mjs") }] }]));
   const events: { name: string; value: unknown }[] = [];
   (globalThis as Record<string, unknown>).__warmupEvent = (name: string, value: unknown) => { events.push({ name, value }); };
@@ -197,11 +198,11 @@ test.each([
   ["zcode", "openai-completions"],
 ])("%s warms up its runtime without model credentials", async (solver, api) => {
   const { root, file, patch, experiment, events, stdout, stderr, io } = await cliFixture();
-  await writeFile(file, JSON.stringify({
+  await writeFile(file, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
     ...experiment,
     services: { default: { ...experiment.services.default, api } },
     benchmark: { ...experiment.benchmark, solver: { name: solver, service: "default", config: {} } },
-  }));
+  } }));
   expect(await runCli(["warmup", file, "--patch", patch, "--progress", "plain"], io), stderr.join("\n")).toBe(0);
   expect(stdout).toEqual(["Image warmup: 1/1 tasks ready; 0 failed"]);
   expect(events.filter(item => item.name === "materialize").map(item => item.value)).toEqual(["a"]);
@@ -211,8 +212,8 @@ test.each([
 test("CLI returns 1 for partial warmup and redacts source credentials from its summary", async () => {
   const { file, patch, experiment, stdout, stderr, io } = await cliFixture();
   vi.stubEnv("WARMUP_TEST_TOKEN", "fixture-private-token");
-  await writeFile(file, JSON.stringify({ ...experiment, run: { onError: "continue" },
-    environment: { name: "warmup-fixture", config: { failTask: "b" } } }));
+  await writeFile(file, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { ...experiment, run: { onError: "continue" },
+    environment: { name: "warmup-fixture", config: { failTask: "b" } } } }));
   expect(await runCli(["warmup", file, "--patch", patch], io)).toBe(1);
   expect(stdout[0]).toBe("Image warmup: 2/3 tasks ready; 1 failed");
   expect(stdout).toHaveLength(2);
@@ -223,8 +224,8 @@ test("CLI returns 1 for partial warmup and redacts source credentials from its s
 
 test("observer failure cancels image preparation and still releases plugins", async () => {
   const { file, patch, events } = await cliFixture();
-  await expect(executeWarmup({ configPath: file, patchPath: patch, signal: new AbortController().signal,
-    onProgress(event) { if (event.phase === "prepare") throw new Error("observer failed"); } })).rejects.toThrow("observer failed");
+  await expect(warmupWorkflow({ configPath: file, patchPath: patch, signal: new AbortController().signal,
+    onEvent(event) { if (event.progress?.phase === "prepare") throw new Error("observer failed"); } })).rejects.toThrow("observer failed");
   expect(events.at(-1)?.name).toBe("dispose");
 });
 

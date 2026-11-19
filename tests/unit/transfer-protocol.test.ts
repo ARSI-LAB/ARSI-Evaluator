@@ -18,6 +18,13 @@ test("remote uploads preserve current outcome, readiness and task evidence", () 
   expect(validateUploadManifest(JSON.parse(JSON.stringify(value)))).toEqual(value);
 });
 
+test("remote uploads include the attempt workflow snapshot without admitting its locks or other files", () => {
+  const file = { path: "workflow/run.json", size: 12, sha256: "a".repeat(64) };
+  expect(validateUploadManifest({ ...upload(), files: [file] }).files).toEqual([file]);
+  for (const path of ["workflow/.workflow.lock", "workflow/credentials.json", "workflow/run.json/nested", "workflow/../run.json"])
+    expect(() => validateUploadManifest({ ...upload(), files: [{ ...file, path }] })).toThrow(/path/);
+});
+
 test("remote uploads retain attempt accounting", () => {
   const value = upload();
   value.result.accounting = { usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 }, cost: null, currency: null, complete: true };

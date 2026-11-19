@@ -10,11 +10,11 @@ import { AgentXBenchmark, parseAgentXConfig } from "../../src/plugins/benchmarks
 import { AgentXPerformanceMetrics } from "../../src/plugins/metrics/agentx-performance.js";
 import { normalizeAgentXExport } from "../../src/plugins/benchmarks/inference-engine/agentx/evidence/summary.js";
 import { lockAgentXLexicon } from "../../src/runtimes/agentx/runtime.js";
-import { runEngine } from "../../src/application/run-engine.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { planResume } from "../../src/core/recovery/resume.js";
-import { saveReport, rebuildReport } from "../../src/application/report/index.js";
+import { saveReport } from "../../src/plugins/workflows/benchmark/report.js";
 import { MarkdownReporter } from "../../src/plugins/reporters/markdown.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
 import { storeRun } from "../fixtures/results/store-fixture.js";
@@ -110,14 +110,14 @@ test("performance payload survives public projection; timeout remains incomplete
     await new Promise<void>((_resolve, reject) => context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true }));
     throw new Error("unreachable");
   };
-  const result = await runEngine({ ...value, signal: signal() });
+  const result = await runBenchmarkFixture({ ...value, signal: signal() });
   expect(result.run.evaluationKind).toBe("performance");
   expect(result.records[0]).toMatchObject({ scoreStatus: "not-applicable", executionStatus: "failed", verdict: null });
   expect(planResume(result.run, await value.components.store.listAttempts(), result.run.configFingerprint).restartTaskIds).toEqual(["a"]);
   value.components.solver.solve = async () => ({ finalText: "measured", usage: { inputTokens: null, outputTokens: null, totalTokens: null }, observations: {} });
   await value.components.store.close();
   value.config.experiment.run.timeoutSeconds = 1;
-  const resumed = await runEngine({ ...value, signal: signal(), resumeDirectory: join(value.config.experiment.output.directory, result.run.runId) });
+  const resumed = await runBenchmarkFixture({ ...value, signal: signal(), resumeDirectory: join(value.config.experiment.output.directory, result.run.runId) });
   expect(resumed.records[0]).toMatchObject({ executionStatus: "completed", scoreStatus: "not-applicable", verdict: { passed: null } });
   expect(planResume(resumed.run, await value.components.store.listAttempts(), resumed.run.configFingerprint).restartTaskIds).toEqual([]);
 });
@@ -164,7 +164,8 @@ test.each(["none", "v1", "v2", "custom-duration"] as const)("offline reporting r
   const originalReport = await readFile(join(directory, "report.md"), "utf8");
   await value.components.store.close();
   vi.stubEnv("MODEL_API_KEY", undefined); vi.stubEnv("PYTHON_BIN", "missing-python");
-  await rebuildReport(directory);
+  await value.components.store.open(directory);
+  await saveReport(value.components.store, [new AgentXPerformanceMetrics()], new MarkdownReporter());
   expect(await readFile(join(directory, "metrics.json"), "utf8")).toBe(originalMetrics);
   expect(await readFile(join(directory, "report.md"), "utf8")).toBe(originalReport);
   expect(originalReport).not.toContain("fixture-key");
@@ -183,14 +184,14 @@ test("an explicit Agent timeout code still cannot create a zero-scored performan
   value.components.benchmark.verify = async () => ({ passed: null, details: {} });
   value.components.solver.solve = async () => { throw new EvaluatorError("SOLVER_AGENT_TIMEOUT", "controlled timeout"); };
   value.config.experiment.run.taskIds = ["a"];
-  const result = await runEngine({ ...value, signal: signal() });
+  const result = await runBenchmarkFixture({ ...value, signal: signal() });
   expect(result.records[0]).toMatchObject({ executionStatus: "failed", scoreStatus: "not-applicable", verdict: null });
 });
 
 test("dry-run rejects overlapping measurement points before source or Python I/O", async () => {
   const path = await root(), file = join(path, "invalid.yaml");
-  await writeFile(file, stringify({ services: { default: { model: "fixture/model", base_url: "http://localhost:8000", api_key: "${AGENTX_TEST_KEY}" } },
-    benchmark: "agentx", scheduler: { name: "local", concurrency: 2 } }));
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture/model", base_url: "http://localhost:8000", apiKeyEnv: "AGENTX_TEST_KEY" } },
+    benchmark: "agentx", scheduler: { name: "local", concurrency: 2 } } }));
   vi.stubEnv("AGENTX_TEST_KEY", "controlled-key");
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected source I/O"));
   const messages: string[] = [];
@@ -204,9 +205,9 @@ test("dry-run rejects overlapping measurement points before source or Python I/O
 
 test.each(["local", "docker"])("dry-run accepts %s host NPU sampling without starting a sampling session", async environment => {
   const path = await root(), file = join(path, "local-telemetry-docker.yaml");
-  await writeFile(file, stringify({ services: { default: { model: "fixture/model", base_url: "http://localhost:8000", api_key: "${AGENTX_TEST_KEY}" } },
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture/model", base_url: "http://localhost:8000", apiKeyEnv: "AGENTX_TEST_KEY" } },
     benchmark: { name: "agentx", solver: { config: { telemetry: { ascend: { mode: "local", devices: [{ deviceId: 4 }] } } } } },
-    environment }));
+    environment } }));
   vi.stubEnv("AGENTX_TEST_KEY", "controlled-key");
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected source I/O"));
   const messages: string[] = [];

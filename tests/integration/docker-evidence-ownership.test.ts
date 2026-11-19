@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { RunComponents } from "../../src/core/contracts/components.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
 import { DockerEnvironment } from "../../src/plugins/environments/docker/environment.js";

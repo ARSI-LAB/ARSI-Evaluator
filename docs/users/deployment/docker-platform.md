@@ -1,5 +1,7 @@
 # Docker Target Platforms
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./docker-platform.zh-CN.md)
 
 ```yaml

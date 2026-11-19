@@ -1,3 +1,4 @@
+import { registerNativeResource } from "../../workflows/benchmark/component-resource.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { DefinedBenchmark } from "./definitions/defined-benchmark.js";
 import { DEFINED_BENCHMARKS } from "./definitions/index.js";
@@ -17,11 +18,11 @@ import { OfficeQAProV2Benchmark, parseOfficeQAProV2Config } from "./definitions/
 
 export async function apply(ctx: Context): Promise<void> {
   for (const profile of await readProfileDirectory(new URL("./profiles/", import.meta.url))) ctx.evaluator.registerProfile(profile);
-  ctx.evaluator.register("benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
+  registerNativeResource(ctx, "benchmark", "officeqa-pro-v2", parseOfficeQAProV2Config, (config, runtime) =>
     new OfficeQAProV2Benchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir),
       ...(config.localPath === undefined ? {} : { localPath: runtime.resolvePath(config.localPath) }) }, undefined, undefined, runtime.network, runtime.imageConfigFingerprint),
     { nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" }, secretFields: ["hfToken"], validate: rejectLocalDatasetTransport });
-  ctx.evaluator.register("benchmark", "drop", value => {
+  registerNativeResource(ctx, "benchmark", "drop", value => {
     const config = expectRecord(value, "drop");
     rejectUnknown(config, ["cacheDir", "localPath"], "drop");
     return { cacheDir: expectNonEmptyString(config.cacheDir ?? ".cache/drop", "drop.cacheDir"), ...localDatasetConfig(config) };
@@ -32,7 +33,7 @@ export async function apply(ctx: Context): Promise<void> {
   }, runtime.network) : new LocalZipJsonSource(runtime.resolvePath(config.localPath), {
     train: "drop_dataset/drop_dataset_train.json", test: "drop_dataset/drop_dataset_dev.json",
   }), { network: runtime.network, dockerExecutable: "docker" }), { nodeLocal: { cacheDir: "cache" }, validate: rejectLocalDatasetTransport });
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "benchmark",
     "harbor",
     parseHarborConfig,
@@ -44,7 +45,7 @@ export async function apply(ctx: Context): Promise<void> {
     const name = definition.name;
     const requiresJudge = ["healthbench", "simpleqa", "math500"].includes(name);
     const supportsSolveNetwork = name === "mmlu_pro";
-    ctx.evaluator.register(
+    registerNativeResource(ctx,
       "benchmark",
       name,
       (value: unknown) => {

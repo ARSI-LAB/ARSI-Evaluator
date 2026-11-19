@@ -54,11 +54,11 @@ AgentX 的 evidence 只读取保存结果，依赖链不加载安装器、采样
 
 单元测试放 tests/unit，跨组件流程和注册/配置/续跑测试放 tests/integration，可复用输入放 tests/fixtures。至少验证正常、失败、取消、资源释放和离线报告；真实 Docker、Ray、NPU 或模型验收单独记录，不能用 Mock 结果代替。
 
-## 未来记忆评测的接口边界
+## 记忆与自定义流程的入口
 
-可能的流程是“环境就绪 → 写入历史 → 提问 → 验证 → 清理”。历史解释、写入顺序和评分属于 Benchmark，公开问题由 Solver 执行，核心负责超时、取消、记录与释放。样本内多轮状态和跨样本共享状态需要分别明确隔离与恢复要求。
+需要“写入历史 → 查询记忆 → 调用应用 → 评分”的流程时，直接使用[步骤和资源插件](workflow-plugins.md)，不必实现 Benchmark。记忆服务由资源提供者管理，样例状态通常按 attempt 隔离；步骤通过显式输入输出连接。`memory.evaluate` 提供可编辑示例，用户可替换记忆实现或插入应用步骤。
 
-当前 Benchmark.prepare() 在环境创建前执行，不能直接初始化已经运行的记忆服务；现有多步任务还有 bash setup.sh 初始化约定。现有接口不能任意增加新的生命周期阶段。实际需求超出这些边界时，先设计明确的契约，再修改执行和调度流程。本仓库没有为未来记忆评测增加空 hook、通用工作流 DSL 或占位服务。
+已有 Benchmark 的 `prepare()` 仍在环境创建前执行；其私有验证材料不能交给 Solver。若保留题库能力并增加前后处理，可导出 `benchmark.evaluate` 的完整流程修改步骤和绑定。
 
 ## 完整 Benchmark 接口
 
@@ -75,7 +75,7 @@ AgentX 的 evidence 只读取保存结果，依赖链不加载安装器、采样
 
 任务要求的平台和资源填写到 [EnvironmentSpec](../../src/core/contracts/environment.ts) 的 `platform`、`resources`。`phaseTimeoutSeconds.solve`、`.verify` 只表示执行阶段上限；`preparationTimeoutSeconds.solve`、`.verify` 分别表示两个环境的准备基础时限。`planRun()` 返回任务及 `preparation.defaultTimeoutSeconds`，Scheduler 提供本节点有效准备并发，公共准备函数按基础值乘 `min(C, 10)` 计时，默认不设置整轮上限。外部 Scheduler 调用准备回调时，通过 `TaskPreparationContext` 传入 `concurrency`、`defaultTimeoutSeconds`、`roundSignal` 及可选 `environmentTimeoutSeconds`；共享描述工作使用 roundSignal，单任务阶段使用自己的信号。相关配置见[环境准备时限](../users/config.zh-CN.md#环境准备时限)。
 
-可选 `validateRun(config)` 只做跨组件配置检查，bootstrap、dry-run 和 engine 都调用它；不得分配资源。`discloseAnswer()` 用于受控答案证据，不改变 Solver 的公开输入；`validateSourceOnCompletedResume` 用于已完成运行恢复时仍需检查来源的实现。
+可选 `validateRun(config)` 只做跨组件配置检查，Benchmark 资源在诊断、预览和运行装配时调用它；不得分配资源。`discloseAnswer()` 用于受控答案证据，不改变 Solver 的公开输入；`validateSourceOnCompletedResume` 用于已完成运行恢复时仍需检查来源的实现。
 
 ## Evaluator 定义题目转换与评分
 
@@ -128,7 +128,7 @@ Definition 需要额外验证进程时，可通过 `verificationRuntime(context)
 | Benchmark.verify / Verifier | Benchmark 解释答案或测量证据；独立 Verifier 负责其私有执行环境的验证协议，不负责调度和存储 |
 | Metrics / Reporter | 只从 ResultSnapshot 离线计算；工厂上下文只有 configDirectory/resolvePath，不提供模型认证 |
 
-一个命令持有一个 Registry，在配置和装配间显式共享；独立 loadConfig/bootstrap 调用持有自己的生命周期。所有选中组件先校验，再调用工厂。资源由创建它的 Cordis effect、Session 或 PreparedSolver 释放，失败和取消也遵循同一规则。
+一个命令持有一个 Registry，在配置和装配间显式共享；每次工作流应用操作管理自己的注册表生命周期。所有选中组件先校验，再调用工厂。资源由创建它的 Cordis effect、Session 或 PreparedSolver 释放，失败和取消也遵循同一规则。
 
 所有 I/O、子进程和容器操作都要传递并响应 `AbortSignal`。仅用 Promise 超时停止等待，不能保证底层工作停止；取消后必须停止写入、回收资源，不能把仍在写入的目录交给后续任务。长同步计算要避免阻塞事件循环，否则取消信号无法及时处理。
 

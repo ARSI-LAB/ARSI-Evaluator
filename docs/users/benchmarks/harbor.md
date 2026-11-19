@@ -1,5 +1,7 @@
 # Integrating Harbor Datasets Through Configuration
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./harbor.zh-CN.md)
 
 Harbor evaluates task directories containing instructions, environment declarations, and verification entry points. This guide covers custom sources, image selection, networking, and file delivery. See [WorkBuddy](workbuddy.md) for scenarios and judge requirements.

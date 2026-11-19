@@ -1,3 +1,4 @@
+import { createNativeResource } from "arsi-evaluator";
 import "../fixtures/network-fetch.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,7 +47,7 @@ test("DefinedBenchmark loads locked JSONL tasks, scores answers, and resumes fro
       resolvePath(path: string) { return join(root, path); },
     };
     const selection = { name: "math500", config: { cacheDir: "dataset-cache", judgeService: "judge" } };
-    const benchmark = await context.evaluator.create("benchmark", selection, runtime);
+    const benchmark = await createNativeResource(context, "benchmark", selection, runtime);
     expect(benchmark).toBeInstanceOf(DefinedBenchmark);
 
     const signal = new AbortController().signal;
@@ -72,7 +73,7 @@ test("DefinedBenchmark loads locked JSONL tasks, scores answers, and resumes fro
     expect(wrong.details).not.toHaveProperty("expected");
 
     vi.stubGlobal("fetch", () => { throw new Error("Resume unexpectedly requested remote data"); });
-    const resumed = await context.evaluator.create("benchmark", selection, runtime);
+    const resumed = await createNativeResource(context, "benchmark", selection, runtime);
     expect(await resumed.resolveSource(lock, signal)).toEqual(lock);
     expect((await resumed.prepare(refs[1]!, lock, signal)).input.prompt).toContain("What is two plus three?");
   } finally {

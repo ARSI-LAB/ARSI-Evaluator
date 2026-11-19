@@ -14,7 +14,7 @@ HEADER = "Step Id,Device_id,Stream ID,Name,Start Time(us),Duration(us)\n"
 class TimingEvidenceTest(unittest.TestCase):
     def fixture(self):
         import json
-        return json.loads((root / "tests/fixtures/kernel-timing-flow.json").read_text())
+        return json.loads((Path(__file__).resolve().parents[1] / "fixtures/kernel-timing-flow.json").read_text())
 
     def collect(self, csv=None, trace=None):
         fixture = self.fixture()
@@ -116,7 +116,7 @@ class TimerCaptureTest(unittest.TestCase):
                     self.assertIn(0, profile.kwargs['activities'])
                     import json
                     name = 'kernel-timing-prepared.json' if prepared else 'kernel-timing-flow.json'
-                    fixture = json.loads((root / 'tests/fixtures' / name).read_text())
+                    fixture = json.loads((Path(__file__).resolve().parents[1] / 'fixtures' / name).read_text())
                     if triton_only:
                         lines = fixture['csv'].splitlines()
                         fixture['csv'] = lines[0] + ',Type\n' + ''.join(line + ',Triton\n' for line in lines[1:])

@@ -1,3 +1,4 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { createServer } from "node:http";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -157,18 +158,17 @@ test.skipIf(!enabled("docker"))("Claude Code uses Bash and scores its file throu
       "dataset/tasks/claudecode/instruction.md": "Write answer to /workspace/result.txt.",
       "dataset/tasks/claudecode/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
     });
-    await writeFile(configPath, JSON.stringify({
-      services: { fixture: { model, base_url: fixture.endpoint, api: "anthropic-messages", api_key: "${CLAUDE_FIXTURE_KEY}" } },
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+      services: { fixture: { model, base_url: fixture.endpoint, api: "anthropic-messages", apiKeyEnv: "CLAUDE_FIXTURE_KEY" } },
       benchmark: { name: "harbor", config: { source: { kind: "local", path: "./dataset" } },
         solver: { name: "claudecode", service: "fixture" } },
       environment: "docker",
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 900, roundTimeoutSeconds: 900 } },
-      output: { directory: "./results" },
+  }
     }));
     const networkConfigPath = process.env.EVALUATOR_CLAUDECODE_TEST_NETWORK;
-    const result = await new Evaluator().run({ configPath, env: { CLAUDE_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
-      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) });
-    if (result.kind !== "local") throw new Error("Expected evaluation on the local scheduler");
+    const result = await readBenchmarkResult(await new Evaluator().run({ configPath, env: { CLAUDE_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
+      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) }));
     const [attempt] = result.snapshot.records;
     expect(fixture.requests).toHaveLength(2);
     for (const request of fixture.requests) expect(request).toMatchObject({ model, authenticated: true });

@@ -180,7 +180,7 @@ export async function buildPlugins(root = fileURLToPath(new URL("..", import.met
   for (const plugin of await loadManifests()) {
     const built = await buildPlugin(plugin, version);
     if (built === undefined) continue;
-    operations.push(...built.operations);
+    if (plugin.manifest.bundled !== false) operations.push(...built.operations);
     records.push(built.record);
   }
   await writeFile(join(distRoot, "bundled-plugins.patch.yaml"), stringify(operations));

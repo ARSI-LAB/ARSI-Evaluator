@@ -37,6 +37,7 @@ export class TracerStore implements RunStore {
   ) {
     this.mirror = new MirrorQueue(MIRROR_BUDGET_BYTES, message => warn(message, "warning"));
     if ("controlDirectory" in inner) Object.defineProperty(this, "controlDirectory", { get: () => inner.controlDirectory });
+    if (inner.readAttemptEvidence) this.readAttemptEvidence = inner.readAttemptEvidence.bind(inner);
     if (inner.currentTaskResult) this.currentTaskResult = inner.currentTaskResult.bind(inner);
     if (inner.updateRemoteAttempt) this.updateRemoteAttempt = inner.updateRemoteAttempt.bind(inner);
     const importAttempt = inner.importAttempt?.bind(inner);
@@ -54,6 +55,7 @@ export class TracerStore implements RunStore {
   }
 
   declare readonly controlDirectory?: string;
+  readAttemptEvidence?: NonNullable<RunStore["readAttemptEvidence"]>;
   currentTaskResult?: (taskId: string) => Promise<AttemptRecord | null>;
   importAttempt?: (record: AttemptRecord, files: FileManifest, sourceRoot: string) => Promise<boolean>;
   updateRemoteAttempt?: (update: RemoteAttemptUpdate) => Promise<void>;

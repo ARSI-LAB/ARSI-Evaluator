@@ -1,5 +1,7 @@
 # Choosing Solvers and Model Services
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./solvers.zh-CN.md)
 
 Benchmarks define tasks and scoring; solvers define model requests and agent execution. Start ordinary agent tasks with default SimpleAgent. MMLU and AgentX have dedicated defaults. Check configuration and start a new run after changes.
@@ -117,22 +119,26 @@ Select one solving path per configuration. EnvironmentSession represents executi
 This complete two-task example declares both the evaluated model and a judge:
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-  judge:
-    model: ${JUDGE_NAME}
-    base_url: ${JUDGE_ENDPOINT}
-    api_key: ${JUDGE_API_KEY}
-benchmark:
-  name: simpleqa
-  config:
-    judgeService: judge
-environment: local
-run:
-  maxTasks: 2
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+    judge:
+      model: ${JUDGE_NAME}
+      base_url: ${JUDGE_ENDPOINT}
+      apiKeyEnv: JUDGE_API_KEY
+  benchmark:
+    name: simpleqa
+    config:
+      judgeService: judge
+  environment: local
+  run:
+    maxTasks: 2
+
 output:
   directory: ./results/simpleqa
 ```
@@ -422,21 +428,25 @@ JiuwenSwarm disables its inner sandbox and approval prompts. The main agent and 
 Follow [source installation](installation.md#install-from-source) to prepare Evaluator. pnpm installs the AgentBundle SDK automatically, without a sibling source repository. `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**, supplied separately rather than the SDK installation path. See the [AgentBundle project](https://github.com/ARSI-LAB/agentbundle) for concepts, CLI usage and examples, and its [bundle authoring guide](https://github.com/ARSI-LAB/agentbundle/blob/master/docs/bundle-formats.md) for harness-specific layouts, manifests and validation.
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: agentbundle
-    config:
-      path: ${AGENT_BUNDLE_PATH}
-environment: local
-run:
-  maxTasks: 2
-  timeoutSeconds: 900
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: agentbundle
+      config:
+        path: ${AGENT_BUNDLE_PATH}
+  environment: local
+  run:
+    maxTasks: 2
+    timeoutSeconds: 900
+
 output:
   directory: ./results/gsm8k-agentbundle
 ```
@@ -473,24 +483,28 @@ A single warmup may include both Dockerfile `FROM` pulls and explicit acquisitio
 Dify is an AgentBundle harness. Prepare a bundle declaring `harness.name: dify` and use this text-task configuration:
 
 ```yaml
-services:
-  default:
-    model: dify-internal-binding
-    base_url: http://127.0.0.1:9/v1
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: agentbundle
-    config:
-      path: ${DIFY_BUNDLE_PATH}
-      dify:
-        baseUrl: ${DIFY_BASE_URL}
-        registryPath: ${DIFY_REGISTRY_PATH}  # optional
-environment: local
-run:
-  maxTasks: 2
-  timeoutSeconds: 900
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: dify-internal-binding
+      base_url: http://127.0.0.1:9/v1
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: agentbundle
+      config:
+        path: ${DIFY_BUNDLE_PATH}
+        dify:
+          baseUrl: ${DIFY_BASE_URL}
+          registryPath: ${DIFY_REGISTRY_PATH}  # optional
+  environment: local
+  run:
+    maxTasks: 2
+    timeoutSeconds: 900
+
 output:
   directory: ./results/gsm8k-dify
 ```

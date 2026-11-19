@@ -1,5 +1,7 @@
 # 评分规则与参考
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./scoring.md) | 中文
 
 执行完成、分数、二元正确性和资源清理表达不同事实。质量结果的 score 可缺省；passed:null 表示没有测量二元正确性，可以同时有连续分数。性能结果必须 passed:null 且不含 score。无分数不能补为零，无正确性不能虚构通过阈值。
@@ -101,19 +103,22 @@ DROP 提示词要求使用 `Answer:`，多个 span 用 JSON 字符串数组表�
 ## 独立 Judge
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-  judge:
-    model: ${JUDGE_NAME}
-    base_url: ${JUDGE_ENDPOINT}
-    api_key: ${JUDGE_API_KEY}
-benchmark:
-  name: healthbench
-  config:
-    judgeService: judge
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+    judge:
+      model: ${JUDGE_NAME}
+      base_url: ${JUDGE_ENDPOINT}
+      apiKeyEnv: JUDGE_API_KEY
+  benchmark:
+    name: healthbench
+    config:
+      judgeService: judge
 ```
 
 Judge 不自动绑定被测模型。可以显式填写 default 复用同一服务，但该选择会进入保存配置和结果证据。认证值不会写入结果；裁判模型/协议身份、Prompt 哈希及解释保存在 verdict.details 中。

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,8 +84,8 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       "dataset/tasks/trae/instruction.md": "Write answer to /workspace/result.txt.",
       "dataset/tasks/trae/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\ntest \"$(cat " + outsideFile + ")\" = " + marker + "\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
     });
-    await writeFile(configPath, JSON.stringify({
-      services: { selected: { model, base_url: fixture.endpoint, api: "openai-responses", api_key: "${TRAE_FIXTURE_KEY}" } },
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+      services: { selected: { model, base_url: fixture.endpoint, api: "openai-responses", apiKeyEnv: "TRAE_FIXTURE_KEY" } },
       benchmark: {
         name: docker ? "harbor" : "gpqa",
         config: docker ? { source: { kind: "local", path: "./dataset" } } : { localPath: "./gpqa.csv" },
@@ -92,12 +93,11 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       },
       environment,
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 900, roundTimeoutSeconds: 900 } },
-      output: { directory: "./results" },
+  }
     }));
     const networkConfigPath = process.env.EVALUATOR_TRAE_TEST_NETWORK;
-    const result = await new Evaluator().run({ configPath, env: { TRAE_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
-      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) });
-    if (result.kind !== "local") throw new Error("Expected evaluation on the local scheduler");
+    const result = await readBenchmarkResult(await new Evaluator().run({ configPath, env: { TRAE_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
+      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) }));
     const [attempt] = result.snapshot.records;
     if (!attempt) throw new Error("Missing attempt");
     expect(attempt, JSON.stringify(attempt.errors)).toMatchObject({

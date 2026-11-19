@@ -7,7 +7,7 @@ import { expect, test } from "vitest";
 import { readProcess } from "../../src/infrastructure/process/output.js";
 import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
 import type { EnvironmentSpec } from "../../src/core/contracts/environment.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { DockerEnvironment } from "../../src/plugins/environments/docker/environment.js";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";

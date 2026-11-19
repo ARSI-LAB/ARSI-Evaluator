@@ -1,3 +1,4 @@
+import { nativeResourceTransport } from "arsi-evaluator";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import {
@@ -20,7 +21,7 @@ const base = {
 let registry: PluginRegistry;
 beforeAll(async () => { registry = await openPluginRegistry(); });
 afterAll(async () => { await registry?.dispose(); });
-const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
 
 test.each([undefined, true, false])("Ray carries phase limits and scoreAfterSolveTimeout %j", scoreAfterSolveTimeout => {
   const config = resolveConfig("experiment.yaml", { services: { default: { model: "fixture", base_url: "https://model.invalid" } },

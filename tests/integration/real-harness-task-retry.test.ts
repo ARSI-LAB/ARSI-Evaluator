@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, test } from "vitest";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { consumeDsh } from "../../src/runtimes/dsh/protocol.js";
 import { consumeJiuwenswarm } from "../../src/runtimes/jiuwenswarm/protocol.js";
 import { dshModelPatch, dshPermissionPatch } from "../../src/runtimes/dsh/model.js";
@@ -115,7 +115,7 @@ async function exercise(solver: Solver, fault: Fault) {
     }
   };
   try {
-    const result = await runEngine({ ...value, signal: AbortSignal.timeout(240_000), onProgress: event => {
+    const result = await runBenchmarkFixture({ ...value, signal: AbortSignal.timeout(240_000), onProgress: event => {
       if (event.phase === "retry") retries.push(event.message);
     } });
     const attempts = await value.components.store.listAttempts();

@@ -1,5 +1,7 @@
 # Daily Operations
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./usage.zh-CN.md)
 
 Start with the [two-question quick start](quick-start.md). This guide uses first-run.yaml. Merge fragments into existing fields; do not duplicate run:/benchmark: blocks.
@@ -170,7 +172,7 @@ arsi-evaluator run first-run.yaml --resume <RUN_ID>
 arsi-evaluator report results/first-run/<RUN_ID>
 ```
 
-Without ID, Evaluator finds resumable history; explicit IDs avoid mistakes. Evaluator code may be updated and rebuilt before resuming, with no extra flag; unfinished or invalid tasks use the updated code. Sources, experiment configuration, external plugins, candidate bundles, and harness versions must still match. Model/selection/preparation/concurrency changes need new runs.
+Without an ID, the output directory must contain exactly one existing run. Resume requires matching plans, implementation fingerprints, sources, models, and selection. Changed steps, plugins, models, or selected cases require a new run.
 
 When running from a source checkout, run `pnpm build` from the repository root after changing Evaluator code, then run the resume command. The CLI uses the build output in `dist/`; without rebuilding, it still runs the old code:
 
@@ -179,7 +181,7 @@ pnpm build
 arsi-evaluator run first-run.yaml --resume <RUN_ID>
 ```
 
-Resume no longer compares historical and current digests for the Evaluator package, builtin runtime, solver installation assets, or AgentX bridge code. The original manifest retains its version and solver provenance records; the scheduler receives the current code/runtime identity for this session. With Ray, the client, coordinator, and execution nodes must still deploy the same current version. Saved-result format validation and execution-mode compatibility checks still apply.
+Saved plugin sources and implementation fingerprints are checked on resume. Ray clients, coordinators, and workers must use matching packages and plugins. Direct resume of old native-manifest-only directories without workflow plan.json/run.json is unsupported; keep those results and use the original version for historical reports or start a new workflow run.
 
 Resume recovers cleanup first, then creates attempts for unfinished/invalid tasks. Valid results, including valid agent-timeout zeros, skip solving. Failed AgentX points rerun wholly rather than continuing requests.
 
@@ -191,7 +193,7 @@ Tasks shows saved solve/verify actual seconds with two decimals. Solve includes 
 
 Markdown reports show overview, scores, durations, model usage, current task results, and errors. They omit costs, historical attempts, rounds, and metric-field reference text. Saved data computes metrics without model-generated analysis; missing usage/timing stays unknown. Full/raw cost data remains metrics.json/manifest/task/trajectory JSON.
 
-New runs create new IDs with root report.md/metrics.json. Explicit resume retains IDs but writes `reports/resume-1/`,resume-2/; initial reports go to reports/initial/. Root always reflects latest, with `reports/current.json` pointing to current resume reports. Automatic retries during resume, standalone `retry`, and offline `report` update current reports without new directories. Existing revision-N history remains but no new revisions are created. Evidence links reference original task files.
+New runs create new IDs and a root report.md. Report plugins save metrics and task attachments. Explicit resume keeps the ID and stores history in reports/initial and reports/resume-N. Automatic retries, standalone retry, and report update the current report without a new resume history.
 
 ## Read Results
 
@@ -202,17 +204,21 @@ New runs create new IDs with root report.md/metrics.json. Explicit resume retain
 Each run has a directory; attempts remain separate:
 
 ```text
-results/first-run/<RUN_ID>/
-├── report.md                 # Report to open first
-├── metrics.json              # Computed metrics
-├── manifest.json             # Status, selection, sources, and versions
-├── config.yaml               # Internal execution configuration, without credential values
-└── tasks/<task-directory>/attempts/<ATTEMPT_ID>/
-    ├── result.json           # Attempt execution, scoring, and cleanup
-    ├── files.json            # Evidence file manifest
-    ├── agent/                # Sessions, trajectories, process output
-    ├── verifier/             # Verification evidence
-    └── artifacts/            # Collected raw artifacts, possibly archived
+results/<RUN_ID>/
+├── plan.json
+├── run.json
+├── report.md
+├── reports/
+├── artifacts/
+└── benchmark-evidence/<RUN_ID>/
+    ├── manifest.json
+    ├── config.yaml
+    └── tasks/<task-key>/attempts/<ATTEMPT_ID>/
+        ├── result.json
+        ├── files.json
+        ├── agent/
+        ├── verifier/
+        └── artifacts/
 ```
 
 Task directories may be hashed. Locate through report links/result task IDs, not assumed original-ID directory names.

@@ -13,6 +13,12 @@ import { verifyPackageDirectory } from "./dist/infrastructure/provenance/package
 import { createPiRuntimeInstallation } from "./dist/runtimes/pi/package-runtime.js";
 import { piAgentBundleRuntimeInstallation } from "./dist/runtimes/pi/agentbundle-runtime.js";
 
+import { WorkflowTransferSession } from "./dist/infrastructure/ray/workflow-transfer.js";
+import { workflowDigest } from "./dist/core/workflow/values.js";
+import { workflowDispatchFingerprint } from "./dist/core/workflow/unit-request.js";
+import { LocalWorkflowStore } from "./dist/plugins/stores/workflow-local.js";
+import { readPreparedTask } from "./dist/infrastructure/ray/preparation-receipt.js";
+
 const root = process.cwd(), checks = [], skipped = [];
 function record(message) { checks.push(message); console.log(message); }
 const dir = join(root, ".validation");
@@ -37,7 +43,8 @@ for (const { parentPath, name } of packageFiles) {
 }
 record("installed files use ARSI-Evaluator except for the ModelScope archive URL");
 const paths = ["index.js", "index.d.ts", "cli.js", "cli-runtime.js", "adapters/ray/node-worker.js",
-  "adapters/ray/jobs-entry.js", "adapters/ray/jobs-retry-entry.js", "adapters/ray/jobs-gateway.js",
+  "application/ray/workflow-worker.js", "application/ray/entries/jobs-entry.mjs", "application/ray/workflow-job.js",
+  "adapters/ray/jobs-entry.js", "adapters/ray/jobs-gateway.js",
   "adapters/ray/python/requirements.txt", "adapters/harness/pi/runner.js",
   "adapters/harness/pi/runtime-package.json", "adapters/harness/pi/runtime-lock.json",
   "adapters/harness/agentx/assets/ascend_metrics.py"];
@@ -130,12 +137,13 @@ await writeFile(network, "{}\n");
 const fixture = join(dir, "plugin.mjs"), patch = join(dir, "patch.yaml");
 await writeFile(patch, JSON.stringify([{ insert: [{ id: "distribution-fixture", name: "./plugin.mjs" }] }]));
 const config = join(dir, "experiment.yaml");
-await writeFile(config, JSON.stringify({ services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${DISTRIBUTION_MODEL_KEY}" } },
-  benchmark: { name: "cli-fixture", solver: { name: "cli-fixture" } }, environment: "local", output: { directory: "./results" } }));
+await writeFile(config, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+  services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "DISTRIBUTION_MODEL_KEY" } },
+  benchmark: { name: "cli-fixture", solver: { name: "cli-fixture" } }, environment: "local" } }));
 const result = await new api.Evaluator().run({ configPath: config, patchPath: patch, networkConfigPath: network,
   env: { DISTRIBUTION_MODEL_KEY: "controlled-model-key" } });
 assert.equal(result.exitCode, 0);
-await api.rebuildReport(result.runDirectory);
+await new api.Evaluator().report(result.runDirectory);
 record("package-name SDK, patch, evaluation and offline report");
 
 // Jobs inputs must be consumed even when validation fails; mere module loading cannot pass.
@@ -145,14 +153,9 @@ await mkdir(security, { recursive: true });
 await writeFile(join(jobsRoot, jobId, "input.json"), JSON.stringify({ operation: "invalid-operation" }));
 const jobsEnv = { EVALUATOR_JOBS_ROOT: jobsRoot, EVALUATOR_JOBS_SECURITY: security, EVALUATOR_NETWORK_CONFIG: network };
 const job = await run("dist/adapters/ray/jobs-entry.js", [jobId], "", jobsEnv);
-assert.equal(job.code, 1); assert.match(job.stderr, /Invalid job operation/);
+assert.equal(job.code, 1); assert.match(job.stderr, /Unsupported job submission format/);
 await assert.rejects(access(join(jobsRoot, jobId, "input.json")), { code: "ENOENT" });
-const retryAuth = join(jobsRoot, jobId, "retry-auth-request.json");
-await writeFile(retryAuth, "{}");
-const retry = await run("dist/adapters/ray/jobs-retry-entry.js", [jobId, randomUUID(), "request"], "", jobsEnv);
-assert.equal(retry.code, 1); assert.match(retry.stderr, /config.yaml/);
-await assert.rejects(access(retryAuth), { code: "ENOENT" });
-record("Jobs and retry process actual inputs, clean staged files and fail nonzero");
+record("Jobs consumes rejected input without creating an authentication file");
 
 const openssl = process.env.OPENSSL_BIN ?? "openssl";
 if (spawnSync(openssl, ["version"], { windowsHide: true }).status !== 0) {
@@ -163,10 +166,11 @@ if (spawnSync(openssl, ["version"], { windowsHide: true }).status !== 0) {
   const certificate = spawnSync(openssl, ["req", "-config", opensslConfig, "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", join(security, "key.pem"), "-out", join(security, "cert.pem"), "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1", "-addext", "basicConstraints=critical,CA:TRUE"], { windowsHide: true });
   assert.equal(certificate.status, 0, certificate.stderr.toString());
   const token = randomUUID() + randomUUID(), cert = await readFile(join(security, "cert.pem"));
-  const accepted = [];
-  const receiver = new api.DirectoryReceiver(join(dir, "received"), async manifest => { accepted.push(manifest); return true; });
-  const collector = await api.startTransferReceiver({ receiver, token, cert, key: await readFile(join(security, "key.pem")),
-    control: async route => route === "runtime" ? { services: { default: { model: { name: "fixture", endpoint: "https://fixture.invalid", api: "openai-completions", provider: null }, auth: { value: "controlled-model-key", reference: null } } } } : { cancelled: false } });
+  let transfer;
+  const collector = await api.startTransferReceiver({ token, cert, key: await readFile(join(security, "key.pem")),
+    control: async (route, input) => input.op ? transfer.handle(input) : route === "runtime"
+      ? { services: { default: { model: { name: "fixture", endpoint: "https://fixture.invalid", api: "openai-completions", provider: null }, auth: { value: "controlled-model-key", reference: null } } } }
+      : { cancelled: false } });
   const registry = await openPluginRegistry(patch);
   try {
     const nodePath = join(dir, "node.json");
@@ -177,12 +181,28 @@ if (spawnSync(openssl, ["version"], { windowsHide: true }).status !== 0) {
       source: { source: "cli-fixture", revision: "fixed", files: [], metadata: {} },
       safeConfig: { benchmark: { name: "cli-fixture", config: {} }, environment: { name: "local", config: {} }, solver: { name: "cli-fixture", service: "default", config: {} }, timeoutSeconds: 20 },
       pluginVersions: registry.pluginVersions, packageDigest: digest, uploadEndpoint: collector.url, previousAttempts: [] };
-    const worker = await run("dist/adapters/ray/node-worker.js", [], JSON.stringify({ remote, nodeId: "controlled-node", hostname: "controlled-host" }), workerEnv);
+    const plan = api.compileWorkflow(api.parseWorkflowDocument({ schemaVersion: 2, pathBase: dir,
+      workflow: { steps: [{ id: "samples", forEach: { items: { value: [{ id: "task" }] }, mode: "units" },
+        steps: [{ id: "evidence", use: "artifact.text", inputs: { text: { value: "controlled worker evidence" } } }],
+        outputs: { artifact: { ref: "evidence.outputs.artifact" } } }] } }), registry.ctx.evaluator.workflows, registry.pluginVersions);
+    const identity = { caseId: "task", variantId: "default", repetition: 0 }, identityDigest = workflowDigest(identity);
+    const item = { id: "task" }, variant = { id: "default" };
+    const assignment = { plan, runId: randomUUID(), blockPath: "workflow.samples", path: `workflow.samples[${identityDigest.slice(0, 16)}]`,
+      bindings: { item, variant, repetition: 0 }, unit: { ...identity, key: `workflow.samples:${identityDigest}`, attemptId: randomUUID(), ordinal: 1,
+        inputFingerprint: workflowDigest({ item, variant, repetition: 0, bindings: {} }), status: "running", cleanupStatus: "cleaned", outputs: {}, errors: [] } };
+    assignment.dispatchFingerprint = workflowDispatchFingerprint(assignment);
+    const storage = new LocalWorkflowStore(join(dir, "workflow-received"));
+    transfer = new WorkflowTransferSession(assignment, "controlled-node", digest, storage, new AbortController().signal);
+    const workflowJob = { schemaVersion: 3, kind: "workflow", action: "execute", nodeId: "controlled-node", uploadEndpoint: collector.url,
+      job: { runId: assignment.runId, taskId: "task", attemptId: assignment.unit.attemptId }, safeConfig: { timeoutSeconds: 20 } };
+    const worker = await run("dist/application/ray/workflow-worker.js", [], JSON.stringify({ remote: workflowJob, nodeId: "controlled-node", hostname: "controlled-host" }), workerEnv);
     assert.equal(worker.code, 0, worker.stderr + worker.stdout);
-    assert.equal(JSON.parse(worker.stdout).nodeId, "controlled-node");
-    assert.equal(accepted.length, 1); assert.equal(accepted[0].result.executionStatus, "completed");
-    assert.equal(accepted[0].result.verdict.score, 1);
-    record("legacy workerEntry executes a real attempt and uploads evidence over HTTPS");
+    assert.equal(JSON.parse(worker.stdout).completed, true);
+    assert.equal(transfer.lastSnapshot.status, "completed");
+    assert.equal(transfer.lastSnapshot.artifacts.length, 1);
+    const artifact = transfer.lastSnapshot.artifacts[0];
+    assert.equal(Buffer.from(await storage.artifacts(artifact.producer).read(artifact)).toString(), "controlled worker evidence");
+    record("workflow worker executes an assigned sample and uploads verified evidence over HTTPS");
     const batch = { ...remote, schemaVersion: 2, job: { ...remote.job, runId: randomUUID(), attemptId: randomUUID() },
       preparation: { mode: "prepare", roundId: randomUUID(), nodeId: "controlled-node", deadlineAt: null, digest: null,
         concurrency: 1, defaultTimeoutSeconds: 30, environmentTimeoutSeconds: null } };
@@ -191,22 +211,16 @@ if (spawnSync(openssl, ["version"], { windowsHide: true }).status !== 0) {
     assert.equal(ready.code, 0, ready.stderr + ready.stdout);
     const { preparationDigest } = JSON.parse(ready.stdout);
     assert.match(preparationDigest, /^[a-f0-9]{64}$/u);
-    assert.equal(accepted.length, 1);
-    const execute = { ...batch, preparation: { ...batch.preparation, mode: "execute", digest: preparationDigest } };
-    const invalidReceipt = await run("dist/adapters/ray/node-worker.js", [],
-      workerInput({ ...execute, preparation: { ...execute.preparation, digest: "0".repeat(64) } }), workerEnv);
-    assert.equal(invalidReceipt.code, 1);
-    assert.equal(JSON.parse(invalidReceipt.stdout).errorCode, "ENV_PREPARATION_FAILED");
-    assert.equal(accepted.length, 1);
-    const preparedWorker = await run("dist/adapters/ray/node-worker.js", [], workerInput(execute), workerEnv);
-    assert.equal(preparedWorker.code, 0, preparedWorker.stderr + preparedWorker.stdout);
-    assert.equal(accepted.length, 2);
-    assert.equal(accepted[1].result.executionStatus, "completed");
-    assert.equal(accepted[1].result.verdict.score, 1);
-    record("Ray worker prepares on-node dependencies, rejects the wrong receipt and executes the ready attempt");
-    const bad = await run("dist/adapters/ray/node-worker.js", [], JSON.stringify({ remote: { ...remote, packageDigest: "sha256:" + "0".repeat(64) }, nodeId: "controlled-node", hostname: "controlled-host" }), workerEnv);
+    const receipt = { ...batch.preparation, mode: "execute", digest: preparationDigest };
+    const expected = { packageDigest: digest, configFingerprint: batch.job.configFingerprint, source: batch.source };
+    assert.equal((await readPreparedTask(join(dir, "worker"), batch.job, receipt, expected)).input.id, "task");
+    await assert.rejects(readPreparedTask(join(dir, "worker"), batch.job, { ...receipt, digest: "0".repeat(64) }, expected));
+    record("preparation worker saves a verified receipt and rejects altered evidence");
+    const removed = await run("dist/adapters/ray/node-worker.js", [], workerInput(remote), workerEnv);
+    assert.equal(removed.code, 1, "Native worker must not execute an evaluation outside a workflow");
+    const bad = await run("dist/adapters/ray/node-worker.js", [], workerInput({ ...batch, job: { ...batch.job, attemptId: randomUUID() }, packageDigest: "sha256:" + "0".repeat(64) }), workerEnv);
     assert.equal(bad.code, 1); assert.equal(JSON.parse(bad.stdout).errorCode, "SOURCE_CHANGED");
-    record("worker rejects a coordinator with a different package digest");
+    record("worker rejects native evaluation dispatch and mismatched package digests");
     const maintenance = { pluginVersions: registry.pluginVersions, packageDigest: digest, environment: { name: "distribution-maintenance", config: {} }, request: { all: true, execute: false } };
     const cleanup = await run("dist/adapters/ray/node-worker.js", ["--image-cleanup"], JSON.stringify(maintenance), workerEnv);
     assert.equal(cleanup.code, 0, cleanup.stderr); assert.equal(JSON.parse(cleanup.stdout).nodeId, "fixture-node");

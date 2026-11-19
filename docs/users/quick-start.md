@@ -23,19 +23,23 @@ arsi-evaluator init --benchmark gsm8k --output first-run.yaml
 Replace `first-run.yaml` with this complete configuration:
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark: gsm8k
-environment: local
-scheduler:
-  concurrency: 1
-run:
-  maxTasks: 2
-  timeoutSeconds: 300
+  benchmark: gsm8k
+  environment: local
+  scheduler:
+    concurrency: 1
+  run:
+    maxTasks: 2
+    timeoutSeconds: 300
+
 output:
   directory: ./results/first-run
 ```
@@ -110,7 +114,7 @@ Keep the experiment configuration unchanged and use the same YAML:
 arsi-evaluator run first-run.yaml --resume
 ```
 
-Use `--resume <RUN_ID>` to select a run explicitly. Resume skips valid saved results and creates new attempts for unfinished or invalid tasks; it does not continue at a conversation turn. Evaluator code may be updated and rebuilt before resuming. Start a new run after changing models, tasks, concurrency, or similar settings. Configuration, source, external-plugin, and solver identity checks still apply; see [resume](usage.md#resume-and-rebuild-reports).
+Use `--resume <RUN_ID>` to select a run explicitly. Resume skips valid saved results and creates new attempts for unfinished or invalid tasks; it does not continue at a conversation turn. Resume requires the same workflow plan and plugin/package implementation fingerprints; changed implementations require a new run. Start a new run after changing models, tasks, concurrency, or similar settings. Configuration, source, external-plugin, and solver identity checks still apply; see [resume](usage.md#resume-and-rebuild-reports).
 
 ## Next Steps
 

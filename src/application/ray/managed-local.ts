@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, lstat } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,27 +24,21 @@ export function resolveManagedLocalBundlePath(configDirectory: string, configure
     : resolve(configDirectory, configuredPath);
 }
 
+export function resolveManagedLocalBundles(configDirectory: string, bundles: Readonly<Record<string, string>> = {}): Record<string, string> {
+  return Object.fromEntries(Object.entries(bundles).map(([name, path]) => [name,
+    /^\.\/bundles\/[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(path) ? resolveManagedLocalBundlePath(configDirectory, path) : resolve(configDirectory, path)]));
+}
+
 export async function ensureManagedLocalCluster(
   signal: AbortSignal,
   log: (text: string) => void,
-  bundlePath?: string,
+  bundles: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   signal.throwIfAborted();
   try {
     await access(script);
   } catch (cause) {
     throw new Error("This managed local Ray playbook requires the repository checkout and scripts/ray-smoke/ensure.mjs", { cause });
-  }
-  if (bundlePath !== undefined) {
-    try {
-      const [directory, bundle] = await Promise.all([lstat(dirname(bundlePath)), lstat(bundlePath)]);
-      if (!directory.isDirectory() || directory.isSymbolicLink() || !bundle.isDirectory() || bundle.isSymbolicLink()) {
-        throw new Error("Bundle and its parent must be regular directories");
-      }
-      await access(join(bundlePath, "bundle.yaml"));
-    } catch (cause) {
-      throw new Error(`Managed local Ray AgentBundle is missing or invalid: ${bundlePath}`, { cause });
-    }
   }
   log("Checking the local Ray Jobs cluster...");
   const code = await new Promise<number | null>((resolve, reject) => {
@@ -53,7 +47,7 @@ export async function ensureManagedLocalCluster(
       stdio: "inherit",
       windowsHide: true,
       signal,
-      env: { ...process.env, EVALUATOR_BUNDLE_DIR: bundlePath === undefined ? "" : dirname(bundlePath) },
+      env: { ...process.env, EVALUATOR_BUNDLE_MOUNTS: JSON.stringify(bundles) },
     });
     child.on("error", reject);
     child.on("exit", resolve);

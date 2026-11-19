@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import type { RunStore } from "arsi-evaluator";
 import { mixedSnapshot } from "../../../tests/fixtures/results/mixed-run/fixture.js";
 import { parseCommand } from "../../../src/cli/commands.js";
@@ -10,6 +10,7 @@ import { loadCliExtensions } from "../../../src/application/plugins/cli-extensio
 import { TracerClient } from "../client.js";
 import { parseTracerConfig, parseTracerOptions } from "../config.js";
 import { TracerStore } from "../store.js";
+import { TracerService } from "../service.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -34,6 +35,8 @@ test("persisted tracer options reject literal secrets and credential-bearing end
 });
 
 test("tracer mirrors accepted remote evidence and preserves absent Store capabilities", async () => {
+  vi.stubEnv("TRACER_DB", undefined);
+  onTestFinished(() => { vi.unstubAllEnvs(); });
   await mkdir(resolve(".scratch"), { recursive: true });
   const root = await mkdtemp(resolve(".scratch/tracer-store-")); roots.push(root);
   const requests: { path: string; text: string }[] = [];
@@ -42,12 +45,13 @@ test("tracer mirrors accepted remote evidence and preserves absent Store capabil
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     requests.push({ path: request.url!, text: Buffer.concat(chunks).toString() });
     response.setHeader("content-type", "application/json");
-    response.end(request.url === "/healthz" ? '{"ok":true}' : "{}");
+    response.end(request.url === "/healthz" ? '{"ok":true,"db":"/collector/evaluations.db"}' : "{}");
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No server address");
-  const client = new TracerClient(parseTracerConfig({ url: `http://127.0.0.1:${address.port}`, autostart: false }), () => {});
+  const options = { url: `http://127.0.0.1:${address.port}`, autostart: false };
+  const client = new TracerClient(parseTracerConfig(options), () => {});
   const paths = { root, agent: join(root, "agent"), verifier: join(root, "verifier"), artifacts: join(root, "artifacts") };
   const inner: RunStore = {
     async create() {}, async open() { return mixedSnapshot.run; }, async allocate() { return paths; },
@@ -74,6 +78,8 @@ test("tracer mirrors accepted remote evidence and preserves absent Store capabil
     const files = { schemaVersion: 1 as const, files: [], missing: [] };
     expect(await store.importAttempt!(record, files, root)).toBe(false);
     expect(requests).toEqual([]);
+    const pinned = new TracerService(parseTracerConfig({ ...options, db: join(root, "another.db") }), () => {});
+    expect(await pinned.ensure()).toBe(false);
     accepted = true;
     expect(await store.importAttempt!(record, files, root)).toBe(true);
     await store.flush();

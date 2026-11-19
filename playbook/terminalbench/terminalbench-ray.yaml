@@ -1,11 +1,16 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: terminalbench
-  version: "2.0"
-scheduler:
-  name: ray
-  concurrency: 2
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: terminalbench
+    version: "2.0"
+  scheduler:
+    name: ray
+    concurrency: 2
+output:
+  directory: ../../results/terminalbench/terminalbench-ray

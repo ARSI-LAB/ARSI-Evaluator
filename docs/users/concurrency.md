@@ -1,5 +1,7 @@
 # Concurrency and Environment Preparation
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./concurrency.zh-CN.md)
 
 Local execution defaults to a pipeline: tasks start solving as soon as their environments and execution slots are ready. Preparation concurrency defaults to `scheduler.concurrency`; `run.preparation` is optional. Ray retains a batch preparation barrier. This guide explains task concurrency, preparation budgets, execution, and cleanup. Start with [two questions](quick-start.md).

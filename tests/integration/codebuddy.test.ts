@@ -1,3 +1,4 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -97,9 +98,9 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       "dataset/tasks/codebuddy/instruction.md": "Write answer to /workspace/result.txt.",
       "dataset/tasks/codebuddy/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
     });
-    await writeFile(configPath, JSON.stringify({
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
       services: { selected: { model, base_url: fixture.endpoint, api: docker ? "openai-responses" : "openai-completions",
-        api_key: "${CODEBUDDY_FIXTURE_KEY}", maxTokens: 1024, contextWindow: 65536 } },
+        apiKeyEnv: "CODEBUDDY_FIXTURE_KEY", maxTokens: 1024, contextWindow: 65536 } },
       benchmark: {
         name: docker ? "harbor" : "gpqa",
         config: docker ? { source: { kind: "local", path: "./dataset" } } : { localPath: "./gpqa.csv" },
@@ -107,12 +108,11 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       },
       environment,
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 900, roundTimeoutSeconds: 900 } },
-      output: { directory: "./results" },
+  }
     }));
     const networkConfigPath = process.env.EVALUATOR_CODEBUDDY_TEST_NETWORK;
-    const result = await new Evaluator().run({ configPath, env: { CODEBUDDY_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
-      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) });
-    if (result.kind !== "local") throw new Error("Expected evaluation on the local scheduler");
+    const result = await readBenchmarkResult(await new Evaluator().run({ configPath, env: { CODEBUDDY_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000),
+      ...(networkConfigPath === undefined ? {} : { networkConfigPath }) }));
     const [attempt] = result.snapshot.records;
     if (!attempt) throw new Error("Missing attempt");
     expect(attempt, JSON.stringify(attempt.errors)).toMatchObject({

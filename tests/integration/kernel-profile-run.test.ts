@@ -1,3 +1,4 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -25,11 +26,12 @@ async function fixture(ids: string[], selected: string[], taskTimeout: number) {
   }
   await writeFile(join(root, "manifest.json"), JSON.stringify({ tasks }));
   const configPath = join(root, "config.yaml");
-  await writeFile(configPath, JSON.stringify({
-    services: { default: { model: "unused", base_url: "http://localhost:1/v1", api_key: "${TEST_API_KEY}" } },
+  await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+    services: { default: { model: "unused", base_url: "http://localhost:1/v1", apiKeyEnv: "TEST_API_KEY" } },
     benchmark: { name: "kernel", config: { manifest: "manifest.json", operation: "profile", seeds: [0],
       timeoutSeconds: 30, profiling: { enabled: true, cacheEnabled: false, collection: "Default", roundNum: 0, msprofBin: msprof } } },
-    run: { taskIds: selected, timeoutSeconds: taskTimeout }, output: { directory: "./results" },
+    run: { taskIds: selected, timeoutSeconds: taskTimeout },
+  }
   }));
   const run = () => new Evaluator().run({ configPath, env: { TEST_API_KEY: "unused" } });
   return { root, msprof, run };
@@ -50,8 +52,7 @@ writeFileSync(join(dir, "ResourceConflictRatio.csv"), "block_id,aiv_vec_wait_rat
 writeFileSync(replay, JSON.stringify({ seed: 0, warmup: 25, inputUnmodified: true, requestedLogicalDevice: 0, logicalDevice: 0, deviceCount: 1,
   environment: { visibleDevices: "0" }, capture: { method: "mstx", range: "rsi_operator_profile", toolId: 4097, rangeId: 0, warmupCompleted: 25, callsInRange: 1 } }));
 `, { mode: 0o755 });
-  const result = await run();
-  if (result.kind !== "local") throw new Error("expected a local result");
+  const result = await readBenchmarkResult(await run());
   expect(result.snapshot.run.taskIds).toEqual(["first", "last"]);
   expect(result.snapshot.records).toHaveLength(2);
   const report = await readFile(join(result.runDirectory, "report.md"), "utf8");
@@ -79,8 +80,7 @@ process.on("SIGTERM", () => setTimeout(() => {
 }, 30));
 setInterval(() => {}, 1000);
 `, { mode: 0o755 });
-  const result = await run();
-  if (result.kind !== "local") throw new Error("expected a local result");
+  const result = await readBenchmarkResult(await run());
   expect(result.snapshot.records[0]).toMatchObject({ executionStatus: "failed", scoreStatus: "not-applicable", cleanupStatus: "cleaned", verdict: null });
   expect(result.snapshot.records[0]?.errors).toEqual(expect.arrayContaining([expect.objectContaining({ phase: "verify" })]));
   const pid = Number(await readFile(stopped, "utf8"));

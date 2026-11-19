@@ -1,16 +1,17 @@
+import { nativeResourceEntries } from "../plugins/workflows/benchmark/component-resource.js";
 import { writeFile } from "node:fs/promises";
 import { stringify } from "yaml";
 import type { PluginRegistry } from "./plugins/open-registry.js";
 import { profileChain } from "../config/profile-schema.js";
 import { resolveInput } from "../config/resolve.js";
-import type { UserConfig } from "../config/user-schema.js";
+import type { WorkflowObject } from "../core/contracts/workflow.js";
 import { expectRecord } from "../core/validation/input.js";
 import { isDeepStrictEqual } from "node:util";
 
-const service = (prefix: string) => ({ model: `\${${prefix}_NAME}`, base_url: `\${${prefix}_ENDPOINT}`, api_key: `\${${prefix}_API_KEY}` });
+const service = (prefix: string) => ({ model: `\${${prefix}_NAME}`, base_url: `\${${prefix}_ENDPOINT}` });
 
 export function benchmarkNames(registry: PluginRegistry): string[] {
-  return [...new Set([...registry.ctx.evaluator.entries().filter(item => item.role === "benchmark").map(item => item.name),
+  return [...new Set([...nativeResourceEntries(registry.ctx.evaluator.workflows).filter(item => item.role === "benchmark").map(item => item.name),
     ...registry.ctx.evaluator.profiles().filter(item => item.role === "benchmark").map(item => item.id)])].sort();
 }
 
@@ -65,9 +66,9 @@ export async function initializeExperiment(registry: PluginRegistry, name: strin
   const benchmark = expectRecord(info.resolved.benchmark, "benchmark");
   const judge = expectRecord(benchmark.config, "benchmark.config").judgeService;
   const verifier = info.resolved.verifier === undefined ? undefined : expectRecord(info.resolved.verifier, "verifier").service;
-  const services: UserConfig["services"] = { default: service("MODEL") };
+  const services: Record<string, WorkflowObject> = { default: { ...service("MODEL"), apiKeyEnv: "MODEL_API_KEY" } };
   for (const selected of [judge, verifier])
-    if (typeof selected === "string" && selected !== "default" && selected !== "$default") services[selected] = service(selected.toUpperCase().replace(/-/g, "_"));
-  const config: UserConfig = { services, benchmark: name };
+    if (typeof selected === "string" && selected !== "default" && selected !== "$default") services[selected] = { ...service(selected.toUpperCase().replace(/-/g, "_")), apiKeyEnv: `${selected.toUpperCase().replace(/-/g, "_")}_API_KEY` };
+  const config = { schemaVersion: 2, workflow: "benchmark.evaluate", with: { services, benchmark: name } };
   await writeFile(path, stringify(config), { flag: "wx", encoding: "utf8" });
 }

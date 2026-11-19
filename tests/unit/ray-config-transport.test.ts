@@ -1,3 +1,4 @@
+import { nativeResourceTransport, registerNativeResource } from "arsi-evaluator";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
@@ -10,9 +11,9 @@ test("an external benchmark declares its own host fields without a Ray name list
   await ctx.plugin(registryPlugin);
   try {
     let created = false;
-    ctx.evaluator.register("benchmark", "external-records", value => value, () => { created = true; throw new Error("must not create a benchmark"); },
+    registerNativeResource(ctx, "benchmark", "external-records", value => value, () => { created = true; throw new Error("must not create a benchmark"); },
       { nodeLocal: { dataCache: "cache", executable: "docker" }, containerPaths: [["target"]] });
-    const lookup = (role: string, name: string) => ctx.evaluator.configTransport(role, name);
+    const lookup = (role: string, name: string) => nativeResourceTransport(ctx.evaluator.workflows, role, name);
     const original = { name: "external-records", config: { dataCache: "C:\\client\\cache", executable: "/client/docker", target: "/workspace" } };
     const projected = projectPortableSelection(original, "benchmark", lookup);
     expect(projected.config).toEqual({ target: "/workspace" });

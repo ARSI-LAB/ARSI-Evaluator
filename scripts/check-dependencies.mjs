@@ -6,7 +6,7 @@ import { API } from "typescript/unstable/sync";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const portable = value => value.replaceAll("\\", "/");
-const pureConfig = new Set(["defaults", "loaded", "effective", "user-schema", "resolve", "redact", "hardware", "deployment", "jobs", "network-schema", "profile-schema", "ray"]);
+const pureConfig = new Set(["defaults", "loaded", "effective", "user-schema", "resolve", "redact", "hardware", "deployment", "jobs", "network-schema", "network-paths", "profile-schema", "ray", "workflow-schema"]);
 const allowed = {
   core: new Set(["core"]), config: new Set(["core", "config"]),
   infrastructure: new Set(["core", "config", "infrastructure"]),

@@ -1,22 +1,27 @@
 # MMLU-Pro 使用无工具作答，求解容器只访问模型 API。
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-    api: openai-completions
-benchmark:
-  name: mmlu_pro
-  config:
-    solveNetwork: model-api
-  solver:
-    name: simpleagent
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+      api: openai-completions
+  benchmark:
+    name: mmlu_pro
     config:
-      tools: none
-      mcp: disabled
-environment:
-  name: docker
-  config:
-    image: node:24.22.1-bookworm-slim
-run:
-  solveTimeoutSeconds: 240
+      solveNetwork: model-api
+    solver:
+      name: simpleagent
+      config:
+        tools: none
+        mcp: disabled
+  environment:
+    name: docker
+    config:
+      image: node:24.22.1-bookworm-slim
+  run:
+    solveTimeoutSeconds: 240
+output:
+  directory: ../../results/mmlu_pro/mmlu-pro-simpleagent

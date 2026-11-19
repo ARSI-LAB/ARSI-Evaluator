@@ -4,14 +4,16 @@ import { pluginCommandArguments } from "../application/plugins/cli-extensions.js
 import type { CliExtensions } from "../application/plugins/cli-extensions.js";
 import type { PluginActivation } from "../core/contracts/plugin-extension.js";
 export type Command = (
+  | { kind: "workflow-list"; json: boolean; patchPath?: string }
   | { kind: "benchmark-list"; json: boolean; patchPath?: string }
   | { kind: "benchmark-info"; name: string; patchPath?: string }
   | { kind: "cleanup-images"; file?: string; all: boolean; execute: boolean; patchPath?: string }
-  | { kind: "retry"; run: string; taskIds: string[]; requestId?: string; reason?: string }
+  | { kind: "retry"; run: string; taskIds: string[]; requestId?: string; reason?: string; patchPath?: string }
   | { kind: "help"; text: string; exitCode?: number }
   | { kind: "init"; name: string; output: string; patchPath?: string }
+  | { kind: "init-workflow"; name: string; output: string; patchPath?: string }
   | { kind: "doctor"; file: string; overrides: CliOverrides; patchPath?: string }
-  | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string }
+  | { kind: "inspect"; file: string; overrides: CliOverrides; patchPath?: string; output?: string }
   | { kind: "report"; directory: string }
   | { kind: "plugin"; plugin: PluginCliCommand; argv: string[] }
   | { kind: "run"; file: string; overrides: CliOverrides; resume?: string | null; taskIdsFile?: string; patchPath?: string }
@@ -25,7 +27,7 @@ import type { PluginCliCommand } from "../core/contracts/plugin-extension.js";
 
 interface Options extends Omit<CliOverrides, "plugins"> {
   patch?: string; taskIdsFile?: string; resume?: boolean | string; dryRun?: boolean;
-  all?: boolean; yes?: boolean; benchmark?: string; output?: string; json?: boolean;
+  all?: boolean; yes?: boolean; execute?: boolean; benchmark?: string; output?: string; json?: boolean;
   run?: string; taskId?: string[]; requestId?: string; reason?: string;
   network?: string;
 }
@@ -65,7 +67,11 @@ export function parseCommand(argv: string[], extensions: CliExtensions = { comma
   for (const name of ["run", "warmup", "doctor", "inspect"] as const) {
     const cmd = network(patch(program.command(name).description(name === "run" ? "Execute an experiment and save results" : name === "warmup" ? "Prepare task images and runtimes without solving tasks" : name === "inspect" ? "Show resolved experiment and network settings without download probes" : "Check experiment configuration, runtime prerequisites, and network connectivity")
       .argument("<yaml>", "Experiment YAML file")));
-    if (name === "run") model(cmd);
+    if (name === "run") {
+      model(cmd).option("--plugin <id>", "Activate an installed plugin or a plugin supplied by --patch")
+        .on("option:plugin", (id: string) => { if (!activations.has(id)) activations.set(id, { id, config: {} }); });
+    }
+    if (name === "inspect") cmd.option("--output <yaml>", "Write the expanded editable workflow YAML (existing files are not overwritten)");
     if (name === "run" || name === "warmup") {
       progress(cmd).option("--task-ids-file <json>", "Select tasks from a JSON object containing a taskIds array; overrides sampling");
     }
@@ -74,37 +80,46 @@ export function parseCommand(argv: string[], extensions: CliExtensions = { comma
     cmd.addHelpText("after", `\nExample:\n  arsi-evaluator ${name} experiment.yaml`);
     cmd.action((file: string, opts: Options) => {
       result = { kind: name === "run" && opts.dryRun ? "dry-run" : name, file, ...common(opts),
+        ...(opts.output === undefined ? {} : { output: resolve(opts.output) }),
         ...(opts.taskIdsFile === undefined ? {} : { taskIdsFile: opts.taskIdsFile }),
         ...(opts.resume === undefined ? {} : { resume: opts.resume === true ? null : String(opts.resume) }) };
     });
   }
+  patch(program.command("workflow").description("Discover workflow templates").command("list").description("List installed templates and starter parameters"))
+    .option("--json", "Include starter parameters as JSON")
+    .action((opts: Options) => { result = { kind: "workflow-list", json: opts.json ?? false, ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) }; });
   const benchmark = program.command("benchmark").description("Discover benchmarks, supported versions, and scenarios");
   patch(benchmark.command("list").description("List benchmark versions, defaults, and scenarios as a table"))
     .option("--json", "Output structured benchmark metadata as JSON")
     .action((opts: Options) => { result = { kind: "benchmark-list", json: opts.json ?? false, ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) }; });
   patch(benchmark.command("info").description("Show benchmark details and resolved settings for each version").argument("<name>", "Registered benchmark name"))
     .action((name: string, opts: Options) => { result = { kind: "benchmark-info", name, ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) }; });
-  patch(program.command("init").description("Create an experiment YAML from benchmark defaults")
-    .requiredOption("--benchmark <name>", "Registered benchmark to initialize")
+  patch(program.command("init").description("Create a workflow or benchmark YAML with starter parameters")
+    .addOption(new Option("--benchmark <name>", "Registered benchmark to initialize").conflicts("workflow"))
+    .option("--workflow <name>", "Registered workflow template to initialize")
     .requiredOption("--output <yaml>", "Destination YAML file (existing files are not overwritten)"))
-    .action((opts: Options) => { result = { kind: "init", name: String(opts.benchmark), output: resolve(String(opts.output)), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) }; });
+    .action((opts: Options & { workflow?: string }) => {
+      if (!opts.benchmark && !opts.workflow) throw new CommandUsageError("init requires --workflow or --benchmark", program.helpInformation());
+      result = { kind: opts.workflow ? "init-workflow" : "init", name: String(opts.workflow ?? opts.benchmark), output: resolve(String(opts.output)), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) };
+    });
   program.command("report").description("Rebuild metrics and report.md from saved results without a model API key")
     .argument("<run-dir>", "Directory containing a saved run")
     .action((directory: string) => { result = { kind: "report", directory }; });
-  network(progress(program.command("retry").description("Retry network failures within an existing run")))
+  network(patch(progress(program.command("retry").description("Retry failed workflow samples or benchmark network failures within an existing run"))))
     .requiredOption("--run <id-or-directory>", "Saved run ID or run directory")
     .option("--task-id <id>", "Restrict retries to this task; may be repeated", (value: string, previous: string[]) => [...previous, value], [])
     .option("--request-id <id>", "Idempotency identifier for this retry request")
     .option("--reason <text>", "Reason recorded with the retry request")
-    .action((opts: Options) => { result = { kind: "retry", run: String(opts.run), taskIds: opts.taskId ?? [], ...networkOptions(opts), ...(opts.requestId === undefined ? {} : { requestId: opts.requestId }), ...(opts.reason === undefined ? {} : { reason: opts.reason }) }; });
+    .action((opts: Options) => { result = { kind: "retry", run: String(opts.run), taskIds: opts.taskId ?? [], ...networkOptions(opts), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}), ...(opts.requestId === undefined ? {} : { requestId: opts.requestId }), ...(opts.reason === undefined ? {} : { reason: opts.reason }) }; });
   patch(program.command("cleanup").description("Manage evaluator resources").command("images").description("Preview evaluator image references; remove them only with --yes")
     .argument("[yaml]", "Experiment YAML defining the image scope")
     .option("--all", "Include all evaluator image references; required when YAML is omitted")
-    .option("--yes", "Execute removal; without this flag only preview affected references"))
+    .option("--yes", "Execute removal; without this flag only preview affected references")
+    .option("--execute", "Execute removal (same as --yes)"))
     .action((file: string | undefined, opts: Options) => {
       if (!file && !opts.all) throw new TypeError("Image cleanup requires YAML or --all");
       if (!file && opts.patch) throw new TypeError("--patch requires YAML");
-      result = { kind: "cleanup-images", all: opts.all ?? false, execute: opts.yes ?? false, ...(file ? { file } : {}), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) };
+      result = { kind: "cleanup-images", all: opts.all ?? false, execute: opts.yes === true || opts.execute === true, ...(file ? { file } : {}), ...(opts.patch ? { patchPath: resolve(opts.patch) } : {}) };
     });
   const names = new Set(program.commands.map(command => command.name()));
   names.add("help");
@@ -136,7 +151,7 @@ export function parseCommand(argv: string[], extensions: CliExtensions = { comma
     for (const option of cmd.options) {
       let seen = false;
       cmd.on(`option:${option.name()}`, () => {
-        if (seen && option.long !== "--task-id") throw new TypeError(`Repeated ${option.long} option`);
+        if (seen && option.long !== "--task-id" && option.long !== "--plugin") throw new TypeError(`Repeated ${option.long} option`);
         seen = true;
       });
     }

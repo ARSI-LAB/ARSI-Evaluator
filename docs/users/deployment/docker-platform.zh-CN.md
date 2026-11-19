@@ -1,5 +1,7 @@
 # Docker 目标平台
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./docker-platform.md) | 中文
 
 ```yaml

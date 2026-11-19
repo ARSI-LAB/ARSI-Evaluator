@@ -1,0 +1,8 @@
+{
+  "name": "@arsi-evaluator/workflow-memory-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "peerDependencies": { "arsi-evaluator": "*", "@deepseek-ai/cordis": "^4.0.2" }
+}

@@ -27,6 +27,7 @@
 
 | 操作目标 | 文档 |
 | --- | --- |
+| 选择流程模板、增删步骤、文件样例与重新评分 | [自定义评测流程](workflows.zh-CN.md) |
 | YAML、Profile、默认值与环境变量 | [配置指南](config.zh-CN.md) |
 | 模型、Judge、SimpleAgent、AgentBundle 与 Dify | [Solver 与模型服务](solvers.zh-CN.md) |
 | 抽题、续跑、报告、轨迹与 DSH 完整工具输出 | [日常操作](usage.zh-CN.md) |
@@ -55,7 +56,7 @@
 | --- | --- | --- |
 | 数学 | `gsm8k`、`math500`、`mgsm` | 数学题；MGSM 覆盖多种语言，首次建议 GSM8K |
 | 学科知识 | `mmlu`、`mmlu_pro` | MMLU 使用 5-shot 和候选概率评分，服务须返回 logprobs/top_logprobs；MMLU-Pro 使用生成式回答，配置名为 `mmlu_pro` |
-| 高难知识 | `gpqa` | [全量配置](../../playbook/gpqa/gpqa-simpleagent.yaml)显式配置 `hfToken: ${HF_TOKEN}`，需先获数据集访问权限 |
+| 高难知识 | `gpqa` | [全量配置](../../playbook/gpqa/gpqa-simpleagent.yaml)显式配置 `hfToken: {credential: HF_TOKEN}`，需先获数据集访问权限 |
 | 阅读与事实问答 | `drop`、`triviaqa` | 答案提取、归一化与匹配；DROP 的当前口径见[评分说明](reference/scoring.zh-CN.md) |
 | 文档检索与财政问答 | `officeqa-pro-v2` | [OfficeQA Pro V2](benchmarks/officeqa-pro-v2.zh-CN.md)：默认可搜索的解析 JSON，也支持原始 PDF；不含纯图片测评协议，需授权 HF token |
 | 代码生成 | `humaneval` | 用 Docker 运行 Python 测试；即使 Solver 用 local，验证仍需要 Docker |

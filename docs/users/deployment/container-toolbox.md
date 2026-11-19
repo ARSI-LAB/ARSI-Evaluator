@@ -1,5 +1,7 @@
 # Install and Run Evaluations in the Management Container
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./container-toolbox.zh-CN.md)
 
 For Linux servers with Docker Engine. The host needs the Evaluator repository and access to `/var/run/docker.sock`. The management container provides Node.js, pnpm, Python, and other dependencies.

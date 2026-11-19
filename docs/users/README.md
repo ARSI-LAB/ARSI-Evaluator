@@ -26,6 +26,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 
 | Goal | Guide |
 | --- | --- |
+| Select templates, change steps, read JSONL cases and rescore outputs | [Custom evaluation workflows](workflows.md) |
 | YAML, profiles, defaults, and environment variables | [Configuration](config.md) |
 | Models, judges, SimpleAgent, AgentBundle, and Dify | [Solvers and model services](solvers.md) |
 | Task selection, resume, reports, trajectories, and full DSH tool output | [Daily operations](usage.md) |
@@ -54,7 +55,7 @@ These names are used by `benchmark info`, `init --benchmark`, and YAML. External
 | --- | --- | --- |
 | Math | `gsm8k`, `math500`, `mgsm` | Math questions; MGSM covers multiple languages. Start with GSM8K |
 | Subject knowledge | `mmlu`, `mmlu_pro` | MMLU uses 5-shot candidate probability scoring and requires logprobs/top_logprobs; MMLU-Pro generates answers and uses configuration name `mmlu_pro` |
-| Difficult knowledge | `gpqa` | The [full configuration](../../playbook/gpqa/gpqa-simpleagent.yaml) explicitly uses `hfToken: ${HF_TOKEN}`; obtain dataset access first |
+| Difficult knowledge | `gpqa` | The [full configuration](../../playbook/gpqa/gpqa-simpleagent.yaml) explicitly uses `hfToken: {credential: HF_TOKEN}`; obtain dataset access first |
 | Reading and factual QA | `drop`, `triviaqa` | Answer extraction, normalization, and matching; see [scoring](reference/scoring.md) for current DROP rules |
 | Document retrieval and fiscal QA | `officeqa-pro-v2` | [OfficeQA Pro V2](benchmarks/officeqa-pro-v2.md): searchable parsed JSON by default, with original PDFs supported; no image-only protocol; authorized HF token required |
 | Code generation | `humaneval` | Python tests in Docker; verification requires Docker even with a local solver |

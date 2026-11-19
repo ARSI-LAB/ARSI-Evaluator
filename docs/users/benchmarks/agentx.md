@@ -1,5 +1,7 @@
 # AgentX Performance Evaluation
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./agentx.zh-CN.md)
 
 AgentX reconstructs request lengths, prefix reuse, session turns, subagent dependencies, and waits from redacted traces to measure throughput/latency. It has no ground truth: `passed` is `null`, with no accuracy/reward. Implementation pins [agentx-harness1.0.7](https://inferencex.semianalysis.com/agentx/quickstart), scenario `agentx`.
@@ -51,27 +53,30 @@ Use [online YAML](../../../playbook/agentx/agentx-model-api.yaml) without teleme
 
 Initial downloads include traces, tokenizers, and Python dependencies, adding wall time beyond measurement. `HF_ENDPOINT` follows [data settings](../config.md); `HF_TOKEN` supports restricted tokenizers; `PIP_INDEX_URL` selects Python mirrors.
 
-Traces are public; existing examples need no extra HF_TOKEN. For explicit data credentials set `benchmark.config.hfToken: ${HF_TOKEN}`, including SDK `env`; omission uses process HF_TOKEN. Old hfTokenEnv is rejected. Prepare tokenizers with inference services and supply existing local-directory fields, without extra tokenizer authentication options.
+Traces are public; existing examples need no extra HF_TOKEN. For explicit data credentials set `benchmark.config.hfToken: {credential: HF_TOKEN}`, including SDK `env`; omission uses process HF_TOKEN. Old hfTokenEnv is rejected. Prepare tokenizers with inference services and supply existing local-directory fields, without extra tokenizer authentication options.
 
 ## Concurrency and Configuration
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: agentx
-  scenario: standard
-  config:
-    variant: 256k
-    concurrency: [1, 4, 8]
-  solver:
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: agentx
+    scenario: standard
     config:
-      tokenizer: ${MODEL_NAME} # Use a matching tokenizer if the alias/API model ID is not a repository name
-      trustRemoteCode: false
-environment: local
+      variant: 256k
+      concurrency: [1, 4, 8]
+    solver:
+      config:
+        tokenizer: ${MODEL_NAME} # Use a matching tokenizer if the alias/API model ID is not a repository name
+        trustRemoteCode: false
+  environment: local
 ```
 
 `concurrency` counts harness-managed session trees; subagents can increase HTTP concurrency. Evaluator scheduling must be 1, running points sequentially to avoid contention. run.maxTasks/taskIds/sampling select points, not requests within traces.

@@ -9,9 +9,9 @@ import { AgentXReplaySolver, parseAgentXReplayConfig } from "../../src/plugins/s
 import type { EnvironmentSession } from "../../src/core/contracts/environment.js";
 import { workload, profileExport } from "../fixtures/agentx/export.js";
 import { serverMetricsEvidence, telemetryConfig } from "../fixtures/agentx/server-metrics.js";
-import { diagnose } from "../../src/application/diagnostics/doctor.js";
-import { loadConfig } from "../../src/application/config.js";
+import { maintainWorkflow } from "../../src/application/workflow-maintenance.js";
 import { stringify } from "yaml";
+vi.mock("../../src/infrastructure/network/diagnostics.js", () => ({ diagnoseNetwork: vi.fn(async () => []) }));
 
 afterEach(() => vi.unstubAllEnvs());
 const python = process.platform === "win32" ? "python" : "python3";
@@ -108,11 +108,11 @@ test.each(["local", "docker"] as const)("%s doctor checks only the host control 
   vi.stubEnv("AGENTX_DOCTOR_KEY", "fixture-secret");
   try {
     const file = join(root, "experiment.yaml");
-    await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "http://127.0.0.1:18194/v1", api_key: "${AGENTX_DOCTOR_KEY}" } },
+    await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "http://127.0.0.1:18194/v1", apiKeyEnv: "AGENTX_DOCTOR_KEY" } },
       benchmark: { name: "agentx", solver: { config: { telemetry: { ascend: { mode: "local", devices: [{ deviceId: 4 }] } } } } },
-      environment }));
-    const checks = await diagnose(await loadConfig(file, {}, process.env), file, AbortSignal.timeout(10000));
-    expect(checks).toContainEqual(expect.objectContaining({ name: "NPU host sampling control (no device queries)", status: "passed" }));
+      environment } }));
+    const results = await maintainWorkflow({ configPath: file, signal: AbortSignal.timeout(10000) }, { operation: "doctor", options: {} });
+    expect(results).toEqual(expect.arrayContaining([expect.objectContaining({ output: { groups: [expect.objectContaining({ checks: expect.arrayContaining([expect.objectContaining({ name: "NPU host sampling control (no device queries)", status: "passed" })]) })] } })]));
     expect(operations).toEqual(["ping"]);
   } finally {
     await new Promise<void>((done, fail) => server.close(error => error ? fail(error) : done()));

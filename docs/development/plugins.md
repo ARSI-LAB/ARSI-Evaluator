@@ -4,7 +4,21 @@
 
 本文介绍八类组件接口、可运行的指标插件、显式 patch 与 Ray 节点部署。示例中的源码命令和 `experiments/` 目录均以 Evaluator 仓库根目录为基准。
 
+自定义整个评测流程时，使用[步骤、资源和流程模板](workflow-plugins.md)。下文八类组件属于 Benchmark 领域，通过 `registerNativeResource` 注册为资源；通用工作流不要求实现这些角色。
+
 [返回项目主页](../../README.zh-CN.md) · [用户手册](../users/README.zh-CN.md)
+
+## 源码与注册位置
+
+仓库内组件在各角色的 index.ts 注册，Metrics 和 Reporter 分别使用 metrics/index.ts 和 reporters/index.ts；Benchmark 再分 agent-harness、inference-engine、operator 三个注册入口。application/plugins/open-registry.ts 创建 Cordis 注册表并注册插件，load-module.ts 定位和导入插件模块、读取版本，plugins/workflows/benchmark/component-resource.ts 创建已注册的 Benchmark 组件，application/workflow.ts 管理一次操作的注册表生命周期；config/plugin-patch.ts 只读取 patch、校验条目和计算摘要，不执行插件模块。外部插件仍从 arsi-evaluator 包根导入公共接口，不依赖这些内部目录。完整调用关系和资源所有权见[源码架构与执行流程](architecture.md)，新增 Benchmark 的具体位置和流程限制见[Benchmark 开发指南](benchmarks.md#新需求的修改入口)。
+
+运行 `pnpm check:dependencies` 检查导入、目录依赖和可执行模块循环。允许关系和未覆盖范围见[依赖规则](architecture.md#允许的源码依赖)。仓库插件清单用于构建，外部组件在运行时通过显式 patch 加载。
+
+### 发布进程入口
+
+`pnpm build` 生成包根与 CLI 入口，并保留 `dist/adapters/ray/{node-worker,jobs-entry,jobs-gateway}.js`、Ray 的 `python/requirements.txt`、`dist/adapters/harness/pi/` 独立运行包及 `dist/adapters/harness/agentx/assets/ascend_metrics.py`。现有部署路径仍可用，仓库内部引用改用新目录。生成的入口和资源均参与包摘要计算。
+
+将实际打包产物及运行依赖安装到 checkout 外的目录后，从仓库执行 `node scripts/verify-distribution.mjs <安装后的包目录>`。目标目录不能带 src 或 scripts。检查覆盖 CLI、包名导入的 SDK 执行/报告、Pi 协议、worker 任务/镜像维护/版本拒绝、Jobs 输入处理与 gateway、AgentX Python 启动。可通过 OPENSSL_BIN 和 PYTHON_BIN 指定工具；缺失工具会明确记为跳过。该受控检查不替代真实 Docker、Ray、NPU 和模型验收。
 
 ## 插件种类
 
@@ -20,11 +34,11 @@ Benchmark 的 `resolveSource`、`enumerate` 第三参数及 `prepare`、`planRun
 
 需要为 Docker 构建准备外部基础镜像时，可向 `DockerEnvironment` 构造器传入 `prepareBuild(spec, signal, activity?)`。回调在任务镜像缓存未命中、构建快照校验通过后执行，`spec.build.context` 指向临时快照；只读取快照，不修改任务文件。回调完成后才构建任务镜像，失败或取消会终止构建，临时快照由环境清理。该选项仅用于插件代码，不是 YAML 字段；继承 DockerEnvironment 可以直接保留 materialize、installRuntime、prepare 和 recoverAttempts 等方法。使用准备凭证启动 attempt 时不会重新调用回调。
 
-`lines` 只包含公开执行过程的命令或工具输出；不要发送模型思考、答案、隐藏测试或认证值。应在组件自身先脱敏，接收端还会做长度限制和脱敏。只有实际收到执行器输出、模型流或工具事件时才报告活动；仅提供能力说明时使用 `activity: false`。活动不改变评分，也不能代替原有结果和轨迹。Scheduler 可通过 `SchedulerContext.onProgress` 回传结构化进度，但不要序列化整个 context。
+`lines` 只包含公开执行过程的命令或工具输出；不要发送模型思考、答案、隐藏测试或认证值。应在组件自身先脱敏，接收端还会做长度限制和脱敏。只有实际收到执行器输出、模型流或工具事件时才报告活动；仅提供能力说明时使用 `activity: false`。活动不改变评分，也不能代替原有结果和轨迹。Scheduler 可通过 `SchedulerPreparationContext.onProgress` 回传准备进度，但不要序列化整个 context。
 
 组件内部有独立子步骤时，可提供唯一的 `operationId` 和 `status`（`started`、`updated`、`completed`、`failed`、`cancelled`）。同一子步骤沿用 ID，结束后不能复用；核心将其放在调用方操作之下，并在父步骤结束时关闭尚未结束的子步骤。共享镜像构建向各等待者发布相同的组件操作 ID，各等待者的任务和 attempt 身份仍由核心补充。
 
-Cordis 负责加载插件模块，模块通过 `ctx.evaluator.register()` 注册组件。一个模块可以注册多种组件，实验配置再按 `name` 选择使用哪一个。
+Cordis 负责加载插件模块，模块通过 `registerNativeResource(ctx, role, name, validate, factory)` 注册组件。一个模块可以注册多种组件，实验配置再按 `name` 选择使用哪一个。
 
 记录型 Benchmark 的定义放在 `src/plugins/benchmarks/definitions/`：各题库文件负责题目转换和选择评分入口，`records.ts` 负责记录校验与任务构造，`prompts.ts` 保存题目提示词。评分实现放在同目录的 `scoring/` 中，按答案匹配、生成式选择题、概率评分、模型裁判和代码执行划分；DROP 这类复杂算法可单独保留。新增题库时优先使用已有评分机制，不要求每个题库都新增一个 `*-score.ts`。评分属于 Benchmark 的业务规则，不因文件名含 score 就改成独立 Verifier 插件。
 
@@ -38,7 +52,7 @@ Cordis 负责加载插件模块，模块通过 `ctx.evaluator.register()` 注册
 | `metrics`     | 从结果快照计算指标；[Metrics](../../src/core/contracts/metrics.ts)                   | `success-rate`、`duration`、`usage`、`harbor-score`、`quality-score`、`agentx-performance`    |
 | `reporter`    | 将结果和指标渲染为报告；[Reporter](../../src/core/contracts/reporter.ts)               | `markdown`                                                             |
 | `store`       | 保存 run、attempt、文件清单和结果快照；[RunStore](../../src/core/contracts/run-store.ts) | `local`                                                                |
-| `scheduler`   | 安排任务准备、就绪队列和执行并发；[TaskScheduler](../../src/core/contracts/scheduler.ts)         | `local`、`ray`                                                          |
+| `scheduler`   | 安排任务准备、就绪队列和节点容量；[TaskScheduler](../../src/core/contracts/scheduler.ts)         | `local`、`ray`                                                          |
 
 Reporter 可选实现 `taskReports(snapshot, metrics)`，返回 `{ id, taskId, title }` 列表，为单个任务生成独立报告。通用报告流程先筛选该任务的结果、历史 attempt 和准备记录，再重新计算所有指标，并向 `render` 传入可选的 `ReportContext`；其中 `evidenceRoot` 是报告到 run 根目录的相对路径，用于生成可打开的证据链接。声明独立报告时，根 `render` 应输出目录页。Store 需要实现 `saveReportBundle`，同时保存目录和 `points/<id>/report.md`、`metrics.json`，并检查 snapshot、版本和安全路径；Store 必须实现 `saveReportBundle`，单报告时接收空的文档数组；不再提供旧的 `RunStore.saveReport` 方法。Reporter 的 `render` 同时用于单报告和各任务报告。相关类型从包根导出。
 
@@ -51,13 +65,22 @@ Reporter 可选实现 `taskReports(snapshot, metrics)`，返回 `{ id, taskId, t
 
 内置 Docker 按 `runtime.imageConfigFingerprint` 和准备上下文的任务、阶段记录镜像关联；指纹排除服务认证、输出路径、调度参数及插件声明的节点本地字段，保留题目选择。独立的第三方镜像获取代码需要自行接入归属记录，不能把预先存在的来源引用视为可删除资源。Ray 部署须持久化节点的 `EVALUATOR_CACHE_DIR`。
 
-Benchmark 实现 `planRun()` 时，Scheduler 需要实现 `prepareTasks(jobs, plan, context, signal)`。本地 Scheduler 在这里选择整批等待或有界流水线；单题准备调用框架提供的 `context.prepareTask(task, signal, { roundId, timing })`，不要重复获取 Solver runtime、合并 requirements 或准备验证器依赖。整批模式返回 `{ tasks }`，流水线返回 `{ pipeline }`；流水线必须提供可取消的任务源、`completion` 和 `cancel()`，提前关闭后等待已开始的准备退出。所有 Scheduler 必须实现 `executeReady(jobs, executor, signal)`，它负责执行槽位和动态补测任务；任务源是可取消的异步流，整批就绪任务也通过同一入口派发。
+Benchmark 实现 `planRun()` 时，Scheduler 需要实现 `prepareTasks(jobs, plan, context, signal)`。本地 Scheduler 在这里选择整批等待或有界流水线；单题准备调用框架提供的 `context.prepareTask(task, signal, { roundId, timing })`，不要重复获取 Solver runtime、合并 requirements 或准备验证器依赖。整批模式返回 `{ tasks }`，流水线返回 `{ pipeline }`；流水线必须提供可取消的任务源、`completion` 和 `cancel()`，提前关闭后等待已开始的准备退出。执行槽位和补测由工作流执行块负责；Ray 的步骤执行由 `executor.ray` 资源负责，Scheduler 不执行评测步骤。
 
 `PreparationContext`、`ScheduledPreparation` 等类型以及 `createPreparationRound`、`runPreparationRound` 从包根导出。前者创建公共准备记录并校验预算，后者在 Scheduler 提供的整批工作外设置绝对预算并保存结果。`context.settings` 可能省略，此时由 Scheduler 选择默认值；内置 Local 默认 pipeline，准备并发等于自身执行并发，Ray 默认 batch。配置解析会为显式声明的 preparation 补齐 mode 和 concurrency，外部 Scheduler 的缺省模式仍为 batch。Scheduler 公共契约不再包含数组版 `execute()` 或 `prepareRun()`；带 `planRun()` 的 Benchmark 需要 `prepareTasks()`；没有运行计划的 Benchmark 仍可使用原来的 attempt 内准备。Ray 节点调用公共单题准备函数，协调端只安排节点和检查回执，不能在协调端调用本地环境准备回调。
 
-远端 Scheduler 支持独立 `warmup` 时，还需实现 `setupPreparation(context, signal)`。`SchedulerPreparationContext` 提供来源、配置摘要、插件/包版本和 Solver 元数据，以及进度回调；没有评测 Store。此入口只初始化节点连接和准备控制通道，不能创建评测 Run、分配 Attempt 或启用评测结果上传。正式评测仍调用 `setup(SchedulerContext, signal)`。两个入口应复用连接和节点分配代码。`prepareTasks()` 可返回 `placements: { taskId, nodeId }[]`，包括已分配但准备失败的题，供预热摘要显示；执行必须使用已经准备的节点。资源通过插件生命周期释放，取消后等待节点准备工作退出。
+远端 Scheduler 支持独立 `warmup` 时，还需实现 `setupPreparation(context, signal)`。`SchedulerPreparationContext` 提供来源、配置摘要、插件/包版本和 Solver 元数据，以及进度回调；没有评测 Store。此入口只初始化节点连接和准备控制通道，不能创建评测 Run、分配 Attempt 或启用评测结果上传。正式评测也使用该准备入口；Ray 的准备与步骤执行通过 `ray.connection` 资源共用连接。`prepareTasks()` 可返回 `placements: { taskId, nodeId }[]`，包括已分配但准备失败的题，供预热摘要显示；执行必须使用已经准备的节点。资源通过插件生命周期释放，取消后等待节点准备工作退出。
 
-Store 或 Scheduler 生成的 `AttemptRecord` 必须包含 `evaluationKind`、`executionStatus`、`scoreStatus` 和 `cleanupStatus`；当前类型不再接受 `status`、`timeoutKind`。指标插件直接读取这些字段；需要报告中的状态文字时可从包根导入 `attemptStatus()`、`attemptTimeoutKind()`，不要把显示值再写入记录。历史结果仅在本地 Store 的读取入口转换，新的提交和远端消息必须使用当前结构，字段组合规则见[结果与错误说明](../users/reference/errors.zh-CN.md)。
+Benchmark 执行步骤保存的 `AttemptRecord` 必须包含 `evaluationKind`、`executionStatus`、`scoreStatus` 和 `cleanupStatus`；当前类型不再接受 `status`、`timeoutKind`。指标插件直接读取这些字段；需要报告中的状态文字时可从包根导入 `attemptStatus()`、`attemptTimeoutKind()`，不要把显示值再写入记录。历史结果仅在本地 Store 的读取入口转换，新的提交和远端消息必须使用当前结构，字段组合规则见[结果与错误说明](../users/reference/errors.zh-CN.md)。
+
+## 为已有角色新增内置实现
+
+本节适用于给八种已有角色增加实现，例如在 Metrics 下增加一个指标。要新增与这八种角色并列的基础插件，见[内置基础插件开发](built-in-role-development.md)。
+
+1. 按[插件种类](#插件种类)选角色和契约。在 `src/plugins/<角色目录>/` 新增实现。新增 Benchmark 时，按[开发指南](benchmarks.md#新需求的修改入口)选择类别和注册入口。
+2. 在角色的 `index.ts` 导入实现，在 `apply(ctx)` 中加入 `registerNativeResource(ctx, role, name, validate, factory)`。同一角色内使用唯一的 `name`。`validate` 检查 `config` 并返回工厂需要的值，`factory` 创建实例。工厂解析相对路径时用 `runtime.resolvePath()`，持有进程或连接时接入对应的释放流程。
+3. 在实验 YAML 中用注册名选择组件。字段位置见[在实验中选择组件](external-plugins.md#4-在实验中选择组件)。要让某个 Benchmark 默认使用新组件，在该 Benchmark 的 [Profile](benchmarks.md#发布默认-profile) 中设置选择项。`src/plugins/index.ts` 已调用各角色的 `apply(ctx)`，新增已有角色的实现只需要在对应角色注册。
+4. 运行 `pnpm check:dependencies`、`pnpm typecheck` 和 `pnpm build`，用 `node dist/cli.js inspect <实验.yaml>` 校验名称和参数。再运行一份受控实验验证组件实际行为。组件涉及外部进程或连接时，覆盖失败、取消和释放。
 
 ## 编写插件
 
@@ -65,41 +88,9 @@ Solver 的 `runtimeInstallation()` 返回 `RuntimeInstallation` 时，可以设�
 
 编写或修改 Benchmark 插件时，接口、代码职责、生命周期及受控示例见 [Benchmark 开发指南](benchmarks.md)。数据集的官方要求、镜像、平台、资源、超时配置和真实运行验收见 [Benchmark 评测要求与验收指南](benchmark-evaluation-requirements.md)。
 
-下面以“已完成任务数”指标为例，新建 `experiments/plugins/completed-count.mjs`：
+`registerNativeResource(ctx, role, name, validate, factory)` 在 Context 后的四个参数分别是组件种类、注册名、配置校验函数和实例工厂。工厂可以接收 `(config, runtime)`，其中 runtime 提供模型配置、运行时认证和 `resolvePath()` 等上下文；认证只用于调用模型，不写入日志或结果。
 
-```js
-export const inject = ["evaluator"];
-
-export function apply(ctx) {
-  ctx.evaluator.register(
-    "metrics",
-    "completed-count",
-    (config) => {
-      if (
-        config === null || typeof config !== "object" ||
-        Array.isArray(config) || Object.keys(config).length > 0
-      ) {
-        throw new TypeError("completed-count 不接受配置参数");
-      }
-      return {};
-    },
-    () => ({
-      name: "completed-count",
-      async compute(snapshot) {
-        return {
-          completed: snapshot.records.filter(
-            (record) => record.executionStatus === "completed",
-          ).length,
-        };
-      },
-    }),
-  );
-}
-```
-
-`register(role, name, validate, factory)` 的四个参数分别是组件种类、注册名、配置校验函数和实例工厂。工厂可以接收 `(config, runtime)`，其中 runtime 提供模型配置、运行时认证和 `resolvePath()` 等上下文；认证只用于调用模型，不写入日志或结果。
-
-执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，bootstrap 和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
+执行组件的 `runtime.hardware` 为实验选择的 `npu` 或 `gpu`，Benchmark 工厂资源和 Ray worker 都传入实际值。历史 SDK 调用方省略该字段时按 NPU 处理。需要加速卡的插件应按该值选择实现，并在分配资源前拒绝不支持的硬件；不需要加速卡的插件无需检测设备。Metrics/Reporter 继续只使用报告上下文，离线报告不探测硬件。
 
 使用 TypeScript 开发时，可从 `arsi-evaluator` 包根导入 `HardwareKind`、`Metrics`、`Benchmark`、`Solver`、`PluginFactoryContext` 等公共类型，并实现对应契约。发布产物只加载已编译的 JavaScript；从源码启动的 `pnpm dev` 会按清单回退到对应的 `.ts` 文件。
 
@@ -216,10 +207,11 @@ Ray Jobs 部署还需在协调端容器设置 EVALUATOR_PLUGIN_PATCH_PATH，指�
 
 ### 组件配置传到 Ray 节点
 
-`register(role, name, validate, factory, transport?)` 的第五个参数声明配置的传输规则，类型 `PluginConfigTransport` 从包根导出。无需修改 Ray 内的组件名称列表。例如：
+`registerNativeResource(ctx, role, name, validate, factory, transport?)` 的最后一个参数声明配置的传输规则，类型 `PluginConfigTransport` 从包根导出。无需修改 Ray 内的组件名称列表。例如：
 
 ```ts
-ctx.evaluator.register("benchmark", "my-records", validateConfig, createBenchmark, {
+import { registerNativeResource } from "arsi-evaluator";
+registerNativeResource(ctx, "benchmark", "my-records", validateConfig, createBenchmark, {
   nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" },
   containerPaths: [["defaults", "workdir"], ["taskProfiles", "*", "extraPaths", "*"]],
   validate(config) {
@@ -248,3 +240,10 @@ ctx.evaluator.register("benchmark", "my-records", validateConfig, createBenchmar
 可组合的 Verifier 使用 `runtime: VerificationRuntime<JsonValue, VerificationEvidence>`，接收它自己的私有描述。Harbor 将其接入上述流程，并继续用原评分配置处理返回的奖励。内置 `harbor-python` 与 HumanEval 已使用该生命周期；其容器按 attempt 打标签，并通过不可变镜像 ID 创建，执行阶段禁止自动 pull。
 
 插件工厂通过 `runtime.services` 与明确的服务名获取模型及认证。Solver 使用 `bindSolverService(runtime)`；Verifier 使用 `bindService(runtime, runtime.verifierService)`，仅在已配置该路由时访问。两个函数从包根导入。工厂上下文不提供顶层 `model`／`auth`；不要把 Solver 服务当作 Verifier 的默认服务。Ray worker 只接受 `{ services }`，Ray Jobs 只接收 `serviceAuth`，不再接受单模型旧格式。
+
+
+### 恢复已提交但未确认的结果
+
+admission 可以实现 `reconcile(unit, block, context)`。内核仅在原 attempt 的资源清理已确认、业务输入指纹未变化时调用；返回执行块输出表示已有结果已校验，返回 `undefined` 表示没有可恢复的完成结果。返回值必须满足执行块声明的输出字段和必需输出。插件不得在此调用模型或重新执行评测；证据损坏应抛错，不能伪装成没有结果。
+
+恢复成功沿用原 attempt，保留错误历史，保存完成状态及恢复输出；调用方不需要新增续跑参数。`context` 只提供取消信号、产物读写和日志。Benchmark 仅恢复最终步骤为 `benchmark.commit`、输出为该步骤 scores/evidence 的执行块；从 Store 的可选 `readAttemptEvidence(key)` 读取并校验原结果和文件。LocalRunStore 已实现此操作。自定义 Store 若保存了有效评分却不能提供证据，恢复会明确失败，避免重复调用模型。

@@ -1,3 +1,4 @@
+import { nativeResourceEntries } from "../../plugins/workflows/benchmark/component-resource.js";
 import { Context, type Plugin } from "@deepseek-ai/cordis";
 import { loadPluginPatch, PATCH_METADATA_ID } from "../../config/plugin-patch.js";
 import type { RunPluginEntry } from "../../core/contracts/result.js";
@@ -30,6 +31,7 @@ async function loadExperimentPlugins(
   loadPlugins(ids: readonly string[]): Promise<void>;
   loadRecordedPlugins(value: unknown): Promise<void>;
   prepareStoreDecorators(selections: readonly PluginActivation[]): ((runtime: PluginFactoryContext) => StoreDecorator | Promise<StoreDecorator>)[];
+  componentProviders: Record<string, string>;
 }> {
   const patch = await loadPluginPatch(patchPath);
   const pluginVersions: Record<string, string> = Object.create(null) as Record<string, string>;
@@ -40,17 +42,20 @@ async function loadExperimentPlugins(
   const catalog = readPluginCatalog();
   const entries = new Map<string, RunPluginEntry>();
   const reportingProviders: Record<string, string> = Object.create(null) as Record<string, string>;
-  const decorators = new Map<string, string[]>();
+  const componentProviders: Record<string, string> = Object.create(null) as Record<string, string>;
   const loaded = new Set<string>();
 
   async function register(id: string, version: string, plugin: unknown): Promise<void> {
-    const previous = new Set(ctx.evaluator.entries().map(entry => `${entry.role}:${entry.name}`));
+    const identifiers = () => [...ctx.evaluator.workflows.stepTypes().map(type => `step:${type}`), ...ctx.evaluator.workflows.resourceTypes().map(type => `resource:${type}`)];
+    const prior = new Set(identifiers());
+    const previous = new Set(nativeResourceEntries(ctx.evaluator.workflows).map(entry => `${entry.role}:${entry.name}`));
     const before = new Set(ctx.evaluator.storeDecoratorNames());
     await ctx.plugin(asCordisPlugin(plugin, id));
+    for (const key of identifiers()) if (!prior.has(key)) componentProviders[key] = id;
     pluginVersions[id] = version;
     loaded.add(id);
-    decorators.set(id, ctx.evaluator.storeDecoratorNames().filter(name => !before.has(name)));
-    for (const selection of ctx.evaluator.entries()) {
+    ctx.evaluator.recordStoreDecorators(id, ctx.evaluator.storeDecoratorNames().filter(name => !before.has(name)));
+    for (const selection of nativeResourceEntries(ctx.evaluator.workflows)) {
       if ((selection.role === "metrics" || selection.role === "reporter") && !previous.has(`${selection.role}:${selection.name}`)) {
         reportingProviders[`${selection.role}:${selection.name}`] = id;
       }
@@ -93,15 +98,8 @@ async function loadExperimentPlugins(
     await loadPlugins(catalog.filter(plugin => Object.hasOwn(versions, plugin.id)).map(plugin => plugin.id));
   }
 
-  function prepareStoreDecorators(selections: readonly PluginActivation[]) {
-    return selections.flatMap(selection => {
-      if (!loaded.has(selection.id)) throw new TypeError(`Plugin ${selection.id} has not been loaded`);
-      return (decorators.get(selection.id) ?? []).map(name => ctx.evaluator.prepareStoreDecorator(name, selection.config));
-    });
-  }
-
   await loadPlugins(options.plugins ?? []);
-  return { patch, entries: [...entries.values()], pluginVersions, reportingProviders, loadPlugins, loadRecordedPlugins, prepareStoreDecorators };
+  return { patch, entries: [...entries.values()], pluginVersions, reportingProviders, componentProviders, loadPlugins, loadRecordedPlugins, prepareStoreDecorators: selections => ctx.evaluator.prepareStoreDecorators(selections) };
 }
 
 function asCordisPlugin(value: unknown, id: string): Plugin {

@@ -1,13 +1,14 @@
-vi.mock("../../src/application/diagnostics/network.js", () => ({ diagnoseNetwork: async () => [] }));
+vi.mock("../../src/infrastructure/network/diagnostics.js", () => ({ diagnoseNetwork: async () => [] }));
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vitest";
 import { stringify } from "yaml";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
-import { createBenchmark } from "../../src/application/plugins/create-components.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
 import { runCli } from "../../src/cli/main.js";
 import { assertSourceLock } from "../../src/index.js";
 
@@ -24,17 +25,22 @@ async function fixture(name: string) {
     ...["definition", "protocol", "harbor-profile"].map(id => ({ id, name: join(examples, `${id}.mjs`) })),
     { id: "controlled-solver", name: join(dirname(examples), "cli/plugin.mjs") },
   ] }]));
-  await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${KEY}" } },
-    benchmark: { name, solver: "cli-fixture" }, run: { maxTasks: 2 }, output: { directory: "./results" } }));
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "KEY" } },
+    benchmark: { name, solver: "cli-fixture" }, run: { maxTasks: 2 } }, output: { directory: "./results" } }));
   return { root, patchPath, file };
 }
 
 test.each(["example-definition", "example-protocol", "example-harbor"])("%s has locked, serializable tasks with private verification", async name => {
   const f = await fixture(name);
-  const config = await loadConfig(f.file, {}, { KEY: "fixture-key" }, { patchPath: f.patchPath });
+  const plan = await inspectWorkflow({ configPath: f.file, patchPath: f.patchPath, env: {} });
+  const experiment = benchmarkExperiment(plan);
   const registry = await openPluginRegistry(f.patchPath);
   try {
-    const benchmark = await createBenchmark(registry, config, f.root);
+    const runtime = { configDirectory: f.root, resolvePath: (path: string) => resolve(f.root, path), services: {}, solverService: "default",
+      phaseTimeouts: { ...(experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: experiment.run.solveTimeoutSeconds }),
+        ...(experiment.run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: experiment.run.verifyTimeoutSeconds }) } };
+    const verifier = experiment.verifier ? await createNativeResource(registry.ctx, "verifier", experiment.verifier, runtime) : undefined;
+    const benchmark = await createNativeResource(registry.ctx, "benchmark", experiment.benchmark, { ...runtime, ...(verifier ? { verifier } : {}) });
     const signal = AbortSignal.timeout(5000);
     const source = await benchmark.resolveSource(null, signal);
     assertSourceLock(source);
@@ -75,5 +81,5 @@ test.each(["example-definition", "example-protocol"])("%s supports discovery, do
   expect(await runCli(["report", run], io), errors.join("\n")).toBe(0);
   expect(await readFile(join(run, "report.md"), "utf8")).toContain('| 正确率 | 100.00% |');
   expect(await runCli(["run", f.file, "--patch", f.patchPath, "--api-key", "fixture-key", "--resume"], io)).toBe(0);
-  expect((await readFile(join(run, "manifest.json"), "utf8"))).not.toContain("fixture-key");
+  expect((await readFile(join(run, "run.json"), "utf8"))).not.toContain("fixture-key");
 }, 30_000);

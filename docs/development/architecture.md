@@ -12,14 +12,26 @@
 | [src/cli.ts](../../src/cli.ts)、[cli/](../../src/cli) | 安装进程信号处理、定义和分派命令、显示终端进度、设置退出码 |
 | [application/](../../src/application) | 完成运行、报告、预热、补测、诊断等用户操作；创建和释放组件，选择本地执行或 Ray Jobs |
 | [config/](../../src/config) | 读取 YAML、展开环境变量和 Profile、校验与脱敏；不创建 Cordis Context 或运行组件 |
-| [core/](../../src/core) | 定义组件契约；执行来源锁定、选题、准备、调度、attempt、恢复、结果和产物处理 |
-| [plugins/](../../src/plugins) | 实现 Benchmark、Verifier、Environment、Solver、Metrics、Reporter、Store、Scheduler 八类组件 |
+| [core/](../../src/core) | 定义契约，编译和执行声明式工作流；提供选题、准备、恢复、结果和产物处理工具 |
+| [plugins/](../../src/plugins) | 实现步骤、资源、模板以及 Benchmark 领域组件；原生评测编排位于 workflows/benchmark |
 | [runtimes/](../../src/runtimes) | 保存特定外部程序的安装描述、调用桥接、输入输出协议和资源，如 Pi、DSH、AgentBundle、AgentX |
 | [infrastructure/](../../src/infrastructure) | 实现进程、Shell、容器、网络、数据下载、安装锁、IPC、传输和摘要读取等 I/O 能力 |
 
-core 的契约位于 `contracts/`；执行在 `execution/`，准备在 `preparation/`，恢复和补测资格在 `recovery/`，选题在 `selection/`，结果和来源规则在 `results/`，文件清单与轨迹在 `artifacts/`。完整目录树见[仓库目录结构](../../AGENTS.md#仓库目录结构)。
+core 的契约位于 `contracts/`；声明式执行在 `workflow/`，Benchmark 队列工具在 `execution/`，准备在 `preparation/`，恢复和补测资格在 `recovery/`，选题在 `selection/`，结果和来源规则在 `results/`，文件清单与轨迹在 `artifacts/`。完整目录树见[仓库目录结构](../../AGENTS.md#仓库目录结构)。
+
+## 声明式工作流入口
+
+`application/workflow.ts` 读取模板参数或完整步骤 YAML，装配 Cordis 注册目录，再交给 `core/workflow/compile.ts` 检查前序引用、协议、私有数据、作用域和插件版本。展开后的计划记录每个子流程的输出协议，并以摘要锁定。`execute.ts` 调用步骤和资源接口，不按 Benchmark 类型分支。`LocalWorkflowStore` 保存 run.json 与不可变产物，应用层负责运行目录写锁。
+
+资源按首次使用创建，按依赖逆序释放；独立单元保存 case、variant、repetition 和输入摘要。失败单元重新开始一个 attempt，清理失败不会撤销已经提交的业务结果。恢复先处理未释放资源，再检查来源，然后复用成功单元。公开文本输出可由 results.rescore 模板读取，在新 run 中重新评分。
+
+Benchmark 的 prepare/begin/solve/transfer/verify/finish 位于 `plugins/workflows/benchmark`，通过窄资源接口保存私有验证材料。声明式 Benchmark 支持本地、直接 Ray 和 Ray Jobs。准备与样例执行共用 ray.connection，集群凭据通过认证 HTTPS 按需读取；Jobs 续跑使用完整产物及摘要校验。CLI 与 SDK 均通过工作流入口执行，旧 Engine、bootstrap 和配置加载入口已删除。具体步骤和资源契约见[工作流插件开发](workflow-plugins.md)。
+
+应用层 `workflow-network.ts` 将网络模板装配为 `network.runtime` 资源。模型和 Benchmark 借用客户端，网络资源负责创建和释放。计划只保存未展开模板；执行节点解析代理、源和凭据。预热按提供者声明创建无评测状态的依赖，恢复操作根据已保存模板创建短期客户端。
 
 config 负责配置文件读取和解析，不加载插件模块。[plugin-patch.ts](../../src/config/plugin-patch.ts) 读取 patch、校验条目并计算 patch 摘要；[load-module.ts](../../src/application/plugins/load-module.ts) 按 patch 所在目录定位模块、读取版本或计算文件摘要并执行动态 import。配置文件读取仍有 I/O，不能把整个 config 当作纯函数集合。core 也包含文件读写，并通过契约触发组件 I/O；其约束是不依赖应用装配和具体组件实现。infrastructure 可以使用 Evaluator 契约，但不决定题目得分、补测资格或调度策略。
+
+维护操作由资源提供者声明。`workflow-maintenance.ts` 只创建操作列出的无评测状态依赖；Benchmark 插件调用自身诊断和镜像清理方法，通用网络探测位于 infrastructure/network，Ray 节点网络探测位于 infrastructure/ray。Jobs 传递相同维护请求并返回独立结果。Bundle 名称由 Benchmark 模板收集到 deployment.bundles，部署器只检查目录并按名称创建只读挂载。
 
 ## 允许的源码依赖
 
@@ -48,44 +60,42 @@ config 负责配置文件读取和解析，不加载插件模块。[plugin-patch
 
 ## 运行流程与资源所有权
 
-CLI `run` 和 SDK `Evaluator.run()` 使用 [application/run.ts](../../src/application/run.ts) 的 `executeExperiment`。普通执行路径如下：
+CLI `run` 和 SDK `Evaluator.run()` 调用 [application/workflow.ts](../../src/application/workflow.ts)。
 
-1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) 创建 Cordis Context，注册内置组件、随包发布的仓库插件和显式 patch 中的插件。
-2. [application/config.ts](../../src/application/config.ts) 将该注册表的 Profile 和校验能力传给 config，读取并校验实验；[plugins/create-components.ts](../../src/application/plugins/create-components.ts) 的 `createRunComponents(registry, config, directory)` 使用同一注册表创建组件。
-3. [run-engine.ts](../../src/application/run-engine.ts) 提供补测控制和运行身份读取，再调用 [core/execution/engine.ts](../../src/core/execution/engine.ts)。
-4. core 处理来源、选题、恢复和准备，通过 Scheduler 调度，[run-task.ts](../../src/core/execution/run-task.ts) 执行 attempt。
-5. application 保存指标与报告，并在退出时关闭注册表，通过 Cordis effect 释放组件资源；失败和取消也进入清理流程。
+1. `openPluginRegistry` 创建 Cordis Context，加载内置入口、随包发布的插件及显式 patch；同一次操作复用该注册表。
+2. `readWorkflowConfiguration` 将模板参数展开为步骤和资源，装配网络依赖，交给 `compileWorkflow` 校验。模板决定步骤顺序，内核不识别 Benchmark 名称。
+3. [workflow-execution.ts](../../src/application/workflow-execution.ts) 获取运行目录写锁，打开工作流 Store 和补测控制，再调用核心执行器。部署为 Jobs 时由应用层提交计划，节点不读取提交端的本机路径。
+4. [execute.ts](../../src/core/workflow/execute.ts) 顺序执行步骤，并在 `forEach` 中按并发限制调度样例。资源仅在声明的端口中可见，按 run、worker、attempt、step 作用域创建和释放。输出必须通过插件声明的协议校验。
+5. 应用层在完成、失败或取消后调用离线报告接口，再关闭注册表和写锁；已保存结果随应用异常返回，调用者可定位部分结果。
 
-`runTask()` 准备任务、推进步骤、归档证据并保存结果。[run-attempt-step.ts](../../src/core/execution/run-attempt-step.ts) 执行单步求解、收集、传输和验证，失败后在求解环境关闭前补收集产物。[attempt-resources.ts](../../src/core/execution/attempt-resources.ts) 创建并释放环境会话、Solver 句柄和私有验证器，负责求解与验证之间的环境切换。多步任务在归档本步证据前关闭本步的私有验证器和独立验证环境，再把求解环境交给下一步。
+持久化、取消、资源清理、协议校验、脱敏和恢复记录由内核提供，不是用户可删除的步骤。数据读取、应用调用、记忆读写、渲染、评分和业务报告可以由步骤插件替换。删除产生下游必需数据的步骤会在编译时失败，需要同时修改后续输入绑定。
 
-`createRunComponents` 和 `createBenchmark` 必须接收已有注册表，不负责打开或关闭注册表。前者返回不含 `dispose()` 的 `RunComponents`，后者直接返回 Benchmark；工厂创建的资源一直由该注册表管理，装配失败也由注册表所有者的 `finally` 清理。
+Benchmark 模板以 `benchmark.runtime` 持有题库、选题、准备及原生 Store；attempt 资源持有公开任务、私有验证材料和执行环境。Solver 只接收公开任务，私有材料由评分步骤通过声明的私有端口使用。Environment、Solver 等已有组件由 `registerNativeResource` 注册并通过资源工厂创建，创建失败与正常退出都释放对应 Cordis effect。
 
-公开 [bootstrap](../../src/application/plugins/bootstrap.ts) 自行打开注册表，失败时关闭，成功时返回 `BootstrappedComponents`（组件字段加 `dispose()`）。其签名为 `bootstrap(config, directory, patchPath?, onWarning?, imageConfigFingerprint?)`，调用方在 `finally` 中调用返回值的 `dispose()`。重复释放由注册表处理。
+工作流根目录保存 `plan.json`、`run.json`、产物和 `report.md`。Benchmark 原生证据位于 `benchmark-evidence/<run-id>`；模型分组和重复实验位于各自 `benchmark-groups` 子目录。工作流状态与题库评分各有自己的持久化记录，不能用原生 manifest 代替工作流完成状态。
 
-`executeExperiment` 负责关闭它使用的注册表，包括通过内部 `execution` 参数转交的注册表；`executeWarmup` 自建的注册表由它关闭，通过 `execution` 借用的注册表由 Jobs 入口关闭。预览、诊断和 Ray worker 入口在退出时关闭各自注册表。Worker 执行函数必须接收注册表，结果上传前不执行无效的组件释放调用。直接调用公开 `runEngine` 时，它只关闭自己创建的补测控制，不创建注册表、不替换组件，也不关闭调用方资源。
-
-Benchmark 准备公开输入和私有验证材料；Solver 只接收公开任务与执行环境；Benchmark.verify 或私有验证运行时使用验证材料评分；Store 保存结果和产物。`Benchmark.prepare()` 在环境创建前执行，现有接口不支持任意新增“环境就绪后”的生命周期阶段，具体限制见 [Benchmark 开发指南](benchmarks.md#未来记忆评测的接口边界)。
-
-离线报告通过 [application/report/](../../src/application/report) 单独加载 Metrics 和 Reporter 的注册入口，读取已保存结果并调用所选组件，不加载内置组件总入口，也不重新运行 Solver。第三方报告组件通过同一个 loadPluginModule 加载，并继续检查保存的插件版本。修改证据格式时需同时检查结果读取、续跑、Metrics 和 Reporter。
+离线报告通过 [workflow-report.ts](../../src/application/workflow-report.ts) 加载已保存的报告步骤及其声明的渲染依赖，校验来源与版本，读取保存的产物。它不创建模型、容器或评测资源。Benchmark 报告继续调用 Metrics/Reporter；没有专用报告步骤时生成通用摘要。
 
 ## 补测、Ray 与 Docker
 
-Engine 在 `admitRetryRequests` 中读取结果、检查资格、预留队列并填写请求绑定。`prepareRetryTask` 为新的 attempt 重新规划并准备依赖。内部队列把任务和准备结果一起传递，区分按需准备、已生成描述、依赖就绪和准备失败。执行器通过 `attemptId` 取回本次准备结果。流水线的就绪时间只属于对应的 attempt。 [准备状态定义](../../src/core/preparation/task-preparation.ts)
+补测由 [application/retry-control/mailbox.ts](../../src/application/retry-control/mailbox.ts) 处理请求文件、锁、事务和 IPC。核心执行器按样例预留队列并保存请求绑定，成功后才提交队列；重复请求不会重复派发。关闭时先停止接收并等待在途事务。
 
-公开 Scheduler 仍接收 `TaskJob`。Ray 的准备凭证保留在 worker 上，worker 验证凭证后才把任务作为依赖就绪交给执行器。
+自动重试由资源插件判断资格，内核限制次数并等待前一 attempt 清理。Benchmark 派发前重新准备失败题目，更新准备凭证和节点位置；派发参数重新校验，业务输入指纹保持不变。准备资源的失败信号会停止派发并取消当前执行块。
 
-补测由 [application/retry-control/mailbox.ts](../../src/application/retry-control/mailbox.ts) 负责请求文件、锁、事务和 IPC，core 负责资格检查与队列预留。交接接口在 [core/contracts/retry-control.ts](../../src/core/contracts/retry-control.ts)。在线请求先预留任务，保存请求状态和 attempt 绑定成功后才 `commit` 入队，最后通过 `finally release` 释放预留。保存失败不得留下已入队任务；相同请求不得重复调度。关闭控制通道前要停止接收并等待在途事务。
+续跑先恢复未释放资源，再校验业务输入和来源，最后复用完成样例。若原生评分已提交但工作流输出尚未保存，`admission.reconcile` 校验原 attempt 的有效结果和产物，再恢复输出；证据不匹配不会直接复用。网络恢复使用保存的模板，运行时环境变量和凭据按当前值读取，不重新加载已改动的本机网络 YAML。
+
+Scheduler 只负责 Benchmark 准备、容量和维护操作。执行块由 `executor.ray` 派发给工作流 worker；准备与执行共享 `ray.connection`。节点保留准备凭证，执行前验证完整参数。
 
 | 操作 | 实现位置 |
 | --- | --- |
 | 提交、跟踪 Ray Jobs 和下载远程结果 | `application/ray/`，调用 `infrastructure/ray/` 客户端 |
-| 将 attempt 调度到 Ray 节点 | `plugins/schedulers/ray/`，使用 Ray 协议和 Python driver |
-| 节点加载插件并执行任务 | `application/ray/node-worker.ts`，调用应用装配和核心执行流程 |
+| 将 attempt 调度到 Ray 节点 | `plugins/resources/ray-executor.ts`，通过 ray.connection 使用 Python driver |
+| 节点加载插件并执行任务 | `application/ray/workflow-worker.ts` 执行工作流；node-worker.ts 仅执行 Benchmark 准备与维护 |
 | 准备 Docker 镜像、运行时及会话 | `plugins/environments/docker/environment.ts` |
 | 会话内执行、传输、阶段切换和关闭 | `plugins/environments/docker/session.ts` |
 | 共用 Docker 命令、镜像和构建工具 | `infrastructure/containers/` |
 
-Ray Jobs 部署与 RayScheduler 的任务调度处于不同层次。Jobs 入口直接调用 application 的操作函数，不通过 CLI 参数解析执行。Docker 准备实现仍包含多种镜像策略；现有拆分不表示每种策略已有独立模块。
+Ray Jobs 部署与 工作流执行器的样例调度处于不同层次。Jobs 入口直接调用 application 的操作函数，不通过 CLI 参数解析执行。Docker 准备实现仍包含多种镜像策略；现有拆分不表示每种策略已有独立模块。
 
 Docker 的 `materialize()` 和按需 `prepare()` 共用 `prepareDependencies()`，准备主容器、网关和 Compose 服务的镜像及运行时。`prepare()` 有凭证时先校验本地镜像，再把已确定的镜像交给 `startSession()`。启动主容器和网关时使用 `--pull never`，Compose 还使用 `--no-build`。启动失败时先清理已创建的容器、Compose 项目和网关，再释放镜像租约。启动成功时，容器、网关、Compose 项目和租约交给 `DockerSession.dispose()`。
 

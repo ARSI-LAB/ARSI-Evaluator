@@ -1,5 +1,7 @@
 # WorkBuddy Evaluation
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./workbuddy.zh-CN.md)
 
 WorkBuddy provides Code, Office, Web, and Security through Harbor task protocols. Select `benchmark.name: workbuddy` and `benchmark.scenario`; defaults are `code`, version `1.0`.
@@ -57,7 +59,7 @@ judge:
   model: ${JUDGE_MODEL_NAME}
   base_url: ${JUDGE_MODEL_ENDPOINT}
   api: openai-completions
-  api_key: ${JUDGE_MODEL_API_KEY}
+  apiKeyEnv: JUDGE_MODEL_API_KEY
 ```
 
 Bind it through `benchmark.verifier`, keeping benchmark name/other settings. User YAML does not accept top-level `verifier`:

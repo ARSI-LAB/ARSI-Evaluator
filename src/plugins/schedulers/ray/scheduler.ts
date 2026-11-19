@@ -1,29 +1,23 @@
-import { networkSnapshot } from "../../../config/network-schema.js";
+import { networkCredentialNames, networkSnapshot } from "../../../config/network-schema.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
 import type { EffectiveConfig } from "../../../core/contracts/config.js";
 import type { PluginFactoryContext } from "../../../core/contracts/plugin.js";
-import type { SchedulerContext, SchedulerPreparationContext, TaskScheduler, TaskJob, TaskExecutor } from "../../../core/contracts/scheduler.js";
-import type { AttemptKey, AttemptRecord, AttemptSummary, Failure, PreparationRound } from "../../../core/contracts/result.js";
+import type { SchedulerPreparationContext, TaskScheduler, TaskJob } from "../../../core/contracts/scheduler.js";
+import type { AttemptKey, PreparationRound } from "../../../core/contracts/result.js";
 import { PACKAGE_RUNTIME_ID } from "../../../core/results/runtime-identity.js";
 import { loadPackageDigest } from "../../../infrastructure/provenance/package.js";
-import { LocalScheduler } from "../local/scheduler.js";
 import { runPreparationQueue } from "../shared/preparation-queue.js";
-import { hasUnconfirmedCleanup, isEvaluationComplete } from "../../../core/results/evaluation-outcome.js";
-import { saveInvalidAttempt } from "../../../core/results/invalid-attempt.js";
-import { formatError } from "../../../core/errors/diagnostics.js";
-import { failureDecision, requiresDispatchStop } from "../../../core/policies/error-policy.js";
+import { failureDecision } from "../../../core/policies/error-policy.js";
 import { classifyError } from "../../../core/errors/classify.js";
 import { EvaluatorError } from "../../../core/errors/evaluator-error.js";
 import { isErrorCode } from "../../../core/errors/registry.js";
-import { RayClient, type RayResult } from "../../../infrastructure/ray/client.js";
+import { RayClient } from "../../../infrastructure/ray/client.js";
+import type { RayConnection } from "../../../infrastructure/ray/connection.js";
 import { RayControl } from "../../../infrastructure/ray/control.js";
-import { projectRemoteJob, projectPortableSelection, validateRemoteJob, type RemotePreparation } from "../../../infrastructure/ray/protocol.js";
+import { portableCredentialNames, projectRemoteJob, projectPortableSelection, validateRemoteJob, type RemotePreparation } from "../../../infrastructure/ray/protocol.js";
 import { startTransferReceiver } from "../../../infrastructure/transfer/https.js";
-import { createDistributedReceiver } from "../../stores/distributed-receiver.js";
 import type { RaySchedulerConfig } from "../../../config/ray.js";
 import type { ConfigTransportLookup } from "../../../core/contracts/config-transport.js";
 import type { BenchmarkRunPlan } from "../../../core/contracts/benchmark.js";
@@ -35,31 +29,28 @@ import type { Selection } from "../../../core/contracts/config.js";
 
 export class RayScheduler implements TaskScheduler {
   readonly executionLocation = "remote" as const;
-  private context: SchedulerContext | undefined;
   private preparationContext: SchedulerPreparationContext | undefined;
   private control: RayControl | undefined;
   private client: RayClient | undefined;
   private server: Awaited<ReturnType<typeof startTransferReceiver>> | undefined;
+  private connection: RayConnection | undefined;
+  private credential: ((name: string) => Promise<string | undefined>) | undefined;
+  private unbind: (() => void) | undefined;
   private packageDigest = "";
-  private previous: AttemptSummary[] = [];
   private readonly prepared = new Map<string, RemotePreparation>();
   constructor(
     private readonly config: RaySchedulerConfig,
     private readonly runtime: PluginFactoryContext,
     private readonly configTransport?: ConfigTransportLookup,
   ) {}
-  async setup(context: SchedulerContext, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
-    if (this.preparationContext) throw new Error("Ray scheduler cannot be reused for another session");
-    if (!context.store.importAttempt || !context.store.updateRemoteAttempt)
-      throw new Error("Ray requires a store with remote admission and lifecycle support");
-    this.context = context;
-    this.previous = await context.store.listAttempts();
-    const config = context.safeConfig as unknown as EffectiveConfig;
-    await this.connect({ session: context.run, safeConfig: context.safeConfig,
-      ...(context.log ? { log: context.log } : {}), ...(context.onProgress ? { onProgress: context.onProgress } : {}) }, signal,
-      createDistributedReceiver(join(config.output.directory, context.run.runId, ".transfers"), context.store),
-      update => context.store.updateRemoteAttempt!(update));
+  bindConnection(connection: RayConnection, credential: (name: string) => Promise<string | undefined>): void {
+    if (this.preparationContext || this.connection) throw new Error("Ray connection must be bound before scheduler setup");
+    this.connection = connection;
+    this.credential = credential;
+  }
+  preparation(taskId: string): RemotePreparation | undefined {
+    const receipt = this.prepared.get(taskId);
+    return receipt && structuredClone(receipt);
   }
   async setupPreparation(context: SchedulerPreparationContext, signal: AbortSignal): Promise<void> {
     await this.connect(context, signal);
@@ -88,35 +79,42 @@ export class RayScheduler implements TaskScheduler {
       }))];
     } finally { await client.close(); }
   }
-  private async connect(context: SchedulerPreparationContext, signal: AbortSignal,
-    receiver?: ReturnType<typeof createDistributedReceiver>,
-    update?: ConstructorParameters<typeof RayControl>[1]): Promise<void> {
+  private async connect(context: SchedulerPreparationContext, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     if (this.preparationContext) throw new Error("Ray scheduler cannot be reused for another session");
     this.preparationContext = context;
     this.packageDigest = await loadPackageDigest();
     if (context.session.pluginVersions[PACKAGE_RUNTIME_ID] !== this.packageDigest)
       throw new Error("Coordinator package differs from locked Ray run");
-    const token = process.env[this.config.collector.tokenEnv];
-    if (!token || Object.values(this.runtime.services).some(binding => binding.auth.value === token))
+    const token = process.env[this.config.collector.tokenEnv] ?? "";
+    if (!this.connection && (!token || Object.values(this.runtime.services).some(binding => binding.auth.value === token)))
       throw new Error("Ray requires a separate transfer token environment variable");
-    this.control = new RayControl(this.runtime.services, update ?? (async () => {
+    this.control = new RayControl(this.runtime.services, async () => {
       throw new Error("Preparation sessions cannot admit evaluation attempts");
-    }), context.onProgress);
+    }, context.onProgress, { names: [...new Set([...networkCredentialNames(this.runtime.network?.document.template ?? {}),
+      ...portableCredentialNames(context.safeConfig as unknown as EffectiveConfig, this.configTransport)])],
+      resolve: this.credential ?? (async name => process.env[name]) });
     try {
-      this.server = await startTransferReceiver({
-        ...(receiver ? { receiver } : {}),
-        token,
-        key: await readFile(this.runtime.resolvePath(this.config.collector.keyFile)),
-        cert: await readFile(this.runtime.resolvePath(this.config.collector.certFile)),
-        host: this.config.collector.host,
-        port: this.config.collector.port,
-        control: (route, body) => this.control!.handle(route, body),
-      });
       const config = context.safeConfig as unknown as EffectiveConfig;
-      this.client = this.createClient({ environment: projectPortableSelection(config.environment, "environment", this.configTransport),
-        pluginVersions: context.session.pluginVersions, packageDigest: this.packageDigest });
-      await this.client.start(signal);
+      const imageGuard = { environment: projectPortableSelection(config.environment, "environment", this.configTransport),
+        pluginVersions: context.session.pluginVersions, packageDigest: this.packageDigest };
+      if (this.connection) {
+        const control = this.control;
+        this.client = this.connection.client;
+        this.unbind = this.connection.subscribe("run", context.session.runId, (route, body) => control.handle(route, body));
+        await this.client.guardImages(imageGuard, signal);
+      } else {
+        this.server = await startTransferReceiver({
+          token,
+          key: await readFile(this.runtime.resolvePath(this.config.collector.keyFile)),
+          cert: await readFile(this.runtime.resolvePath(this.config.collector.certFile)),
+          host: this.config.collector.host,
+          port: this.config.collector.port,
+          control: (route, body) => this.control!.handle(route, body),
+        });
+        this.client = this.createClient(imageGuard);
+        await this.client.start(signal);
+      }
     } catch (error) {
       await this.close();
       throw error;
@@ -260,192 +258,20 @@ export class RayScheduler implements TaskScheduler {
       throw error;
     } finally { combined.removeEventListener("abort", cancel); }
   }
-  private async collected(key: AttemptKey, response?: RayResult): Promise<AttemptRecord | null> {
-    const snapshot = await this.context!.store.snapshot();
-    const remote = snapshot.run.remoteAttempts?.find(
-      item => item.key.attemptId === key.attemptId && item.key.taskId === key.taskId,
-    );
-    const record = snapshot.records.find(
-      item => item.key.attemptId === key.attemptId && item.key.taskId === key.taskId,
-    );
-    if (remote?.state !== "collected" || !remote.receipt || !record) return null;
-    if (response?.type === "result") {
-      const receipt = response.result?.receipt;
-      if (
-        !receipt ||
-        !receipt.accepted ||
-        receipt.schemaVersion !== 1 ||
-        receipt.receipt !== remote.receipt ||
-        receipt.transferId !== remote.transferId ||
-        receipt.key?.runId !== key.runId ||
-        receipt.key?.taskId !== key.taskId ||
-        receipt.key?.attemptId !== key.attemptId
-      )
-        throw Object.assign(new Error("Ray result lacks a matching accepted receipt"), { code: "RAY_PROTOCOL_INVALID" });
-    }
-    return record;
-  }
-  private async executeOne(job: TaskJob, signal: AbortSignal, timeoutSeconds: number): Promise<AttemptRecord | null> {
-    const context = this.context!,
-      client = this.client!,
-      control = this.control!;
-    const key = { runId: job.runId, taskId: job.taskId, attemptId: job.attemptId };
-    const config = context.safeConfig as unknown as EffectiveConfig;
-    const projected = projectRemoteJob({
-      ...(this.runtime.network ? { network: networkSnapshot(this.runtime.network, this.runtime.benchmarkName ?? "unknown") } : {}),
-      job,
-      run: context.run,
-      config: { ...config, run: { ...config.run, timeoutSeconds } },
-      packageDigest: this.packageDigest,
-      uploadEndpoint: this.collectorUrl(),
-      previousAttempts: this.previous.filter(item => item.key.taskId === job.taskId).map(item => item.key),
-      ...(this.configTransport ? { configTransport: this.configTransport } : {}),
-    });
-    const preparation = this.prepared.get(job.taskId);
-    if (context.run.executionVersion === 2 && !preparation) throw new Error("Ray task has not passed the preparation barrier");
-    const remote = preparation ? validateRemoteJob({ ...projected, schemaVersion: 2, preparation }, this.configTransport) : projected;
-    const startedAt = new Date().toISOString();
-    const paths = await context.store.allocate(key);
-    control.register(key, this.packageDigest, context.run.pluginVersions);
-    await context.store.updateRemoteAttempt!({ key, state: "queued" });
-    let result: RayResult | undefined;
-    let progressOutcome: "completed" | "failed" = "failed";
-    let failure: unknown;
-    let finished = false;
-    const pending = client.submit(remote).then(
-      value => {
-        result = value;
-        finished = true;
-      },
-      error => {
-        failure = error;
-        finished = true;
-      },
-    );
-    let cancelAt: number | null = null;
-    let forceAt: number | null = null;
-    let retained: AttemptRecord | null = null;
-    let infrastructureTimeout = false;
-    const cancel = () => {
-      if (cancelAt !== null) return;
-      cancelAt = Date.now();
-      control.cancel(key, infrastructureTimeout);
-      try {
-        client.cancel(key.attemptId);
-      } catch {
-        /* Lost bridge: node heartbeat independently cancels. */
-      }
-    };
-    const overallDeadline =
-      Date.now() + remote.safeConfig.timeoutSeconds * 1000 + this.config.startupTimeoutMs + 300000;
-    signal.addEventListener("abort", cancel, { once: true });
-    try {
-      if (signal.aborted) cancel();
-      while (!finished) {
-        if (cancelAt !== null && retained === null) retained = await this.collected(key);
-        if (Date.now() - control.lastSeen(key) > this.config.heartbeatTimeoutMs || Date.now() > overallDeadline) {
-          infrastructureTimeout = !signal.aborted;
-          cancel();
-        }
-        if (
-          cancelAt !== null &&
-          retained === null &&
-          forceAt === null &&
-          Date.now() - cancelAt > this.config.cancelGraceMs
-        ) {
-          forceAt = Date.now();
-          try {
-            client.cancel(key.attemptId, true);
-          } catch {
-            /* A failed bridge rejects pending requests; otherwise the retirement timeout closes it. */
-          }
-        }
-        const retirementAt = forceAt ?? (retained === null ? null : cancelAt);
-        if (retirementAt !== null && Date.now() - retirementAt > this.config.startupTimeoutMs)
-          throw new Error("Ray bridge did not acknowledge cancelled attempt retirement");
-        await Promise.race([pending, delay(200)]);
-      }
-      const record = (await this.collected(key, result)) ?? retained;
-      if (result?.type === "result")
-        for (const warning of result.result.warnings ?? []) context.log?.(`[warn] [environment] ${job.taskId}: ${warning}`);
-      if (record) { progressOutcome = record.executionStatus === "completed" ? "completed" : "failed"; return record; }
-      await context.store.updateRemoteAttempt!({
-        key,
-        state: "uncollected",
-        message: signal.aborted
-          ? "Cancelled before confirmed collection; node evidence retained"
-          : failure
-            ? "Ray bridge disconnected; node evidence retained"
-            : result?.type === "failed"
-              ? `Ray worker failed (${result.code}); node evidence retained`
-              : "No confirmed upload receipt; inspect node evidence",
-      });
-      if (!signal.aborted) {
-        const message = result?.type === "failed" ? `Ray worker failed (${result.code}); retained node evidence has no accepted receipt`
-          : "Ray attempt has no confirmed collection; retained node evidence is unscored";
-        const errors: Failure[] = [classifyError(Object.assign(new Error(message), {
-          details: result?.type === "failed" ? { ...result.network, ...(result.originalName ? { originalName: result.originalName } : {}) } : undefined,
-          code: infrastructureTimeout ? "RAY_HEARTBEAT_TIMEOUT" : result?.type === "failed" ? result.code
-            : result?.type === "result" ? "RAY_RESULT_UNCOLLECTED" : "RAY_WORKER_LOST",
-        }), { phase: "environment", component: "scheduler", fallbackCode: "RAY_WORKER_LOST" })];
-        // A lost or forcibly killed Ray worker may leave an orphan Node process.
-        // Its exit must be acknowledged before container cleanup permits retries.
-        if (forceAt !== null || !(result?.type === "result" || (result?.type === "failed" && result.retired === true)))
-          errors.push(classifyError(Object.assign(new Error("Ray node process retirement is unconfirmed; refusing overlapping retries"), { code: "CLEANUP_TIMEOUT" }), { phase: "cleanup" }));
-        else try { await client.cleanupAttempt(key, AbortSignal.timeout(185_000)); }
-        catch (error) { errors.push(classifyError(Object.assign(new Error(formatError(error)), { code: "CLEANUP_TIMEOUT" }), { phase: "cleanup" })); }
-        return await saveInvalidAttempt(context.store, key, paths, startedAt, errors, context.run.evaluationKind);
-      }
-      return null;
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "RAY_PROTOCOL_INVALID") throw error;
-      cancel();
-      const record = await this.collected(key);
-      if (record) { progressOutcome = record.executionStatus === "completed" ? "completed" : "failed"; return record; }
-      await context.store.updateRemoteAttempt!({ key, state: "uncollected", message: "Ray execution retirement unconfirmed; node evidence retained" });
-      if (signal.aborted) return null;
-      return await saveInvalidAttempt(context.store, key, paths, startedAt, [
-        classifyError(error, { phase: "environment", cancellation: "infrastructure" }),
-        classifyError(Object.assign(new Error("Ray bridge did not confirm retirement; queued dispatch stopped"), { code: "CLEANUP_TIMEOUT" }), { phase: "cleanup" }),
-      ], context.run.evaluationKind);
-    } finally {
-      control.finishProgress(key, signal.aborted ? "cancelled" : progressOutcome);
-      signal.removeEventListener("abort", cancel);
-    }
-  }
-  /** Sweep run containers leaked by interrupted attempts from every live node. */
-  async recoverAttempts(attempts: AttemptKey[], signal: AbortSignal): Promise<void> {
-    if (!this.client) throw new Error("Ray scheduler setup is required");
-    await this.client.cleanup(this.context!.run.runId, signal);
-  }
-
   validateCapacity(taskCount: number): void {
     if (!this.client) throw new Error("Ray scheduler setup is required");
     assertRayCapacity(this.client.slots, this.config.concurrency, taskCount);
   }
-  async *executeReady(jobs: AsyncIterable<TaskJob>, executor: TaskExecutor, signal: AbortSignal): AsyncIterable<AttemptRecord> {
-    if (!this.context || !this.client || !this.control || !this.server) throw new Error("Ray scheduler setup is required");
-    const slots = Math.max(this.client.slots, 1);
-    const limit = this.config.concurrency === undefined ? slots : Math.min(this.config.concurrency, slots);
-    this.client.limit = limit;
-    const scheduler = new LocalScheduler(limit);
-    const remote: TaskExecutor = async (job, taskSignal) => {
-      if (job.preparationFailure) return executor(job, taskSignal);
-      const result = await this.executeOne(job, taskSignal, (this.context!.safeConfig as unknown as EffectiveConfig).run.timeoutSeconds);
-      if (!result) throw new EvaluatorError("RAY_RESULT_UNCOLLECTED", "Remote execution produced no admitted result");
-      return result;
-    };
-    try { yield* scheduler.executeReady(jobs, remote, signal); } finally { await this.close(); }
-  }
   async close(): Promise<void> {
     try {
-      await this.client?.close();
+      if (!this.connection) await this.client?.close();
     } finally {
       try { await this.server?.close(); }
-      finally { this.control?.close(); this.server = undefined; }
+      finally { this.unbind?.(); this.unbind = undefined; this.control?.close(); this.server = undefined; }
     }
   }
   private collectorUrl(): string {
+    if (this.connection) return this.connection.endpoint;
     if (!this.config.collector.publicUrl) return this.server!.url;
     const url = new URL(this.config.collector.publicUrl);
     if (this.config.collector.port === 0) url.port = new URL(this.server!.url).port;

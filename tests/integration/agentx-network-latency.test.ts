@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { stringify } from "yaml";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { expectRecord } from "../../src/core/validation/input.js";
 import { AgentXReplaySolver, parseAgentXReplayConfig } from "../../src/plugins/solvers/agentx-replay.js";
 import { LocalEnvironment } from "../../src/plugins/environments/local/environment.js";
@@ -11,7 +12,7 @@ import { parseNetworkLatencyConfig } from "../../src/plugins/benchmarks/inferenc
 import { LocalRunStore } from "../../src/plugins/stores/local.js";
 import { AgentXPerformanceMetrics } from "../../src/plugins/metrics/agentx-performance.js";
 import { MarkdownReporter } from "../../src/plugins/reporters/markdown.js";
-import { rebuildReport, saveReport } from "../../src/application/report/index.js";
+import { saveReport } from "../../src/plugins/workflows/benchmark/report.js";
 import { workload, lexicon, profileExport, networkProfileExport } from "../fixtures/agentx/export.js";
 import { storeRecord, storeRun } from "../fixtures/results/store-fixture.js";
 
@@ -31,11 +32,11 @@ test.each(["automatic", "manual"])("YAML %s calibration reaches saved local and 
   await writeFile(join(tokenizer, "tokenizer.json"), "controlled-tokenizer");
   const networkLatency = parseNetworkLatencyConfig(mode === "automatic" ? { mode, pingIntervalSeconds: 0.5 } : { mode, meanMs: 4 });
   const file = join(directory, "experiment.yaml");
-  await writeFile(file, stringify({
-    services: { default: { model: "fixture-model", base_url: "http://localhost:8000/v1", api_key: "${AGENTX_NETWORK_KEY}" } },
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+    services: { default: { model: "fixture-model", base_url: "http://localhost:8000/v1", apiKeyEnv: "AGENTX_NETWORK_KEY" } },
     benchmark: { name: "agentx", solver: { config: { tokenizer, networkLatency, cacheDir: join(directory, "cache") } } },
-  }));
-  const loaded = await loadConfig(file, {}, { ...process.env, AGENTX_NETWORK_KEY: "controlled-secret" });
+  } }));
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file, env: {} }));
   for (const environmentName of ["local", "docker"]) {
     const paths = { root: join(directory, environmentName), agent: join(directory, environmentName, "agent"),
       verifier: join(directory, environmentName, "verifier"), artifacts: join(directory, environmentName, "artifacts") };
@@ -51,7 +52,7 @@ test.each(["automatic", "manual"])("YAML %s calibration reaches saved local and 
       stderr: stream(""), done: Promise.resolve({ code: 0, signal: null }), stop: async () => {} };
     };
     const model = { name: "fixture-model", endpoint: "http://localhost:8000/v1", api: "openai-completions", provider: null };
-    const solver = new AgentXReplaySolver(parseAgentXReplayConfig(loaded.experiment.solver.config),
+    const solver = new AgentXReplaySolver(parseAgentXReplayConfig(experiment.solver.config),
       { services: { default: { model, auth: { value: "controlled-secret", reference: null } } }, solverService: "default", environmentName,
         configDirectory: directory, resolvePath: name => resolve(directory, name) });
     const result = await solver.solve({ id: "point", prompt: "", payload: workload }, session,
@@ -106,7 +107,9 @@ test("per-point reports preserve raw and adjusted metrics, failed probes and off
   const metrics = await readFile(metricsFile, "utf8");
   expect(JSON.parse(metrics).metrics["agentx-performance"].points[0].measurement.networkLatency.rttMs).toBe(4);
   await store.close();
-  await rebuildReport(runDirectory);
+  await store.open(runDirectory);
+  await saveReport(store, [new AgentXPerformanceMetrics()], new MarkdownReporter());
+  await store.close();
   expect(await readFile(join(runDirectory, "points/c1/report.md"), "utf8")).toBe(automaticReport);
   expect(await readFile(join(runDirectory, "points/c4/report.md"), "utf8")).toBe(manualReport);
   expect(await readFile(join(runDirectory, "points/c8/report.md"), "utf8")).toBe(unavailableReport);
