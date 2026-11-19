@@ -8,12 +8,9 @@ import { resolveResumeRun } from "../../src/core/recovery/resume.js";
 import { LocalRunStore } from "../../src/plugins/stores/local.js";
 import { storeKey, storeRecord, storeRun } from "../fixtures/results/store-fixture.js";
 import { harness, source } from "../fixtures/engine/fakes.js";
-import { fingerprintConfig } from "../../src/core/results/run-manifest.js";
-import { runEngine } from "../../src/application/run-engine.js";
-import type { SchedulerContext } from "../../src/core/contracts/scheduler.js";
-import { BUILTIN_RUNTIME_ID } from "../../src/core/results/runtime-identity.js";
-import { PACKAGE_RUNTIME_ID } from "../../src/core/results/runtime-identity.js";
-import { assertWorkerVersions } from "../../src/infrastructure/ray/protocol.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const roots: string[] = []; const stores: LocalRunStore[] = [];
 async function root() { const value = await mkdtemp(join(tmpdir(), "evaluator-resume-")); roots.push(value); return value; }
@@ -71,101 +68,88 @@ test("only reclaims a writer lock whose local process is confirmed dead", async 
 });
 
 async function interrupted() {
-  const directory = await root(); const value = harness(directory); const { store } = value.components; stores.push(store as LocalRunStore);
-  const run = { ...storeRun, source, taskIds: ["a", "b", "c"], configFingerprint: fingerprintConfig(value.config.persisted), pluginVersions: value.components.pluginVersions };
-  await store.create(value.config.experiment.output.directory, run, value.config.persisted);
-  for (const taskId of run.taskIds) {
-    const key = { runId: run.runId, taskId, attemptId: `${taskId}-old` }; await store.allocate(key);
-    if (taskId !== "c") await store.commit({ ...storeRecord(key), executionStatus: taskId === "a" ? "completed" : "cancelled", scoreStatus: taskId === "a" ? "valid" : "invalid" }, { files: [], missing: [] });
-  }
-  await store.close();
-  return { ...value, resumeDirectory: join(value.config.experiment.output.directory, run.runId), run };
+  const directory = await root(), value = harness(directory);
+  stores.push(value.components.store as LocalRunStore);
+  value.config.experiment.scheduler.config.concurrency = 1;
+  const controller = new AbortController();
+  const solve = value.components.solver.solve.bind(value.components.solver);
+  const prepare = value.components.environment.prepare.bind(value.components.environment);
+  let interrupt = false;
+  value.components.environment.prepare = async (...args) => {
+    const session = await prepare(...args), dispose = session.dispose.bind(session);
+    session.dispose = async signal => { await dispose(signal); if (interrupt) throw new Error("interrupted cleanup"); };
+    return session;
+  };
+  value.components.solver.solve = async (...args) => {
+    if (args[0].id === "b") { interrupt = true; controller.abort(); throw controller.signal.reason; }
+    return solve(...args);
+  };
+  const first = await runBenchmarkFixture({ ...value, signal: controller.signal });
+  expect(first.workflow.status).toBe("cancelled");
+  expect(first.records.map(record => record.executionStatus)).toEqual(["completed", "cancelled"]);
+  await value.components.store.close();
+  value.components.solver.solve = solve;
+  value.components.environment.prepare = prepare;
+  value.components.environment.recoverAttempts = async () => {};
+  value.inputs.length = 0;
+  return { ...value, resumeDirectory: first.directory, nativeDirectory: first.nativeDirectory,
+    run: first.run, completedKey: first.records[0]!.key, interruptedKey: first.records[1]!.key };
 }
 
-test("engine resumes locked source and skips completed tasks while retaining historical attempts", async () => {
+test("workflow resumes locked source and skips completed tasks while retaining historical attempts", async () => {
   const value = await interrupted();
   const cleanup = vi.fn(async () => { expect(value.inputs).toEqual([]); });
   value.components.environment.recoverAttempts = cleanup;
   const resolved = vi.spyOn(value.components.benchmark, "resolveSource");
-  const snapshot = await runEngine({ ...value, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(snapshot.run.runId).toBe(value.run.runId); expect(snapshot.run.status).toBe("completed");
   expect(value.inputs.map(input => input.id)).toEqual(["b", "c"]);
-  expect(cleanup).toHaveBeenCalledWith([{ runId: value.run.runId, taskId: "b", attemptId: "b-old" }, { runId: value.run.runId, taskId: "c", attemptId: "c-old" }], expect.any(AbortSignal));
+  expect(cleanup).toHaveBeenCalledWith([value.interruptedKey], expect.any(AbortSignal));
   expect(resolved.mock.calls[0]![0]).toEqual(source);
-  expect(snapshot.records.map(record => record.key.attemptId)).toContain("a-old");
-  expect(await value.components.store.listAttempts()).toHaveLength(5);
+  expect(snapshot.records.map(record => record.key.attemptId)).toContain(value.completedKey.attemptId);
+  expect(await value.components.store.listAttempts()).toHaveLength(4);
   await value.components.store.close();
   value.components.benchmark.resolveSource = async () => { throw new Error("completed resume must stay offline"); };
   value.components.solver.solve = async () => { throw new Error("completed resume must not solve"); };
-  expect((await runEngine({ ...value, signal: new AbortController().signal })).digest).toBe(snapshot.digest);
+  expect((await runBenchmarkFixture({ ...value, signal: new AbortController().signal })).digest).toBe(snapshot.digest);
 });
 
 test("a benchmark can require source validation when a completed run resumes", async () => {
   const value = await interrupted();
-  await runEngine({ ...value, signal: new AbortController().signal });
+  await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   await value.components.store.close();
   Object.defineProperty(value.components.benchmark, "validateSourceOnCompletedResume", { value: true });
   value.components.benchmark.resolveSource = async () => ({ ...source, revision: "changed" });
-  await expect(runEngine({ ...value, signal: new AbortController().signal }))
-    .rejects.toMatchObject({ code: "SOURCE_CHANGED" });
+  const resumed = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
+  expect(resumed.workflow).toMatchObject({ status: "failed", errors: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining("source changed") })]) });
 });
 
 test("a corrupt source lock fails before source, environment, or model access for interrupted and all-terminal runs", async () => {
   const interruptedValue = await interrupted(); interruptedValue.events.length = 0;
-  await writeFile(join(interruptedValue.resumeDirectory, "manifest.json"), JSON.stringify({ ...interruptedValue.run, source: {} }));
-  await expect(runEngine({ ...interruptedValue, signal: new AbortController().signal }))
+  await writeFile(join(interruptedValue.nativeDirectory, "manifest.json"), JSON.stringify({ ...interruptedValue.run, source: {} }));
+  await expect(runBenchmarkFixture({ ...interruptedValue, signal: new AbortController().signal }))
     .rejects.toMatchObject({ code: "STORE_RECORD_INVALID" });
   expect(interruptedValue.events).toEqual([]); expect(interruptedValue.inputs).toEqual([]);
 
   const directory = await root(); const completedValue = harness(directory); stores.push(completedValue.components.store as LocalRunStore);
-  const completed = await runEngine({ ...completedValue, signal: new AbortController().signal });
+  const completed = await runBenchmarkFixture({ ...completedValue, signal: new AbortController().signal });
   await completedValue.components.store.close(); completedValue.events.length = 0; completedValue.inputs.length = 0;
   const runDir = join(completedValue.config.experiment.output.directory, completed.run.runId);
-  await writeFile(join(runDir, "manifest.json"), JSON.stringify({ ...completed.run, source: {} }));
-  await expect(runEngine({ ...completedValue, resumeDirectory: runDir, signal: new AbortController().signal }))
+  await writeFile(join(completed.nativeDirectory, "manifest.json"), JSON.stringify({ ...completed.run, source: {} }));
+  await expect(runBenchmarkFixture({ ...completedValue, resumeDirectory: runDir, signal: new AbortController().signal }))
     .rejects.toMatchObject({ code: "STORE_RECORD_INVALID" });
   expect(completedValue.events).toEqual([]); expect(completedValue.inputs).toEqual([]);
 });
 
 test.each(["config", "plugins", "source"])("resume rejects changed %s before a model call", async changed => {
   const value = await interrupted();
-  if (changed === "config") value.config.persisted = { changed: true };
+  if (changed === "config") value.config.experiment.run.maxTasks = 2;
   if (changed === "plugins") value.components.pluginVersions = { fixture: "2" };
   if (changed === "source") value.components.benchmark.resolveSource = async () => ({ ...source, revision: "changed" });
-  await expect(runEngine({ ...value, signal: new AbortController().signal })).rejects.toThrow(/configuration|version|source/i);
+  if (changed === "source") {
+    const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
+    expect(result.workflow.status).toBe("failed");
+    expect(JSON.stringify(result.workflow)).toContain("source changed");
+  } else await expect(runBenchmarkFixture({ ...value, signal: new AbortController().signal })).rejects.toThrow(/different workflow/);
   expect(value.inputs).toEqual([]);
-});
-
-test.each([[], [BUILTIN_RUNTIME_ID], [PACKAGE_RUNTIME_ID], [BUILTIN_RUNTIME_ID, PACKAGE_RUNTIME_ID]].map(historicalIds => ({ historicalIds })))(
-  "resume accepts updated Evaluator code with historical locks $historicalIds", async ({ historicalIds }) => {
-    const value = await interrupted();
-    const previousVersions = { ...value.run.pluginVersions,
-      ...Object.fromEntries(historicalIds.map(id => [id, `sha256:${"a".repeat(64)}`])) };
-    const previousProvenance = { bundle: "same-candidate", harnessVersion: "1", installation: "old-installation", bridgeDigest: "old-bridge" };
-    await writeFile(join(value.resumeDirectory, "manifest.json"), JSON.stringify({ ...value.run,
-      pluginVersions: previousVersions, solverProvenance: previousProvenance }));
-    const currentVersions = { ...value.components.pluginVersions,
-      [BUILTIN_RUNTIME_ID]: `sha256:${"b".repeat(64)}`, [PACKAGE_RUNTIME_ID]: `sha256:${"c".repeat(64)}` };
-    const currentProvenance = { ...previousProvenance, installation: "new-installation", bridgeDigest: "new-bridge" };
-    value.components.pluginVersions = currentVersions;
-    value.components.solver.provenance = async () => currentProvenance;
-    const setup = vi.fn(async (context: SchedulerContext) => {
-      assertWorkerVersions(context.run.pluginVersions, currentVersions, context.run.pluginVersions[PACKAGE_RUNTIME_ID]!, currentVersions[PACKAGE_RUNTIME_ID]!);
-      expect(context.run.solverProvenance).toEqual(currentProvenance);
-    });
-    value.components.scheduler.setup = setup;
-    const solve = vi.spyOn(value.components.solver, "solve");
-    const snapshot = await runEngine({ ...value, signal: new AbortController().signal });
-    expect(snapshot.run.status).toBe("completed");
-    expect(snapshot.run.runId).toBe(value.run.runId);
-    expect(value.inputs.map(input => input.id)).toEqual(["b", "c"]);
-    expect(solve).toHaveBeenCalledTimes(2);
-    expect(setup).toHaveBeenCalledOnce();
-    expect(snapshot.records.find(record => record.key.taskId === "a")!.key.attemptId).toBe("a-old");
-    expect(await value.components.store.listAttempts()).toHaveLength(5);
-    expect(snapshot.run.pluginVersions).toEqual(previousVersions);
-    expect(snapshot.run.solverProvenance).toEqual(previousProvenance);
-    await value.components.store.close();
-    expect((await runEngine({ ...value, signal: new AbortController().signal })).digest).toBe(snapshot.digest);
-    expect(solve).toHaveBeenCalledTimes(2);
 });

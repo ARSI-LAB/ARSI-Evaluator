@@ -1,17 +1,18 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { writeFixture } from "../fixtures/dataset-tasks.js";
 import { parseHarborConfig } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/config.js";
 import { loadGenericHarborTask } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/task.js";
 import { HarborShellVerifier } from "../../src/plugins/verifiers/shell.js";
 import type { PhaseTimeoutOverrides } from "../../src/core/contracts/task.js";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
-import { createBenchmark } from "../../src/application/plugins/create-components.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
 import { setTimeout as delay } from "node:timers/promises";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { harness, source } from "../fixtures/engine/fakes.js";
 import { storeRun } from "../fixtures/results/store-fixture.js";
@@ -53,16 +54,20 @@ test("removed Harbor verify default is rejected instead of silently overriding n
   expect(() => parseHarborConfig({ defaults: { verifyTimeoutSeconds: 300 } })).toThrow("verifyTimeoutSeconds");
 });
 
-test("YAML run overrides reach the actual Harbor component through bootstrap", async () => {
+test("YAML run overrides reach the actual Harbor component through its resource factory", async () => {
   const { root } = await fixture(11, 13);
   const file = join(root, "experiment.yaml");
-  await writeFile(file, JSON.stringify({ services: { default: { model: "fixture", base_url: "http://127.0.0.1:1" } },
+  await writeFile(file, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "http://127.0.0.1:1" } },
     benchmark: { name: "harbor", config: { source: { kind: "local", path: "./dataset" }, cacheDir: "./cache", tasks: { root: "tasks", id: "directory" } } },
-    run: { solveTimeoutSeconds: 23, verifyTimeoutSeconds: 29 } }));
-  const config = await loadConfig(file, {}, {}, { allowMissingAuth: true });
+    run: { solveTimeoutSeconds: 23, verifyTimeoutSeconds: 29 } } }));
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file, env: {} }));
   const registry = await openPluginRegistry();
   try {
-    const benchmark = await createBenchmark(registry, config, root);
+    const runtime = { configDirectory: root, resolvePath: (path: string) => resolve(root, path), services: {}, solverService: "default",
+      phaseTimeouts: { ...(experiment.run.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: experiment.run.solveTimeoutSeconds }),
+        ...(experiment.run.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: experiment.run.verifyTimeoutSeconds }) } };
+    const verifier = experiment.verifier ? await createNativeResource(registry.ctx, "verifier", experiment.verifier, runtime) : undefined;
+    const benchmark = await createNativeResource(registry.ctx, "benchmark", experiment.benchmark, { ...runtime, ...(verifier ? { verifier } : {}) });
     const signal = AbortSignal.timeout(5000), source = await benchmark.resolveSource(null, signal);
     const refs = [];
     for await (const ref of benchmark.enumerate(source, signal)) refs.push(ref);

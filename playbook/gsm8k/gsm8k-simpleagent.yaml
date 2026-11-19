@@ -1,8 +1,13 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-environment: local
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+  environment: local
+output:
+  directory: ../../results/gsm8k/gsm8k-simpleagent

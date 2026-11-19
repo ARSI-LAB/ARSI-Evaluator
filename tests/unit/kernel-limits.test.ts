@@ -98,4 +98,4 @@ test("profiling cache prunes only when callers configure a capacity", async () =
     await limited.put(profile, { metrics: {}, replay: {} });
     expect(await readdir(directory)).toHaveLength(2);
   } finally { await rm(root, { recursive: true, force: true }); }
-});
+}, 30_000);

@@ -1,3 +1,4 @@
+import { registerNativeResource } from "../workflows/benchmark/component-resource.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { LocalEnvironment } from "./local/environment.js";
 import { DockerEnvironment, parseDockerContainerEnv, parseDockerImageOverrides } from "./docker/environment.js";
@@ -7,7 +8,7 @@ import { PINNED_NODE_IMAGE } from "../../infrastructure/containers/runtime-contr
 import { expectRecord, rejectUnknown, expectNonEmptyString } from "../../core/validation/input.js";
 
 export function apply(ctx: Context): void {
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "environment",
     "local",
     (config: unknown) => {
@@ -18,7 +19,7 @@ export function apply(ctx: Context): void {
     },
     (_config, runtime) => new LocalEnvironment(undefined, undefined, runtime.network),
   );
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "environment",
     "docker",
     (value: unknown) => {

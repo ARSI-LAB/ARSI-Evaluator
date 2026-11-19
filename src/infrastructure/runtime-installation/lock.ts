@@ -43,7 +43,7 @@ function dead(value: Awaited<ReturnType<typeof owner>>): boolean {
 }
 
 /** Publish complete ownership atomically; never reclaim a live or unknown owner. */
-export async function acquireRuntimeLock(path: string, signal: AbortSignal): Promise<() => Promise<void>> {
+export async function acquireRuntimeLock(path: string, signal: AbortSignal, options: { wait?: boolean } = {}): Promise<() => Promise<void>> {
   signal.throwIfAborted();
   await mkdir(dirname(path), { recursive: true });
   const token = randomUUID();
@@ -69,7 +69,10 @@ export async function acquireRuntimeLock(path: string, signal: AbortSignal): Pro
         } finally {
           await release();
         }
-      } else await delay(50, undefined, { signal });
+      } else {
+        if (options.wait === false) throw new Error(`Another process owns this lock or its ownership cannot be confirmed: ${path}`);
+        await delay(50, undefined, { signal });
+      }
     }
   } finally {
     await rm(candidate, { force: true });

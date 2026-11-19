@@ -18,7 +18,7 @@ async function build(): Promise<string> {
 async function load(): Promise<void> {
   // Registration validates resources before touching the supplied evaluator.
   await execute(process.execPath, ["--input-type=module", "-e",
-    'const plugin = await import("./dist/index.js"); await plugin.apply({evaluator:{registerProfile(){},register(){}}});'], { cwd: directory });
+    'const plugin = await import("./dist/index.js"); await plugin.apply({evaluator:{registerProfile(){},workflows:{hasResource(){return false}},registerResource(){}}});'], { cwd: directory });
 }
 beforeAll(async () => {
   await mkdir(scratch, { recursive: true });

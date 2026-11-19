@@ -1,10 +1,24 @@
 # Plugin Development and Loading
 
+Custom evaluation flows use steps, resource providers and templates; see [workflow plugin development](workflow-plugins.md) and the [workflow user guide](../users/workflows.md). The eight component roles described below belong to Benchmark evaluation and are registered as resources through `registerNativeResource`.
+
 > English | [中文](./plugins.md)
 
 Covers eight component interfaces, runnable metric plugins, explicit patches, and Ray deployment. Source commands/experiments paths are relative to the Evaluator root.
 
 [Project home](../../README.md) · [User guide](../users/README.md)
+
+## Source and Registration Locations
+
+Built-in components register in each role's index.ts; Metrics and Reporter use metrics/index.ts and reporters/index.ts respectively. Benchmarks have three registration entries: agent-harness, inference-engine and operator. application/plugins/open-registry.ts creates the Cordis registry and registers plugins, load-module.ts locates and imports modules and reads versions, plugins/workflows/benchmark/component-resource.ts creates registered Benchmark components, while application/workflow.ts owns the operation registry. config/plugin-patch.ts only reads patches, validates entries, and computes patch digests; it does not execute plugin modules. External plugins import public contracts from arsi-evaluator, not internal directories. See [Source architecture and execution flow](architecture.en.md) for calls and resource ownership, and [Benchmark development](benchmarks.en.md#where-to-add-new-behavior) for implementation locations and lifecycle limits.
+
+Run `pnpm check:dependencies` to check imports, boundary violations, and executable module cycles. See [dependency rules](architecture.en.md#allowed-source-dependencies) for allowed relationships and coverage limits. Repository plugin manifests control builds. External components load through explicit patches at runtime.
+
+### Published Process Entries
+
+`pnpm build` generates the public package/CLI entries and the existing `dist/adapters/ray/{node-worker,jobs-entry,jobs-gateway}.js`, Ray `python/requirements.txt`, `dist/adapters/harness/pi/` standalone bundle and `dist/adapters/harness/agentx/assets/ascend_metrics.py`. These deployment paths remain available; internal code uses the new directories. Generated entries and assets are included in the package digest.
+
+After installing an actual packed package with runtime dependencies outside the checkout, run `node scripts/verify-distribution.mjs <installed-package-directory>` from the repository. The target must contain no src or scripts directory. This checks CLI, package-name SDK execution/reporting, Pi protocol, worker task/maintenance/version rejection, Jobs entry processing/gateway and AgentX Python startup. OpenSSL and Python may be selected using OPENSSL_BIN and PYTHON_BIN; unavailable tools are reported as skips. This controlled check does not replace real Docker/Ray/NPU/model acceptance.
 
 ## Component Types
 
@@ -24,7 +38,7 @@ For external build bases, pass `prepareBuild(spec, signal, activity?)` to Docker
 
 Substeps may supply unique operationId/status started/updated/completed/failed/cancelled. Reuse IDs within a step only; never after completion. Core nests under caller operations and closes unfinished children. Shared builds publish identical component IDs to waiters; core adds each task/attempt identity.
 
-Cordis loads modules; ctx.evaluator.register registers components. Modules may register several; experiment names select them.
+Cordis loads modules; registerNativeResource registers Benchmark component resources. Modules may register several; experiment names select them.
 
 Record definitions live in `src/plugins/benchmarks/definitions/`: task files convert/select scoring; `records.ts` validates/builds; `prompts.ts` stores prompts. `scoring/` groups matching/generative-choice/probability/model-judge/code execution; complex DROP algorithms may be separate. Reuse scoring rather than requiring a new `*-score.ts` per dataset. Scoring remains benchmark business logic, not automatically a Verifier because of filenames.
 
@@ -38,7 +52,7 @@ Record definitions live in `src/plugins/benchmarks/definitions/`: task files con
 | `metrics` | Snapshot `metrics`; [Metrics](../../src/core/contracts/metrics.ts) | `success-rate`,`duration`,`usage`,`harbor-score`,`quality-score`,`agentx-performance` |
 | `reporter` | Report rendering; [Reporter](../../src/core/contracts/reporter.ts) | `markdown` |
 | `store` | Runs/attempts/manifests/snapshots; [RunStore](../../src/core/contracts/run-store.ts) | `local` |
-| `scheduler` | Preparation/readiness/execution; [TaskScheduler](../../src/core/contracts/scheduler.ts) | `local`,`ray` |
+| `scheduler` | Preparation/readiness/node capacity; [TaskScheduler](../../src/core/contracts/scheduler.ts) | `local`,`ray` |
 
 Reporter may implement `taskReports(snapshot, metrics)` returning {id,taskId,title}. Common reporting filters task results/history/preparation, recomputes metrics, and passes optional `ReportContext` to render. `evidenceRoot` points relatively to run roots. With subreports, root `render` produces an index. Stores must implement `saveReportBundle` to save the index and each task's `points/<id>/report.md` and `metrics.json` together, checking snapshots, versions, and safe paths. Single reports pass an empty document array. The old `RunStore.saveReport` method is removed. `render` handles all reports; types are root exports.
 
@@ -51,13 +65,22 @@ Optional `Environment.cleanupImages(request, signal)` returns daemon results; re
 
 Docker records associations by runtime.imageConfigFingerprint/task/phase. Fingerprints exclude auth/output/scheduling/node-local declared fields, retaining selection. Third-party image acquisition must register ownership; preexisting sources cannot become deletable by assumption. Persist Ray EVALUATOR_CACHE_DIR.
 
-With Benchmark.planRun, Scheduler implements prepareTasks(jobs,plan,context,signal). Local chooses batch/bounded pipeline; invoke `context.prepareTask(task, signal, { roundId, timing })` rather than duplicate runtimes/requirements/verifier setup. Return `{ tasks }` or `{ pipeline }`; pipelines need cancellable sources/completion/cancel(), waiting for active preparation on early close. All schedulers implement `executeReady(jobs, executor, signal)` for slots/dynamic retries over cancellable async streams, including batch tasks.
+With Benchmark.planRun, Scheduler implements prepareTasks(jobs,plan,context,signal). Local chooses batch/bounded pipeline; invoke `context.prepareTask(task, signal, { roundId, timing })` rather than duplicate runtimes/requirements/verifier setup. Return `{ tasks }` or `{ pipeline }`; pipelines need cancellable sources/completion/cancel(), waiting for active preparation on early close. Workflow execution blocks own execution slots and retries; the `executor.ray` resource executes remote steps. Schedulers only prepare tasks.
 
 PreparationContext/ScheduledPreparation/createPreparationRound/runPreparationRound are root exports. Creation validates budgets/records; execution wraps batch work with absolute budgets/persistence. Omitted `context.settings` lets schedulers default: Local pipeline/equal concurrency, Ray batch. Explicit preparation is completed during config parsing; external defaults remain batch. Old array execute/prepareRun contracts are removed. No-plan benchmarks retain attempt preparation. Ray workers call common preparation; coordinators assign/check receipts without local environment callbacks.
 
-Remote `warmup` requires setupPreparation(context,signal). `SchedulerPreparationContext` supplies sources/digests/plugin-package versions/Solver metadata/progress, without Store. Initialize connections/preparation channels only, not Runs/Attempts/result uploads. Formal runs use setup(SchedulerContext,signal). Share connection/placement code. prepareTasks may return `placements: { taskId, nodeId }[]`, including assigned failures. Execute on prepared nodes. Plugin lifecycle releases resources; cancellation waits for node work.
+Remote `warmup` requires setupPreparation(context,signal). `SchedulerPreparationContext` supplies sources/digests/plugin-package versions/Solver metadata/progress, without Store. Initialize connections/preparation channels only, not Runs/Attempts/result uploads. Formal runs also use this preparation entry; preparation and step execution share the `ray.connection` resource. prepareTasks may return `placements: { taskId, nodeId }[]`, including assigned failures. Execute on prepared nodes. Plugin lifecycle releases resources; cancellation waits for node work.
 
-Store/Scheduler AttemptRecords require evaluationKind/executionStatus/scoreStatus/cleanupStatus, rejecting old status/timeoutKind. Metrics read current fields; display helpers attemptStatus()/attemptTimeoutKind() are root exports and must not be persisted. Only local Store reads convert history; new/remote records use current structures. See [results/errors](../users/reference/errors.md).
+AttemptRecords saved by Benchmark execution steps require evaluationKind/executionStatus/scoreStatus/cleanupStatus, rejecting old status/timeoutKind. Metrics read current fields; display helpers attemptStatus()/attemptTimeoutKind() are root exports and must not be persisted. Only local Store reads convert history; new/remote records use current structures. See [results/errors](../users/reference/errors.md).
+
+## Add a Built-in Implementation for an Existing Role
+
+Use these steps to add an implementation of an existing role, such as a metric. To add a role alongside the eight existing roles, see [Developing a built-in component role](built-in-role-development.en.md).
+
+1. Choose a role and its contract from [Component Types](#component-types). Add the implementation under the corresponding `src/plugins/` role directory. For a Benchmark, choose its category and entry point using the [Benchmark development guide](benchmarks.en.md#where-to-add-new-behavior).
+2. Import the implementation in the role's `index.ts` and call `registerNativeResource(ctx, role, name, validate, factory)` in `apply(ctx)`. Choose a name unique within that role. The validator checks `config` and returns the factory's input. The factory creates the instance. Use `runtime.resolvePath()` for relative paths and arrange cleanup for any processes or connections the component owns.
+3. Select the registered name in the experiment YAML. See [Select the component in an experiment](external-plugins.en.md#4-select-the-component-in-an-experiment) for field locations. To use it by default for a Benchmark, set the selection in that Benchmark's [Profile](benchmarks.en.md#publish-default-profiles). `src/plugins/index.ts` already calls each role's `apply(ctx)`. Register implementations for existing roles in their role entry point.
+4. Run `pnpm check:dependencies`, `pnpm typecheck`, and `pnpm build`. Use `node dist/cli.js inspect <experiment.yaml>` to check the selected name and configuration. Run a controlled experiment to verify behavior. For components that own a process or connection, cover failure, cancellation, and cleanup.
 
 ## Write a Plugin
 
@@ -65,41 +88,9 @@ When Solver `runtimeInstallation()` returns `RuntimeInstallation`, it may set `c
 
 See [benchmark development](benchmarks.en.md) for interfaces/responsibilities/lifecycles/examples and [requirements/acceptance](benchmark-evaluation-requirements.en.md) for official images/platforms/resources/timeouts/real runs.
 
-Example completed-task metric: create `experiments/plugins/completed-count.mjs`:
+`registerNativeResource(ctx, role, name, validate, factory)` takes a Cordis Context followed by component role/name/validator/factory. Factories may receive config/runtime with model settings/auth/resolvePath; use authentication only for model calls, never logs/results.
 
-```js
-export const inject = ["evaluator"];
-
-export function apply(ctx) {
-  ctx.evaluator.register(
-    "metrics",
-    "completed-count",
-    (config) => {
-      if (
-        config === null || typeof config !== "object" ||
-        Array.isArray(config) || Object.keys(config).length > 0
-      ) {
-        throw new TypeError("completed-count accepts no configuration options");
-      }
-      return {};
-    },
-    () => ({
-      name: "completed-count",
-      async compute(snapshot) {
-        return {
-          completed: snapshot.records.filter(
-            (record) => record.executionStatus === "completed",
-          ).length,
-        };
-      },
-    }),
-  );
-}
-```
-
-`register(role, name, validate, factory)` takes component role/name/validator/factory. Factories may receive config/runtime with model settings/auth/resolvePath; use authentication only for model calls, never logs/results.
-
-Execution components receive the experiment's `npu` or `gpu` selection through `runtime.hardware`, supplied by bootstrap and Ray workers. Historical SDK callers that omit it mean NPU. Accelerator-dependent plugins select an implementation and reject unsupported hardware before allocating resources; other plugins need not probe devices. Metrics/Reporter keep their reporting context and never probe hardware for offline reports.
+Execution components receive the experiment's `npu` or `gpu` selection through `runtime.hardware`, supplied by Benchmark factory resources and Ray workers. Historical SDK callers that omit it mean NPU. Accelerator-dependent plugins select an implementation and reject unsupported hardware before allocating resources; other plugins need not probe devices. Metrics/Reporter keep their reporting context and never probe hardware for offline reports.
 
 TypeScript plugins import HardwareKind/Metrics/Benchmark/Solver/PluginFactoryContext from `arsi-evaluator` roots and implement contracts. Released packages only load compiled JavaScript; `pnpm dev` started from source falls back to the matching `.ts` file declared by the manifest.
 
@@ -216,10 +207,11 @@ Jobs coordinators also set EVALUATOR_PLUGIN_PATCH_PATH to installed matching pat
 
 ### Transfer Component Configuration to Ray Nodes
 
-`register(role, name, validate, factory, transport?)` argument5 declares `PluginConfigTransport`, exported at root. No Ray component-name list edits are needed. Example:
+`registerNativeResource(ctx, role, name, validate, factory, transport?)` uses its final argument to declare `PluginConfigTransport`, exported at root. No Ray component-name list edits are needed. Example:
 
 ```ts
-ctx.evaluator.register("benchmark", "my-records", validateConfig, createBenchmark, {
+import { registerNativeResource } from "arsi-evaluator";
+registerNativeResource(ctx, "benchmark", "my-records", validateConfig, createBenchmark, {
   nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" },
   containerPaths: [["defaults", "workdir"], ["taskProfiles", "*", "extraPaths", "*"]],
   validate(config) {

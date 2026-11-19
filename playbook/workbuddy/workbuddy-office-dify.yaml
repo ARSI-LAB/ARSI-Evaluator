@@ -1,19 +1,24 @@
-# 配置组合示例：当前 Dify Harness 仅返回文本，尚未将工作流文件同步到任务环境。
-# Office 的真实文件交付评测请使用 simpleagent 或能够写入 EnvironmentSession 的 AgentBundle。
-services:
-  dify-app:
-    model: dify-internal-binding
-    base_url: http://127.0.0.1:9/v1
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: workbuddy
-  scenario: office
-  solver:
-    name: agentbundle
-    config:
-      path: ${DIFY_BUNDLE_PATH}
-      dify:
-        baseUrl: ${DIFY_BASE_URL}
-        registryPath: ${DIFY_REGISTRY_PATH}
-run:
-  timeoutSeconds: 900
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  # 配置组合示例：当前 Dify Harness 仅返回文本，尚未将工作流文件同步到任务环境。
+  # Office 的真实文件交付评测请使用 simpleagent 或能够写入 EnvironmentSession 的 AgentBundle。
+  services:
+    dify-app:
+      model: dify-internal-binding
+      base_url: http://127.0.0.1:9/v1
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: workbuddy
+    scenario: office
+    solver:
+      name: agentbundle
+      config:
+        path: ${DIFY_BUNDLE_PATH}
+        dify:
+          baseUrl: ${DIFY_BASE_URL}
+          registryPath: ${DIFY_REGISTRY_PATH}
+  run:
+    timeoutSeconds: 900
+output:
+  directory: ../../results/workbuddy/workbuddy-office-dify

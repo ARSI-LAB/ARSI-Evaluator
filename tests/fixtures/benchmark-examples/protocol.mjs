@@ -1,10 +1,11 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { questionSource, sourceConfig } from "./source.mjs";
 
 export const inject = ["evaluator"];
 export function apply(ctx) {
   ctx.evaluator.registerProfile({ id: "example-protocol", role: "benchmark",
     plugin: { name: "example-protocol", config: { path: "./questions.json" } }, defaults: { environment: "local" } });
-  ctx.evaluator.register("benchmark", "example-protocol", sourceConfig, (config, runtime) => {
+  registerNativeResource(ctx, "benchmark", "example-protocol", sourceConfig, (config, runtime) => {
     const source = questionSource(runtime.resolvePath(config.path));
     return {
       validateSourceOnCompletedResume: true,

@@ -2,9 +2,7 @@
 
 > English | [中文](./network-retry.zh-CN.md)
 
-`arsi-evaluator retry` creates full new attempts for invalid tasks with explicit network failures in the original run. It preserves task set, sources, model, Solver, official limits, and scoring. Zeros, wrong answers, valid agent timeouts, and failures without network evidence are ineligible.
-
-![Three recovery paths show request retry within the same attempt, automatic reruns after stream truncation and confirmed cleanup, and manual recovery into a new attempt in the same run](imgs/10-flowchart-network-retry.png)
+`arsi-evaluator retry` creates new attempts for failed or interrupted workflow samples without changing cases, sources, models, steps, or scoring. Valid scores, including valid zeros, are reused. Network recovery is a common use, not the only eligible failure category.
 
 ## Automatic Network Retries
 
@@ -33,20 +31,12 @@ Remove `run.taskRetry` from old YAML. Configure model request limits as above an
 
 ```bash
 arsi-evaluator retry --run <run-id>
-arsi-evaluator retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
+arsi-evaluator retry --run <run-directory> --task-id failed-case --request-id network-fix-1 --reason "network restored"
 ```
 
-Repeat `--task-id` to select multiple tasks, or omit it to select all eligible network failures. With no eligible tasks, the command returns normally without starting new attempts. When recovering an ended evaluation, add `--network network.yaml` to change download sources or proxies. A running evaluation keeps its startup network settings.
+Repeat `--task-id` to select failed or interrupted workflow samples; omission selects all. Valid completed samples are reused. Requests to active runs go to the existing coordinator. Ended runs reopen the saved workflow. Repeating a request ID does not dispatch duplicate work.
 
-Select the original evaluation by Run ID or result directory. The ID index defaults to `~/.arsi-evaluator/runs/`, configurable with `EVALUATOR_RUN_INDEX_DIR`. After copying results to another machine, pass the directory directly. Ray Jobs still needs the original gateway and its authentication to operate on the remote run; a downloaded result copy cannot replace it.
-
-While the evaluation is running, the command submits recovery to the original process and other tasks continue. After it ends, recovery continues in the same run. `retry` selects eligible network failures; `--resume` handles unfinished tasks according to resume rules.
-
-Requests during data or environment preparation may show `pending` until scheduling is ready. `accepted` means the request was accepted; `rejected` requires following the reported cause.
-
-For an unconfirmed request, resend the original `requestId` from the error with `--request-id` to avoid duplicate submissions. If the original process is exiting, wait for it to exit, then resend the same ID.
-
-Before recovery, restore model and service authentication variables referenced by the original configuration in the command's launch environment. Saved results do not contain recoverable keys. If original credentials used literal values without variable references, follow the error to supply the required configuration. See [resume requirements](usage.md#resume-and-rebuild-reports) for configuration, source, and plugin rules.
+Retry keeps the saved network template and rejects `--network` replacement. Repair referenced variables or node connectivity, for example HF_ENDPOINT, then retry. Active processes retain their already-open clients. Supply current credential variables; saved files contain names, not values. Changed plans or implementations require a new run.
 
 ## Manual Recovery and Execution Location
 
@@ -56,9 +46,9 @@ Recovery is blocked while a task is still running or resource release is unconfi
 
 ## Eligible Failures
 
-The error must be `NETWORK_FAILURE` with an explicit network cause. Evaluator also checks for an existing valid score and released resources; not every timeout or failure is eligible.
+Manual retry selects failed or interrupted workflow samples and validates plans, business inputs, and resource cleanup. The following table describes repairable Benchmark network failures; it does not restrict manual retry to NETWORK_FAILURE. Low valid scores do not trigger reruns.
 
-| Operation | Eligible evidence | Ineligible evidence |
+| Operation | Often fixed by restoring connectivity | Requires checking configuration or business behavior |
 | --- | --- | --- |
 | Docker Pull | DNS, disconnects, transfer timeouts, temporary 5xx | Missing images, authentication, incompatible platforms |
 | Runtime installation | Explicit download diagnostics outside image builds | Image build failure, dependency conflict, ordinary deadline |
@@ -66,16 +56,16 @@ The error must be `NETWORK_FAILURE` with an explicit network cause. Evaluator al
 | Data sources | Explicit GitHub/HF/HTTP connection/download failures | Version, format, digest, permanent authentication errors |
 | Verifier | No reward and explicit dependency-download network failure | Official zero, verifier logic error, ordinary total verification timeout |
 
-Image build download failures retain `ENV_IMAGE_BUILD_FAILED` and trigger neither automatic nor manual task retries. APT retries downloads inside its command; exhaustion fails the build without replaying the attempt.
+Image build download failures retain `ENV_IMAGE_BUILD_FAILED` and do not trigger automatic whole-task retries. After fixing the cause, retry failed samples manually. APT retries downloads inside its command; exhaustion fails the build without replaying the attempt.
 
 Network errors inside model tools do not qualify a task that ultimately completes with a score. Unresolved collection/storage/cleanup errors also block reruns despite other network evidence.
 
 ## Latest Results and History
 
-Each task uses one valid result, never the highest score. If an initial pull fails and recovery receives official zero, the latest report shows normal completion/zero and omits the old network error. Once all tasks have valid results and no unresolved cleanup/run faults remain, run status changes from `error` to completed.
+Each task uses one valid result, never the highest score. If an initial pull fails and recovery receives official zero, the latest report shows normal completion/zero and omits the old network error. Once all tasks have valid results and no unresolved cleanup/run faults remain, workflow status changes from `failed` to `completed`.
 
-- `tasks/.../attempts/` retains original failures, trajectories, logs, and new attempts.
-- `manifest.json` retains initialization failures and preparation history.
+- `benchmark-evidence/<run-id>/tasks/.../attempts/` retains original failures, trajectories, logs, and new attempts.
+- `benchmark-evidence/<run-id>/manifest.json` retains Benchmark initialization failures and preparation history; root `run.json` records workflow state.
 - `retry` updates root reports and, after prior resume, the report referenced by `reports/current.json`, without a new directory.
 - Explicit resume creates `reports/resume-N/`, preserving initial reports under `reports/initial/` and previous resume reports. If report generation was interrupted, rebuild it with the command below.
 

@@ -11,8 +11,10 @@ import { EvaluatorError } from "../../src/core/errors/evaluator-error.js";
 import { verifyBundleCandidate } from "../../src/runtimes/agentbundle/sdk.js";
 import { classifyError } from "../../src/core/errors/classify.js";
 import { formatError } from "../../src/core/errors/diagnostics.js";
-import { bootstrap } from "../../src/application/plugins/bootstrap.js";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
+import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
 
 const API_KEY = "app-dify-service-key";
 const REPO_ROOT = resolve(import.meta.dirname ?? ".").includes("tests")
@@ -258,20 +260,27 @@ describe("AgentBundle Dify workflow", () => {
 });
 
 describe("AgentBundle Dify preparation", () => {
-  test("bootstrap resolves relative paths and rejects the removed solver registration", async () => {
+  test("resource factory resolves relative paths and rejects the removed solver registration", async () => {
     const configPath = join(root, "experiment.yaml");
-    await writeFile(configPath, `services:\n  default:\n    model: dify-internal-binding\n    base_url: http://127.0.0.1:9/v1\n    api_key: \${KEY}\nbenchmark:\n  name: gsm8k\n  solver:\n    name: agentbundle\n    config:\n      path: ./bundle\n      dify:\n        baseUrl: ${baseUrl}\n        registryPath: ./bootstrap-registry.json\n`);
+    const input = { schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+      services: { default: { model: "dify-internal-binding", base_url: "http://127.0.0.1:9/v1", apiKeyEnv: "KEY" } },
+      benchmark: { name: "gsm8k", solver: { name: "agentbundle", config: { path: "./bundle", dify: { baseUrl, registryPath: "./bootstrap-registry.json" } } } },
+    } };
+    await writeFile(configPath, JSON.stringify(input));
     await cp(fixture, join(root, "bundle"), { recursive: true });
-    const loaded = await loadConfig(configPath, {}, { KEY: "unused-key" });
-    const components = await bootstrap(loaded, root);
+    const experiment = benchmarkExperiment(await inspectWorkflow({ configPath, env: {} }));
+    const registry = await openPluginRegistry();
+    const solver = await createNativeResource(registry.ctx, "solver", experiment.solver, { configDirectory: root, resolvePath: path => join(root, path), solverService: "default",
+      services: { default: { model: experiment.services.default!, auth: { value: "unused-key", reference: null } } } });
     try {
-      expect(components.solver).toBeInstanceOf(AgentBundleSolver);
+      expect(solver).toBeInstanceOf(AgentBundleSolver);
       const context = await attemptContext("bootstrap");
-      await (await components.solver.prepare?.(fakeSession(context.paths.agent), context))?.dispose?.(signal);
+      await (await solver.prepare?.(fakeSession(context.paths.agent), context))?.dispose?.(signal);
       expect(await readFile(join(root, "bootstrap-registry.json"), "utf8")).toContain("app-installed-1");
-    } finally { await components.dispose(); }
-    loaded.experiment.solver = { name: "dify", service: "default", config: {} };
-    await expect(bootstrap(loaded, root)).rejects.toThrow(/dify/);
+    } finally { await registry.dispose(); }
+    input.with.benchmark.solver.name = "dify";
+    await writeFile(configPath, JSON.stringify(input));
+    await expect(inspectWorkflow({ configPath, env: {} })).rejects.toThrow(/dify/);
   });
 
   test("requires Dify options for Dify bundles and rejects them on another harness", async () => {

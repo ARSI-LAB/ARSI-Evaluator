@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": ">=24.19.0"
+    "node": ">=24.22.1"
   },
   "files": [
     "dist",
@@ -26,6 +26,7 @@
     "build": "node scripts/build-network-bootstrap.mjs && node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/build-plugins.mjs && node scripts/package-runtime.mjs",
     "dev": "node scripts/dev.mjs",
     "ray:ensure": "pnpm install --frozen-lockfile && pnpm build && node scripts/ray-smoke/ensure.mjs",
+    "check:dependencies": "node scripts/check-dependencies.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest",
     "network:bundle": "node scripts/build-network-bootstrap.mjs"

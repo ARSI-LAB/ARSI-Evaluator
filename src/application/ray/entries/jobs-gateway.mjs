@@ -1,8 +1,7 @@
+import { rejectUnknown } from "../../../../dist/core/validation/input.js";
+import { parseMaintenanceRequest } from "../../../../dist/core/workflow/maintenance.js";
 // Trusted single-tenant gateway. Ray Dashboard stays on the private cluster network.
-import { fingerprintConfig } from "../../../../dist/core/results/run-manifest.js";
 import { controlTransaction, submitRetry } from "../../../../dist/application/retry-control/mailbox.js";
-import { redactDiagnostic } from "../../../../dist/core/errors/diagnostics.js";
-import { randomUUID } from "node:crypto";
 import { createServer } from "node:https";
 import { request as rayRequest } from "node:http";
 import { readFile, writeFile, mkdir, readdir, open, rm, stat } from "node:fs/promises";
@@ -10,6 +9,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import { buildFileManifest, checkedPath } from "../../../../dist/core/artifacts/artifacts.js";
 import { JobsProgressMailbox } from "../../../../dist/infrastructure/ray/jobs-progress.js";
+import { JobsCredentialVault } from "../../../../dist/infrastructure/ray/jobs-credential-vault.js";
+import { JobsSeedUploads } from "../../../../dist/infrastructure/ray/jobs-seed.js";
 
 const root = process.env.EVALUATOR_JOBS_ROOT ?? "/jobs";
 const ray = new URL(process.env.EVALUATOR_RAY_DASHBOARD ?? "http://head:8265");
@@ -80,19 +81,24 @@ async function bodyOf(req, limit = 1024 * 1024) {
 }
 const terminal = status => ["SUCCEEDED", "FAILED", "STOPPED"].includes(status);
 const submissions = new Map();
+const credentials = new JobsCredentialVault();
+const seeds = new JobsSeedUploads(join(root, ".seeds"));
 const progress = new JobsProgressMailbox();
 const progressOrigin = process.env.EVALUATOR_JOBS_PROGRESS_ORIGIN ?? "https://gateway:9443";
 async function submit(id, input) {
   const dir = join(root, id);
-  const hash = digest(JSON.stringify(input)).toString("hex");
+  const { credentialValues: values, ...metadata } = input;
+  const safeInput = { ...metadata, credentialNames: Object.keys(values).sort() };
+  const hash = digest(JSON.stringify(safeInput)).toString("hex");
   try {
     await mkdir(dir, { mode: 0o700 });
-    await writeFile(join(dir, "input.json"), JSON.stringify(input), { mode: 0o600, flag: "wx" });
+    await writeFile(join(dir, "input.json"), JSON.stringify(safeInput), { mode: 0o600, flag: "wx" });
     await writeFile(join(dir, "request.sha256"), hash, { mode: 0o600, flag: "wx" });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
     if ((await readFile(join(dir, "request.sha256"), "utf8")) !== hash)
       throw new Error("Job ID reused with different input");
+    credentials.put(id, "run", values);
     try {
       return await rayCall(id);
     } catch (lookup) {
@@ -100,12 +106,15 @@ async function submit(id, input) {
     }
     await accessInput(dir);
   }
+  credentials.put(id, "run", values);
   try {
     return await rayCall("", {
       submission_id: id,
-      entrypoint: `node /opt/evaluator/dist/infrastructure/ray/jobs-entry.js ${id}`,
+      entrypoint: `node /opt/evaluator/dist/application/ray/entries/jobs-entry.mjs ${id}`,
       entrypoint_num_cpus: 0,
-      runtime_env: { env_vars: { EVALUATOR_JOBS_PROGRESS_ORIGIN: progressOrigin } },
+      runtime_env: { env_vars: { EVALUATOR_JOBS_ROOT: root, EVALUATOR_JOBS_SECURITY: security,
+        EVALUATOR_JOBS_PROGRESS_ORIGIN: progressOrigin,
+        ...(process.env.EVALUATOR_PLUGIN_PATCH_PATH ? { EVALUATOR_PLUGIN_PATCH_PATH: process.env.EVALUATOR_PLUGIN_PATCH_PATH } : {}) } },
     });
   } catch (error) {
     // Lost acknowledgements are recovered by identity, never by assigning a new ID.
@@ -138,7 +147,7 @@ const server = createServer(
     try {
       const url = new URL(req.url, "https://gateway");
       const match =
-        /^\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(submit|logs|cancel|manifest|file|retry|progress|warmup|image-cleanup))?$/u.exec(
+        /^\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(submit|logs|cancel|manifest|file|retry|progress|maintenance|credential|seed))?$/u.exec(
           url.pathname,
         );
       if (!match) {
@@ -147,12 +156,20 @@ const server = createServer(
       }
       const [, id, action] = match;
       const dir = join(root, id);
-      if (action === "warmup" && req.method === "GET") {
-        reply(200, JSON.parse(await readFile(join(dir, "warmup.json"), "utf8")));
+      if (action === "seed" && req.method === "POST") {
+        reply(200, await seeds.handle(id, await bodyOf(req, 16 * 1024 * 1024)));
         return;
       }
-      if (action === "image-cleanup" && req.method === "GET") {
-        reply(200, JSON.parse(await readFile(join(dir, "image-cleanup.json"), "utf8")));
+      if (action === "credential" && req.method === "POST") {
+        const input = await bodyOf(req);
+        if (typeof input.scope !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(input.scope) ||
+            input.name !== undefined && typeof input.name !== "string") throw new Error("Invalid credential request");
+        if (input.release === true) { credentials.remove(id, input.scope); reply(200, { released: true }); }
+        else reply(200, credentials.read(id, input.scope, input.name));
+        return;
+      }
+      if (action === "maintenance" && req.method === "GET") {
+        reply(200, JSON.parse(await readFile(join(dir, `${action}.json`), "utf8")));
         return;
       }
       if (action === "progress") {
@@ -164,18 +181,25 @@ const server = createServer(
         return;
       }
       if (action === "submit" && req.method === "POST") {
-        // Submissions may carry resume seeds: persisted run metadata without evidence bytes.
+        // Workflow resume evidence is uploaded separately; submissions carry only its verified digest.
         const input = await bodyOf(req, 16 * 1024 * 1024);
-        if (input.operation !== undefined && !["run", "warmup", "cleanup-images"].includes(input.operation)) throw new Error("Invalid job operation");
-        const maintenance = input.operation === "cleanup-images";
-        if (maintenance && (!input.cleanup || typeof input.cleanup.all !== "boolean" || typeof input.cleanup.execute !== "boolean" || Object.keys(input.cleanup).some(key => !["all", "execute"].includes(key)))) throw new Error("Invalid image cleanup options");
-        const warmup = input.operation === "warmup" || maintenance;
-        if (!input.config || Object.hasOwn(input, "auth") || !input.pluginVersions ||
-            !input.serviceAuth || typeof input.serviceAuth !== "object" || Array.isArray(input.serviceAuth) ||
-            (warmup ? Object.keys(input.serviceAuth).length !== 0 || input.seed !== undefined || input.resumeRunId !== undefined || input.requestedRunId !== undefined
-              : !Object.keys(input.serviceAuth).length || Object.values(input.serviceAuth).some(value => typeof value !== "string" || !value) ||
-                !Object.hasOwn(input.serviceAuth, input.config.solver?.service)))
-          throw new Error("Invalid submission");
+        rejectUnknown(input, ["kind", "operation", "maintenance", "plan", "requestedRunId", "resumeRunId", "seedDigest", "retry", "credentialValues"], "Jobs submission");
+        if (input.kind !== "workflow") throw new Error("Unsupported job submission format");
+        const warmup = input.operation === "maintenance";
+        if (input.operation === "maintenance") {
+          input.maintenance = parseMaintenanceRequest(input.maintenance);
+          if (input.retry !== undefined) throw new Error("Maintenance cannot retry an evaluation");
+        } else if (input.maintenance !== undefined) throw new Error("Unexpected maintenance request");
+        if ((input.operation !== undefined && !["run", "maintenance"].includes(input.operation)) || !input.plan ||
+            (warmup ? input.requestedRunId !== undefined || input.resumeRunId !== undefined || input.seedDigest !== undefined
+              : !/^[0-9a-f-]{36}$/u.test(input.requestedRunId ?? "")) ||
+            !input.credentialValues || typeof input.credentialValues !== "object" || Array.isArray(input.credentialValues) ||
+            Object.values(input.credentialValues).some(value => typeof value !== "string" || !value))
+          throw new Error("Invalid workflow submission");
+        if (input.resumeRunId !== undefined) {
+          if (input.resumeRunId !== input.requestedRunId || typeof input.seedDigest !== "string") throw new Error("Invalid workflow resume identity");
+          await seeds.ready(id, input.resumeRunId, input.seedDigest);
+        } else if (input.seedDigest !== undefined) throw new Error("Seed requires a resume run ID");
         if (submissions.has(id)) await submissions.get(id);
         const pending = submit(id, input);
         submissions.set(id, pending);
@@ -188,43 +212,33 @@ const server = createServer(
         reply(200, result);
         return;
       }
+      if (action === "retry" && req.method === "GET") {
+        const saved = JSON.parse(await readFile(join(dir, "workflow-run.json"), "utf8"));
+        if (!/^[0-9a-f-]{36}$/u.test(saved.runId ?? "")) throw new Error("Invalid workflow identity");
+        const requestId = url.searchParams.get("requestId");
+        const entry = await controlTransaction(join(root, "workflow-runs", saved.runId), async state => state.requests.find(item => item.requestId === requestId));
+        if (!entry) throw new Error("Workflow retry request is unavailable");
+        reply(200, entry); return;
+      }
       if (action === "retry" && req.method === "POST") {
         const input = await bodyOf(req);
+        rejectUnknown(input, ["kind", "runId", "requestId", "taskIds", "reason", "fingerprint"], "Workflow retry");
+        if (input.kind !== "workflow") throw new Error("Unsupported retry format");
         if (!/^[0-9a-f-]{36}$/u.test(input.runId ?? "") || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u.test(input.requestId ?? "") ||
-            !Array.isArray(input.taskIds) || input.taskIds.some(value => typeof value !== "string") ||
-            !input.serviceAuth || typeof input.serviceAuth !== "object" || Object.values(input.serviceAuth).some(value => typeof value !== "string" || !value)) throw new Error("Invalid network retry request");
-        const runRoot = await checkedPath(dir, `results/${input.runId}`);
-        const manifest = JSON.parse(await readFile(join(runRoot, "manifest.json"), "utf8"));
-        if (manifest.runId !== input.runId || fingerprintConfig(input.pluginVersions) !== fingerprintConfig(manifest.pluginVersions)) throw new Error("Run identity or execution version mismatch");
+            !Array.isArray(input.taskIds) || input.taskIds.some(value => typeof value !== "string") || typeof input.reason !== "string") throw new Error("Invalid workflow retry");
+        const saved = JSON.parse(await readFile(join(dir, "workflow-run.json"), "utf8"));
+        const runRoot = join(root, "workflow-runs", input.runId);
+        const plan = JSON.parse(await readFile(join(runRoot, "plan.json"), "utf8"));
+        if (saved.runId !== input.runId || plan.fingerprint !== input.fingerprint) throw new Error("Workflow identity changed");
         const current = await rayCall(id);
-        const owner = await controlTransaction(runRoot, async ({ pid, host, endpoint, recoveryJobId }) => ({ pid, host, endpoint, recoveryJobId }));
-        let coordinatorStopped = terminal(current.status);
-        if (coordinatorStopped && owner.recoveryJobId) coordinatorStopped = terminal((await rayCall(owner.recoveryJobId)).status);
-        const submitted = await submitRetry(runRoot, { requestId: input.requestId, taskIds: input.taskIds,
-          reason: redactDiagnostic(typeof input.reason === "string" ? input.reason : "manual network recovery", Object.values(input.serviceAuth)) },
-          coordinatorStopped ? { stoppedCoordinator: owner } : { requireActive: true });
-        if (!coordinatorStopped || submitted.active || submitted.request.status !== "pending") {
-          reply(200, { requestId: input.requestId, status: submitted.request.status }); return;
+        if (!terminal(current.status)) {
+          const submitted = await submitRetry(runRoot, { requestId: input.requestId, taskIds: input.taskIds, reason: input.reason }, { requireActive: true });
+          const record = JSON.parse(await readFile(join(runRoot, "run.json"), "utf8"));
+          reply(200, { active: true, request: submitted.request, record }); return;
         }
-        const recoveryJobId = await controlTransaction(runRoot, async state => {
-          if (state.recoveryJobId) {
-            const existing = await rayCall(state.recoveryJobId);
-            if (!terminal(existing.status)) return state.recoveryJobId;
-          }
-          const recovery = randomUUID();
-          // Credentials use the existing private staging mechanism; never enter control requests or result files.
-          const authPath = join(dir, `retry-auth-${input.requestId}.json`);
-          await writeFile(authPath, JSON.stringify(input.serviceAuth), { mode: 0o600, flag: "wx" });
-          try {
-            await rayCall("", { submission_id: recovery,
-              entrypoint: `node /opt/evaluator/dist/infrastructure/ray/jobs-retry-entry.js ${id} ${input.runId} ${input.requestId}`,
-              entrypoint_num_cpus: 0, runtime_env: { env_vars: { EVALUATOR_JOBS_ROOT: root, EVALUATOR_JOBS_SECURITY: security,
-                EVALUATOR_JOBS_PROGRESS_ORIGIN: progressOrigin,
-                ...(process.env.EVALUATOR_PLUGIN_PATCH_PATH ? { EVALUATOR_PLUGIN_PATCH_PATH: process.env.EVALUATOR_PLUGIN_PATCH_PATH } : {}) } } });
-          } catch (error) { await rm(authPath, { force: true }); throw error; }
-          state.recoveryJobId = recovery; return recovery;
-        });
-        reply(200, { requestId: input.requestId, status: "submitted", recoveryJobId }); return;
+        const request = await controlTransaction(runRoot, async state => state.requests.find(item => item.requestId === input.requestId));
+        if (request && JSON.stringify(request.taskIds) !== JSON.stringify([...new Set(input.taskIds)].sort())) throw new Error("Retry ID reused with another selection");
+        reply(200, { active: false, ...(request ? { request } : {}) }); return;
       }
       if (action === "cancel" && req.method === "POST") {
         const status = await rayCall(id);
@@ -247,11 +261,14 @@ const server = createServer(
         return;
       }
       if (!terminal((await rayCall(id)).status)) throw new Error("Download requires a terminal job");
-      const runIds = (await readdir(join(dir, "results"))).filter(name => /^[0-9a-f-]{36}$/u.test(name));
-      if (runIds.length !== 1) throw new Error("No unique saved run available");
-      const runRoot = join(dir, "results", runIds[0]);
+      const workflowRun = JSON.parse(await readFile(join(dir, "workflow-run.json"), "utf8"));
+      if (!/^[0-9a-f-]{36}$/u.test(workflowRun.runId ?? "")) throw new Error("Invalid saved workflow identity");
+      const runRoot = join(root, "workflow-runs", workflowRun.runId);
+      if (!(await stat(runRoot)).isDirectory()) throw new Error("Saved run is not a directory");
+      try { await stat(join(runRoot, ".workflow.lock")); throw new Error("Workflow is still being written"); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
       if (action === "manifest") {
-        reply(200, { runId: runIds[0], ...(await buildFileManifest(runRoot, [])) });
+        reply(200, { runId: workflowRun.runId, ...(await buildFileManifest(runRoot, [])) });
         return;
       }
       if (action === "file") {
@@ -270,8 +287,9 @@ const server = createServer(
         return;
       }
       reply(404, { error: "Unknown route" });
-    } catch {
-      reply(409, { error: "Operation not completed; inspect job status. Do not resubmit blindly." });
+    } catch (error) {
+      if (error.status === 404 || error.code === "ENOENT") reply(404, { error: "Requested job or saved file is unavailable" });
+      else reply(409, { error: "Operation not completed; inspect job status. Do not resubmit blindly." });
     }
   },
 );
@@ -279,6 +297,7 @@ const server = createServer(
 let sweeping = false;
 setInterval(async () => {
   progress.prune();
+  credentials.prune();
   if (sweeping) return;
   sweeping = true;
   try {
@@ -287,9 +306,11 @@ setInterval(async () => {
       try {
         const status = await rayCall(id);
         if (terminal(status.status)) {
+          credentials.remove(id, "run");
           await rm(join(root, id, "input.json"), { force: true });
           continue;
         }
+        credentials.keepAlive(id, "run");
         const handle = await open(join(root, id, "cancel"), "r");
         const stat = await handle.stat();
         await handle.close();

@@ -8,6 +8,8 @@
 
 Tracer ships with ARSI-Evaluator. It mirrors attempt evidence to a Collector that runs as a Node.js process and stores the data in SQLite. The configured Store remains the source of record for evaluation results. Collector connection and delivery failures produce warnings while the evaluation continues.
 
+Use `--tracer` with workflows that declare `benchmark.runtime`, including `benchmark.evaluate`. With Ray Jobs, the coordinator sends traces. Resume and retry restore the plugin options saved with the run.
+
 From the repository root, set the model variables from the [GSM8K quick start](quick-start.md#3-set-model-variables), then run:
 
 ```bash
@@ -17,6 +19,8 @@ arsi-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml --tracer
 By default, Tracer starts the local Collector on demand or reuses a healthy instance with the same database. On the machine running the Collector, enter `http://127.0.0.1:8787` in your browser's address bar. Use **Trajectory** to inspect model calls and tool events, **Metrics** to view profiling data, and **Feedback** to see rule-based feedback and any configured LLM analysis. Feedback can also be exported for RSI.
 
 Pass a URL after `--tracer` to override the Collector address for that run. To start the Collector independently, check its status, view logs, or stop it, see the [CLI reference](reference/cli.md#tracer).
+
+For example, `--tracer http://collector:8787` uses the database owned by that service. With Ray Jobs, use an address reachable from the coordinator. Set `tracer.db` or `TRACER_DB` when you want to verify a specific database. The configured path must match the path reported by the Collector.
 
 ### Analyze a Trajectory
 

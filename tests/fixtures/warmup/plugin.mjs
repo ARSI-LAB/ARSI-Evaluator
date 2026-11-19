@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 export const inject = ["evaluator"];
 
 const event = (name, value) => globalThis.__warmupEvent?.(name, value);
@@ -6,7 +7,7 @@ const forbidden = () => { throw new Error("Evaluation must not start during warm
 export function apply(ctx) {
   const validate = value => value;
   ctx.effect(() => () => { event("dispose"); });
-  ctx.evaluator.register("benchmark", "warmup-fixture", validate, () => {
+  registerNativeResource(ctx, "benchmark", "warmup-fixture", validate, () => {
     const benchmark = {
       async resolveSource() {
         event("source");
@@ -28,12 +29,12 @@ export function apply(ctx) {
     };
     return benchmark;
   });
-  ctx.evaluator.register("solver", "warmup-fixture", validate, () => ({
+  registerNativeResource(ctx, "solver", "warmup-fixture", validate, () => ({
     requirements() { return []; },
     prepare: forbidden,
     solve: forbidden,
   }));
-  ctx.evaluator.register("environment", "warmup-fixture", validate, options => ({
+  registerNativeResource(ctx, "environment", "warmup-fixture", validate, options => ({
     supportsRuntimeInstallation: true,
     async materialize(spec, signal, _ready, _activity, context) {
       await event("materialize", context.taskId);

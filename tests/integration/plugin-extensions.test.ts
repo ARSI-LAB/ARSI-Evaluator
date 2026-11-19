@@ -13,7 +13,7 @@ import { restorePluginActivations } from "../../src/core/plugins/activation.js";
 import { validatePortablePluginActivations, assertWorkerVersions } from "../../src/infrastructure/ray/protocol.js";
 import * as catalogModule from "../../src/application/plugins/catalog.js";
 import { Evaluator } from "../../src/application/evaluator.js";
-import { retryRun } from "../../src/application/retry.js";
+import { retryWorkflow } from "../../src/application/workflow.js";
 
 const execute = promisify(execFile);
 const roots: string[] = [];
@@ -37,10 +37,11 @@ async function experiment(mode = "pass") {
   await writeFile(patch, JSON.stringify([{ insert: [
     { id: "test-components", name: "./components.mjs" }, { id: "audit", name: "./extension.mjs" },
   ] }]));
-  await writeFile(config, JSON.stringify({
-    services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${EXTENSION_KEY}" } },
+  await writeFile(config, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+    services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "EXTENSION_KEY" } },
     benchmark: { name: "cli-fixture", solver: { name: "cli-fixture", config: { mode } } },
-    environment: "local", output: { directory: "./results" },
+    environment: "local",
+  }
   }));
   vi.stubEnv("EXTENSION_KEY", "fixture-secret");
   return { root, patch, config };
@@ -56,8 +57,8 @@ test("an option-only patch plugin extends parsing and restores its configuration
   const io = { out() {}, error(text: string) { errors.push(text); } };
   expect(await runCli(["run", config, "--patch", patch, "--audit-url", "https://audit.invalid"], io), errors.join("\n")).toBe(0);
   const runId = (await readdir(join(root, "results")))[0]!;
-  const manifest = JSON.parse(await readFile(join(root, "results", runId, "manifest.json"), "utf8"));
-  expect(manifest.pluginRuntime.plugins).toEqual([{ id: "audit", config: { url: "https://audit.invalid" } }]);
+  const manifest = JSON.parse(await readFile(join(root, "results", runId, "plan.json"), "utf8"));
+  expect(manifest.document.workflow.resources.benchmark.config.plugins.value).toEqual([{ id: "audit", config: { url: "https://audit.invalid" } }]);
   expect(await runCli(["run", config, "--patch", patch, "--resume", runId], io), errors.join("\n")).toBe(0);
   const calls = (await readFile(join(root, "audit.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
   expect(calls.map(call => call.operation)).toEqual(["create", "open"]);
@@ -69,10 +70,18 @@ test("retry restores extension options instead of constructing the decorator wit
   const io = { out() {}, error() {} };
   expect(await runCli(["run", config, "--patch", patch, "--audit-url", "https://retry.invalid"], io)).toBe(1);
   const runId = (await readdir(join(root, "results")))[0]!;
-  await retryRun({ run: join(root, "results", runId), taskIds: [] }, new AbortController().signal, () => {});
+  await retryWorkflow(join(root, "results", runId));
   const calls = (await readFile(join(root, "audit.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
   expect(calls.length).toBeGreaterThan(1);
   expect(calls.every(call => call.config.url === "https://retry.invalid")).toBe(true);
+});
+
+test("a generic workflow rejects Benchmark store decorators before executing steps", async () => {
+  const { config, patch } = await experiment();
+  await writeFile(config, JSON.stringify({ schemaVersion: 2, workflow: { steps: [] } }));
+  await expect(new Evaluator().run({ configPath: config, patchPath: patch,
+    plugins: [{ id: "audit", config: { url: "https://audit.invalid" } }] })).rejects.toThrow(/require a Benchmark workflow/);
+  expect(parseCommand(["run", config, "--plugin", "audit"]).kind).toBe("run");
 });
 
 test("commands and option aliases cannot replace builtin CLI behavior", () => {
@@ -185,15 +194,17 @@ test("a manifest can declare run flags without shipping CLI code", async () => {
 test("installed plugins support default exports and offline reporting without their source checkout", async () => {
   const { root, patch, config } = await experiment();
   const entry = join(root, "report.mjs");
-  await writeFile(entry, `export default {inject:["evaluator"], apply(ctx) {
-    ctx.evaluator.register("reporter", "installed-report", value=>value, ()=>({async render(){return "installed report";}}));
+  await writeFile(entry, `import { registerNativeResource } from "arsi-evaluator";
+export default {inject:["evaluator"], apply(ctx) {
+    registerNativeResource(ctx, "reporter", "installed-report", value=>value, ()=>({async render(){return "installed report";}}));
   }};`);
   vi.spyOn(catalogModule, "readPluginCatalog").mockReturnValue([{id:"installed-report",version:"1",entry}]);
   const input = JSON.parse(await readFile(config, "utf8"));
-  input.reporter = "installed-report";
+  input.with.reporter = "installed-report";
   await writeFile(config, JSON.stringify(input));
   const sdk = new Evaluator();
   const result = await sdk.run({configPath:config,patchPath:patch,overrides:{plugins:[{id:"installed-report",config:{}}]}});
-  if (result.kind !== "local") throw new Error("Expected local result");
+  const resumed = await sdk.run({configPath:config,patchPath:patch,resume:result.runId});
+  expect(resumed.record.status).toBe("completed");
   expect(await readFile(await sdk.report(result.runDirectory), "utf8")).toContain("\ninstalled report\n");
 });

@@ -38,7 +38,7 @@ async function fixture(): Promise<string> {
   await writeFile(join(root, "src/runtimes/hermes/assets/runner.py"), "# Hermes output capture fixture\n");
   for (const name of ["worker.py", "workbuddy.py", "Dockerfile", "build-runtime.py"]) await writeFile(join(root, "src/plugins/verifiers/python/runtime", name), "fixture\n");
   await writeFile(join(root, "src/runtimes/agentbundle/assets/run.mjs"), "export {};\n");
-  for (const name of ["jobs-entry", "jobs-gateway", "jobs-retry-entry"]) await writeFile(join(root, `src/application/ray/entries/${name}.mjs`), "export {};\n");
+  for (const name of ["jobs-entry", "jobs-gateway"]) await writeFile(join(root, `src/application/ray/entries/${name}.mjs`), "export {};\n");
   for (const name of ["cli-bootstrap.mjs", "package-runtime.mjs"]) await cp(new URL(`../../scripts/${name}`, import.meta.url), join(root, `scripts/${name}`));
   await cp(new URL("../../scripts/checkout-build.mjs", import.meta.url), join(root, "scripts/checkout-build.mjs")).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
   await cp(join(root, "scripts/cli-bootstrap.mjs"), join(root, "dist/cli.js"));

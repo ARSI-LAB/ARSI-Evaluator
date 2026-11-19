@@ -1,10 +1,15 @@
-# 必须从 Linux / WSL 运行；默认缓存使用 Linux 原生用户缓存目录。
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  # 必须从 Linux / WSL 运行；默认缓存使用 Linux 原生用户缓存目录。
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: workbuddy
-  scenario: security
+  benchmark:
+    name: workbuddy
+    scenario: security
+output:
+  directory: ../../results/workbuddy/workbuddy-security

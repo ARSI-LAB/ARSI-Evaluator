@@ -1,5 +1,7 @@
 # Local Datasets
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](local-datasets.zh-CN.md)
 
 Point Evaluator at downloaded data to avoid remote dataset requests. Missing files, invalid records and changed content fail without downloading a replacement. Omit the local setting to retain the benchmark's default remote source. CLI and SDK read the same experiment YAML.

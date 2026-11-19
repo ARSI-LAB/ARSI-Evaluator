@@ -1,5 +1,7 @@
 # AgentX Performance Quick Start
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./agentx.zh-CN.md)
 
 AgentX uses `doctor → run --dry-run → run` like other benchmarks. Start inference services manually beforehand; Evaluator calls YAML HTTP endpoints only. Prefer local replay without task containers. Host hardware sampling starts during `run` and stops afterward.

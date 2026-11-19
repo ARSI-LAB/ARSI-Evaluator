@@ -55,10 +55,12 @@ export async function combineStepTrajectories(root: string, record: AttemptRecor
     for (const step of steps) {
       const stepRoot = join(root, step.evidencePath);
       if ((await readTrajectoryPrefix(stepRoot, record.key)).state !== "complete") complete = false;
+      // Start consuming immediately after createInterface: it can emit all lines
+      // while an unrelated file write is awaited, including its close event.
+      await append("step-start", { name: step.name }, step.startedAt);
       const input = createReadStream(join(stepRoot, "agent/trajectory.jsonl"), { encoding: "utf8" });
       const lines = createInterface({ input, crlfDelay: Infinity });
       let ordinal = 0;
-      await append("step-start", { name: step.name }, step.startedAt);
       try {
         for await (const line of lines) {
           const event: unknown = JSON.parse(line);

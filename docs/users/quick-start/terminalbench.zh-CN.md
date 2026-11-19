@@ -1,5 +1,7 @@
 # Terminal-Bench 4.0 快速入门
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./terminalbench.md) | 中文
 
 目标：使用默认 SimpleAgent 在 Docker 中执行终端任务，查看任务内验证器给出的结果。本页使用仓库自带的 4.0 配置；只填写 `benchmark: terminalbench` 时，默认版本是 2.0。

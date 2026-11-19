@@ -56,7 +56,8 @@ def run_node(job):
     with open(os.environ["EVALUATOR_NODE_CONFIG"], encoding="utf-8") as file:
         config = json.load(file)
     payload = {"remote": job, "nodeId": ray.get_runtime_context().get_node_id(), "hostname": socket.gethostname()}
-    child = subprocess.Popen([config["nodeExecutable"], config["workerEntry"]], stdin=subprocess.PIPE,
+    entry = config["workflowWorkerEntry"] if job.get("kind") == "workflow" else config["workerEntry"]
+    child = subprocess.Popen([config["nodeExecutable"], entry], stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=False)
     output = bytearray()
 
@@ -117,6 +118,8 @@ def run_node(job):
             raise RuntimeError("Ray node worker failed; inspect retained node attempt evidence")
         result = json.loads(output.decode("utf-8"))
         fields = {"preparationDigest", "nodeId", "hostname"} if preparation.get("mode") == "prepare" else {"receipt", "nodeId", "hostname"}
+        if job.get("kind") == "workflow":
+            fields = {"completed", "nodeId", "hostname"}
         optional_fields = {"warnings", "environmentTimeouts"} if preparation.get("mode") == "prepare" else {"warnings"}
         if not isinstance(result, dict) or set(result) - optional_fields != fields:
             raise RuntimeError("Invalid Ray node worker response")
@@ -325,12 +328,17 @@ def main():
             emit({"type": "retired", "attemptId": key["attemptId"], "confirmed": True})
         except Exception:
             emit({"type": "retired", "attemptId": key["attemptId"], "confirmed": False})
+    workflow_attempts = set()
     guards = []
+    def guard_images(payload):
+        guard_type = ray.remote(max_restarts=0, num_cpus=0)(ImageGuard)
+        added = [guard_type.options(scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=node, soft=False)).remote() for node in nodes]
+        guards.extend(added)  # Retain partially started actors for cleanup if one node fails.
+        ray.get([guard.start.remote(payload) for guard in added], timeout=90)
+
     try:
         if config.get("imageGuard"):
-            guard_type = ray.remote(max_restarts=0, num_cpus=0)(ImageGuard)
-            guards = [guard_type.options(scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=node, soft=False)).remote() for node in nodes]
-            ray.get([guard.start.remote(config["imageGuard"]) for guard in guards], timeout=90)
+            guard_images(config["imageGuard"])
         emit({"type": "ready", "schemaVersion": PROTOCOL, "rayVersion": RAY_VERSION,
               "pythonVersion": ".".join(map(str, PYTHON_VERSION)), "nodes": nodes, "slots": slots,
               "nodeSlots": {node["NodeID"]: node_capacity(node) for node in alive}})
@@ -349,9 +357,13 @@ def main():
                         raise RuntimeError("Ray slot or attempt identity violation")
                     preparation = job.get("preparation")
                     runner = remote
+                    if job.get("kind") == "workflow":
+                        workflow_attempts.add(attempt)
+                        if job["nodeId"] not in nodes:
+                            raise RuntimeError("Workflow node is not available")
                     if not preparation:
                         # Restrict every attempt to the same selection used for preparation and cleanup.
-                        selected_node = min(nodes, key=lambda node: (sum(1 for entry in pending_nodes.values() if entry == node) / node_capacity_by_id[node], node))
+                        selected_node = job["nodeId"] if job.get("kind") == "workflow" else min(nodes, key=lambda node: (sum(1 for entry in pending_nodes.values() if entry == node) / node_capacity_by_id[node], node))
                         runner = remote.options(scheduling_strategy=NodeAffinitySchedulingStrategy(node_id=selected_node, soft=False))
                     if preparation:
                         if preparation["nodeId"] not in nodes:
@@ -383,6 +395,9 @@ def main():
                         for reference in done:
                             results.append(ray.get(reference))
                     emit({"type": "cleaned", "removed": sum(item["removed"] for item in results)})
+                elif kind == "guard-images":
+                    guard_images(command["payload"])
+                    emit({"type": "guarded", "requestId": command["requestId"]})
                 elif kind == "cleanup-images":
                     requested_nodes = command["nodes"]
                     if pending or not isinstance(requested_nodes, list) or any(node not in nodes for node in requested_nodes):
@@ -414,7 +429,7 @@ def main():
                     del pending_nodes[attempt]
                     try:
                         result = ray.get(reference)
-                        emit({"type": "prepared" if attempt in preparation_attempts else "result", "attemptId": attempt, "result": result})
+                        emit({"type": "workflow-result" if attempt in workflow_attempts else "prepared" if attempt in preparation_attempts else "result", "attemptId": attempt, "result": result})
                     except Exception as error:
                         # Exception text may include serialized task state. Keep it out
                         # of diagnostics and retain the node-local evidence instead.
@@ -425,6 +440,7 @@ def main():
                                  if getattr(getattr(error, "cause", None), "environment_timeouts", None) is not None else {})})
                     finally:
                         preparation_attempts.discard(attempt)
+                        workflow_attempts.discard(attempt)
     finally:
         for event, thread in image_maintenance.values():
             event.set()

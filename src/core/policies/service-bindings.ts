@@ -1,9 +1,8 @@
-import type { ExecutionConfig, ModelConfig, RuntimeAuth } from "../contracts/config.js";
+import type { EffectiveConfig, ExecutionConfig, ModelConfig, RuntimeAuth } from "../contracts/config.js";
 import { expectNonEmptyString } from "../validation/input.js";
 
 /** Pure references check, shared by configuration loading and standalone assembly. */
-export function assertServiceBindings(config: ExecutionConfig): void {
-  const experiment = config.experiment;
+export function assertServiceReferences(experiment: EffectiveConfig): void {
   const routes = [
     ["solver.service", experiment.solver.service],
     ["verifier.service", experiment.verifier?.service],
@@ -13,7 +12,18 @@ export function assertServiceBindings(config: ExecutionConfig): void {
     if (value === undefined) continue;
     const name = expectNonEmptyString(value, field);
     if (!Object.hasOwn(experiment.services, name)) throw new TypeError(`${field} references unknown service ${name}`);
-    if (!Object.hasOwn(config.auths, name)) throw new TypeError(`${field} service ${name} has no credentials`);
+  }
+}
+
+export function referencedServiceNames(experiment: EffectiveConfig): string[] {
+  return [...new Set([experiment.solver.service, experiment.verifier?.service, experiment.benchmark.config.judgeService]
+    .filter((name): name is string => typeof name === "string"))];
+}
+
+export function assertServiceBindings(config: ExecutionConfig): void {
+  assertServiceReferences(config.experiment);
+  for (const name of referencedServiceNames(config.experiment)) {
+    if (!Object.hasOwn(config.auths, name)) throw new TypeError(`service ${name} has no credentials`);
   }
 }
 

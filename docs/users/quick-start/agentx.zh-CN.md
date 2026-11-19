@@ -1,5 +1,7 @@
 # AgentX 性能评测快速入门
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./agentx.md) | 中文
 
 AgentX 使用与其他 Benchmark 相同的 `doctor → run --dry-run → run` 命令。推理服务由用户提前手动启动，Evaluator 只调用 YAML 中的 HTTP 接口；推荐 local 回放，不创建 AgentX 任务容器，硬件采样在 `run` 时自动在裸机启动，结束后停止。

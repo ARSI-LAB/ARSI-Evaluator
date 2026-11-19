@@ -1,5 +1,7 @@
 # Docker and Cross-Architecture FAQ
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./docker.zh-CN.md)
 
 [FAQ index](README.md) · [Docker platforms](../deployment/docker-platform.md)
@@ -102,7 +104,7 @@ To continue the previous evaluation, use identical configuration with `--resume`
 arsi-evaluator run playbook/terminalbench/terminalbench-4.0.yaml --resume
 ```
 
-Resume still checks/prepares environments, skips valid results, and reruns unfinished/invalid tasks. Evaluator code may be updated and rebuilt; configuration, sources, external plugins, candidate bundles, and harness versions must still match. See [resume](../usage.md#resume-and-rebuild-reports). New runs without resume also reuse images.
+Resume still checks/prepares environments, skips valid results, and reruns unfinished/invalid tasks. The workflow plan, package/plugin implementations, sources, candidate bundles, and harness versions must match; changed implementations require a new run. See [resume](../usage.md#resume-and-rebuild-reports). New runs without resume also reuse images.
 
 ## Can ARM64 Nodes Run amd64 Images?
 

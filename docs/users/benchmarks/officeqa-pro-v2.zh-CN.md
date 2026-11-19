@@ -1,5 +1,7 @@
 # OfficeQA Pro V2
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./officeqa-pro-v2.md) | 中文
 
 `officeqa-pro-v2` 评测 Agent 在完整文档集合中检索证据、计算并回答问题的能力。使用 Databricks 官方 90 道题和 1,435 份美国财政文档；每题以原始 `uid` 标识，当前固定版本 CSV 的前两题为字符串 `"0"`、`"1"`。
@@ -54,7 +56,7 @@ arsi-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-full.yam
 benchmark:
   name: officeqa-pro-v2
   config:
-    hfToken: ${HF_TOKEN}
+    hfToken: {credential: HF_TOKEN}
     corpusFormat: parsed-json
     tolerance: 0
 ```
@@ -91,7 +93,7 @@ arsi-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleag
 arsi-evaluator report /absolute/path/to/run-directory
 ```
 
-续跑固定原始 commit、文件清单和 SHA-256，已有完整缓存时不需要访问 HF；缓存缺失或损坏时按原始地址和摘要重新下载。YAML 显式填写 `hfToken: ${HF_TOKEN}` 时，配置加载仍要求此环境变量存在。公开构建目录被修改时明确报错，不使用被修改的文档。评分脚本和发布包变化仍遵循现有插件版本检查，不绕过续跑校验。离线报告不需要模型 key、HF token 或重跑评分容器。
+续跑固定原始 commit、文件清单和 SHA-256，已有完整缓存时不需要访问 HF；缓存缺失或损坏时按原始地址和摘要重新下载。`hfToken: {credential: HF_TOKEN}` 在检查和导出时只校验引用，打开评测资源时才读取凭据。公开构建目录被修改时明确报错，不使用被修改的文档。评分脚本和发布包变化仍遵循现有插件版本检查，不绕过续跑校验。离线报告不需要模型 key、HF token 或重跑评分容器。
 
 ## Ray 与验收边界
 

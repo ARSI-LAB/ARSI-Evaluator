@@ -2,6 +2,22 @@ import { createHash } from "node:crypto";
 import type { AptSources, ImageAcquisition, RegistryImageAcquisition, NetworkDocument, NetworkLocation, NetworkProxy, NetworkSettings } from "../core/contracts/network.js";
 import type { JsonValue } from "../core/contracts/task.js";
 
+export const networkEnvironmentNames = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+  "HF_ENDPOINT", "UV_DEFAULT_INDEX", "UV_INDEX_URL", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_PYTHON_INSTALL_MIRROR",
+  "NPM_CONFIG_REGISTRY", "npm_config_registry", "EVALUATOR_NODE_MIRROR", "EVALUATOR_GITHUB_MIRROR",
+  "EVALUATOR_DEBIAN_MIRROR", "EVALUATOR_DOCKER_BUILD_NETWORK"];
+
+export function networkCredentialNames(template: JsonValue): string[] {
+  const names = new Set(networkEnvironmentNames);
+  const visit = (value: JsonValue) => {
+    if (typeof value === "string") for (const match of value.matchAll(/\$\{([A-Za-z_]\w*)\}/g)) names.add(String(match[1]));
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object") Object.values(value).forEach(visit);
+  };
+  visit(template);
+  return [...names];
+}
+
 const locations: NetworkLocation[] = ["host", "daemon", "build", "runtime"];
 const aptKeys = ["debian", "debianSecurity", "ubuntu", "ubuntuSecurity", "ubuntuPorts"] as const;
 function record(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
@@ -11,7 +27,9 @@ function record(value: unknown, keys: readonly string[], label: string): Record<
   for (const key of Object.keys(result)) if (!keys.includes(key)) throw new TypeError(`Unknown ${label} field: ${key}`);
   return result;
 }
-function url(value: unknown, label: string, credentials = false, origin = false): string {
+function reference(value: unknown): value is string { return typeof value === "string" && /\$\{[A-Za-z_]\w*\}/u.test(value); }
+function url(value: unknown, label: string, credentials = false, origin = false, references = false): string {
+  if (references && reference(value)) return value;
   if (typeof value !== "string" || !value || /[\s\u0000-\u001f\\"'`$|]/u.test(value)) throw new TypeError(`${label} must be an HTTP(S) URL`);
   let parsed: URL;
   try { parsed = new URL(value); } catch { throw new TypeError(`${label} must be an HTTP(S) URL`); }
@@ -21,27 +39,35 @@ function url(value: unknown, label: string, credentials = false, origin = false)
   if (credentials) { try { decodeURIComponent(parsed.username); decodeURIComponent(parsed.password); } catch { throw new TypeError(`${label} has invalid credentials`); } }
   return origin && !credentials ? parsed.origin : parsed.href.replace(/\/$/u, "");
 }
-function list(value: unknown, label: string, urls = false): string[] {
+function list(value: unknown, label: string, urls = false, references = false): string[] {
   if (!Array.isArray(value) || value.some(item => typeof item !== "string" || !item || /[\s\u0000-\u001f]/u.test(item)))
     throw new TypeError(`${label} must be an array of nonempty strings`);
-  return [...new Set((value as string[]).map(item => urls ? url(item, label) : item))];
+  return [...new Set((value as string[]).map(item => urls ? url(item, label, false, false, references) : item))];
 }
-function proxy(value: unknown, defaults: NetworkProxy, label: string, overrides = false): NetworkProxy {
+function proxy(value: unknown, defaults: NetworkProxy, label: string, overrides = false, references = false): NetworkProxy {
   if (value === null) return { http: null, https: null, noProxy: [] };
   const raw = record(value, overrides ? ["http", "https", "noProxy", "overrides"] : ["http", "https", "noProxy"], label);
-  const entry = (key: "http" | "https") => raw[key] === undefined ? defaults[key] : raw[key] === null ? null : url(raw[key], `${label}.${key}`, true, true);
-  return { http: entry("http"), https: entry("https"), noProxy: raw.noProxy === undefined ? [...defaults.noProxy] : list(raw.noProxy, `${label}.noProxy`) };
+  const entry = (key: "http" | "https") => raw[key] === undefined ? defaults[key] : raw[key] === null ? null : url(raw[key], `${label}.${key}`, true, true, references);
+  return { http: entry("http"), https: entry("https"), noProxy: raw.noProxy === undefined ? [...defaults.noProxy] : list(raw.noProxy, `${label}.noProxy`, false, references) };
 }
 
-function acquisition(value: unknown, label: string, archive: false): RegistryImageAcquisition;
-function acquisition(value: unknown, label: string, archive: true): ImageAcquisition;
-function acquisition(value: unknown, label: string, archive: boolean): ImageAcquisition {
+function acquisition(value: unknown, label: string, archive: false, references?: boolean): RegistryImageAcquisition;
+function acquisition(value: unknown, label: string, archive: true, references?: boolean): ImageAcquisition;
+function acquisition(value: unknown, label: string, archive: boolean, references = false): ImageAcquisition {
   const raw = record(value, ["method", "backend", "skopeoExecutable", "provider", "baseUrl"], label);
+  if (references && reference(raw.method)) {
+    // The branch is selected on the execution node; validate supplied fields without guessing its method.
+    if (raw.backend !== undefined && !reference(raw.backend) && raw.backend !== "nodejs" && raw.backend !== "skopeo") throw new TypeError(`${label}.backend must be nodejs or skopeo`);
+    if (raw.skopeoExecutable !== undefined && (typeof raw.skopeoExecutable !== "string" || !raw.skopeoExecutable.trim() || /[\u0000-\u001f]/u.test(raw.skopeoExecutable))) throw new TypeError(`${label}.skopeoExecutable must be an executable name or path`);
+    if (raw.provider !== undefined && !reference(raw.provider) && raw.provider !== "modelscope" && raw.provider !== "huggingface") throw new TypeError(`${label}.provider must be modelscope or huggingface`);
+    if (raw.baseUrl !== undefined) url(raw.baseUrl, `${label}.baseUrl`, false, false, true);
+    return { method: "docker" };
+  }
   const method = raw.method ?? "docker";
   if (method === "docker") { record(value, ["method"], label); return { method }; }
   if (method === "registry-client") {
     record(value, ["method", "backend", "skopeoExecutable"], label);
-    const backend = raw.backend ?? "nodejs";
+    const backend = references && reference(raw.backend) ? "skopeo" : raw.backend ?? "nodejs";
     if (backend !== "nodejs" && backend !== "skopeo") throw new TypeError(`${label}.backend must be nodejs or skopeo`);
     const executable = raw.skopeoExecutable ?? "skopeo";
     if (typeof executable !== "string" || !executable.trim() || /[\u0000-\u001f]/u.test(executable))
@@ -51,8 +77,8 @@ function acquisition(value: unknown, label: string, archive: boolean): ImageAcqu
   }
   if (archive && method === "archive") {
     record(value, ["method", "provider", "baseUrl"], label);
-    if (raw.provider !== "modelscope" && raw.provider !== "huggingface") throw new TypeError(`${label}.provider must be modelscope or huggingface`);
-    return { method, provider: raw.provider, baseUrl: url(raw.baseUrl, `${label}.baseUrl`) };
+    if (!(references && reference(raw.provider)) && raw.provider !== "modelscope" && raw.provider !== "huggingface") throw new TypeError(`${label}.provider must be modelscope or huggingface`);
+    return { method, provider: raw.provider === "modelscope" ? "modelscope" : "huggingface", baseUrl: url(raw.baseUrl, `${label}.baseUrl`, false, false, references) };
   }
   throw new TypeError(`${label}.method must be docker, registry-client${archive ? " or archive" : ""}`);
 }
@@ -63,53 +89,59 @@ function dictionary(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function packageAddress(value: unknown, label: string): { address: string; publicMirror: boolean } {
-  if (typeof value !== "object" || Array.isArray(value)) return { address: url(value, label), publicMirror: false };
-  const address = url(record(value, ["mirror"], label).mirror, label + ".mirror");
-  if (!address.startsWith("https:")) throw new TypeError(label + ".mirror must use HTTPS");
+function packageAddress(value: unknown, label: string, references: boolean): { address: string; publicMirror: boolean } {
+  if (typeof value !== "object" || Array.isArray(value)) return { address: url(value, label, false, false, references), publicMirror: false };
+  const address = url(record(value, ["mirror"], label).mirror, label + ".mirror", false, false, references);
+  if (!(references && reference(address)) && !address.startsWith("https:")) throw new TypeError(label + ".mirror must use HTTPS");
   return { address, publicMirror: true };
 }
 
-export function parseNetworkSettings(value: unknown): NetworkSettings {
+export function parseNetworkSettings(value: unknown): NetworkSettings { return parseSettings(value, false); }
+
+/** Check structure and literal values now; values containing references are validated after node-side expansion. */
+export function validateNetworkTemplate(value: unknown): void { parseSettings(value, true); }
+
+function parseSettings(value: unknown, references: boolean): NetworkSettings {
+  const parseUrl = (value: unknown, label: string, credentials = false, origin = false) => url(value, label, credentials, origin, references);
   const raw = record(value, ["proxy", "sources", "docker", "git"], "network");
-  const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true);
+  const common = proxy(raw.proxy, { http: null, https: null, noProxy: [] }, "network.proxy", true, references);
   const proxyObject = record(raw.proxy === null ? undefined : raw.proxy, ["http", "https", "noProxy", "overrides"], "network.proxy");
   const overrides = record(proxyObject.overrides, locations, "network.proxy.overrides");
-  const resolvedProxy = Object.fromEntries(locations.map(location => [location, proxy(overrides[location], common, `network.proxy.overrides.${location}`)])) as Record<NetworkLocation, NetworkProxy>;
+  const resolvedProxy = Object.fromEntries(locations.map(location => [location, proxy(overrides[location], common, `network.proxy.overrides.${location}`, false, references)])) as Record<NetworkLocation, NetworkProxy>;
   const sources = record(raw.sources, ["huggingface", "python", "npm", "node", "github", "apt"], "network.sources");
   const hub = sources.huggingface ?? "https://huggingface.co";
   const hubLabel = "network.sources.huggingface";
   const publicMirror = typeof hub === "object" && !Array.isArray(hub);
   const huggingface = publicMirror
-    ? url(record(hub, ["mirror"], hubLabel).mirror, hubLabel + ".mirror", false, true)
-    : url(hub, hubLabel, false, true);
+    ? parseUrl(record(hub, ["mirror"], hubLabel).mirror, hubLabel + ".mirror", false, true)
+    : parseUrl(hub, hubLabel, false, true);
   const python = record(sources.python, ["index", "extraIndexes", "interpreter"], "network.sources.python");
   const npm = record(sources.npm, ["registry"], "network.sources.npm");
-  const index = packageAddress(python.index ?? "https://pypi.org/simple", "network.sources.python.index");
-  const registry = packageAddress(npm.registry ?? "https://registry.npmjs.org", "network.sources.npm.registry");
+  const index = packageAddress(python.index ?? "https://pypi.org/simple", "network.sources.python.index", references);
+  const registry = packageAddress(npm.registry ?? "https://registry.npmjs.org", "network.sources.npm.registry", references);
   const node = record(sources.node, ["dist"], "network.sources.node");
   const github = record(sources.github, ["api", "raw", "repository"], "network.sources.github");
   const apt = record(sources.apt, aptKeys, "network.sources.apt");
   const docker = record(raw.docker, ["pull", "mirrors", "benchmarks", "buildNetwork"], "network.docker");
-  const pull = acquisition(docker.pull, "network.docker.pull", false);
+  const pull = acquisition(docker.pull, "network.docker.pull", false, references);
   const mirrors = Object.fromEntries(Object.entries(dictionary(docker.mirrors, "network.docker.mirrors")).map(([registry, value]) => {
     if (!/^(?:[a-z0-9]+(?:[.-][a-z0-9]+)*|\[[a-f0-9:]+\])(?::[0-9]+)?$/u.test(registry)) throw new TypeError("network.docker.mirrors keys must be registry hosts");
-    const origin = url(value, `network.docker.mirrors.${registry}`, false, true);
-    if (!origin.startsWith("https:") && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname))
+    const origin = parseUrl(value, `network.docker.mirrors.${registry}`, false, true);
+    if (!(references && reference(origin)) && !origin.startsWith("https:") && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname))
       throw new TypeError("Docker mirrors require HTTPS except for loopback registries");
     return [registry, origin];
   }));
   const benchmarks = Object.fromEntries(Object.entries(dictionary(docker.benchmarks, "network.docker.benchmarks")).map(([name, value]) => {
     if (!name.trim() || /[\s\u0000-\u001f]/u.test(name)) throw new TypeError("Docker benchmark names must be nonempty identifiers");
-    return [name, acquisition(value, `network.docker.benchmarks.${name}`, true)];
+    return [name, acquisition(value, `network.docker.benchmarks.${name}`, true, references)];
   }));
-  const buildNetwork = docker.buildNetwork ?? "default";
+  const buildNetwork = references && reference(docker.buildNetwork) ? "default" : docker.buildNetwork ?? "default";
   if (buildNetwork !== "default" && buildNetwork !== "host") throw new TypeError("network.docker.buildNetwork must be default or host");
   const git = record(raw.git, ["ssh"], "network.git");
   const ssh = record(git.ssh, ["route"], "network.git.ssh");
-  const route = ssh.route ?? "direct";
+  const route = references && reference(ssh.route) ? "direct" : ssh.route ?? "direct";
   if (route !== "direct" && route !== "proxy") throw new TypeError("network.git.ssh.route must be direct or proxy");
-  if (route === "proxy" && !resolvedProxy.host.https && !resolvedProxy.host.http)
+  if (!references && route === "proxy" && !resolvedProxy.host.https && !resolvedProxy.host.http)
     throw new TypeError("Git SSH proxy requires a host HTTP(S) proxy");
   return {
     proxy: resolvedProxy,
@@ -117,14 +149,14 @@ export function parseNetworkSettings(value: unknown): NetworkSettings {
       huggingface,
       ...(publicMirror ? { huggingfacePublicMirror: true } : {}),
       python: { index: index.address, ...(index.publicMirror ? { indexPublicMirror: true } : {}),
-        extraIndexes: python.extraIndexes === undefined ? [] : list(python.extraIndexes, "network.sources.python.extraIndexes", true),
-        interpreter: python.interpreter === undefined || python.interpreter === null ? null : url(python.interpreter, "network.sources.python.interpreter") },
+        extraIndexes: python.extraIndexes === undefined ? [] : list(python.extraIndexes, "network.sources.python.extraIndexes", true, references),
+        interpreter: python.interpreter === undefined || python.interpreter === null ? null : parseUrl(python.interpreter, "network.sources.python.interpreter") },
       npm: { registry: registry.address, ...(registry.publicMirror ? { registryPublicMirror: true } : {}) },
-      node: { dist: url(node.dist ?? "https://nodejs.org/dist", "network.sources.node.dist") },
-      github: { api: url(github.api ?? "https://api.github.com", "network.sources.github.api"),
-        raw: url(github.raw ?? "https://raw.githubusercontent.com", "network.sources.github.raw"),
-        repository: url(github.repository ?? "https://github.com", "network.sources.github.repository") },
-      apt: Object.fromEntries(aptKeys.flatMap(key => apt[key] === undefined ? [] : [[key, url(apt[key], `network.sources.apt.${key}`)]])) as AptSources,
+      node: { dist: parseUrl(node.dist ?? "https://nodejs.org/dist", "network.sources.node.dist") },
+      github: { api: parseUrl(github.api ?? "https://api.github.com", "network.sources.github.api"),
+        raw: parseUrl(github.raw ?? "https://raw.githubusercontent.com", "network.sources.github.raw"),
+        repository: parseUrl(github.repository ?? "https://github.com", "network.sources.github.repository") },
+      apt: Object.fromEntries(aptKeys.flatMap(key => apt[key] === undefined ? [] : [[key, parseUrl(apt[key], `network.sources.apt.${key}`)]])) as AptSources,
     },
     docker: { pull, mirrors, benchmarks, buildNetwork },
     git: { ssh: { route } },
@@ -261,6 +293,7 @@ export function validateNetworkSnapshot(value: unknown): asserts value is import
   const template = expandNetworkTemplate(raw.template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined }));
   if (JSON.stringify(template).includes("[runtime-provided]") || JSON.stringify(storedNetworkTemplate(template)) !== JSON.stringify(template))
     throw new TypeError("Ray network credentials must use node-local environment references");
+  validateNetworkTemplate(template);
   const visit = (value: JsonValue): void => {
     if (value && typeof value === "object" && !Array.isArray(value)) for (const [key, item] of Object.entries(value)) {
       if (key === "skopeoExecutable" && typeof item === "string" && /[/\\]/u.test(item) && !/^\$\{[A-Za-z_]\w*\}$/u.test(item))

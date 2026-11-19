@@ -10,6 +10,20 @@ export type RaySchedulerConfig = {
   cancelGraceMs: number;
   collector: { certFile: string; keyFile: string; tokenEnv: string; host: string; port: number; publicUrl?: string };
 };
+
+export type RayConnectionConfig = RaySchedulerConfig | { deployment: "ray-jobs"; concurrency?: number; nodes?: number };
+
+/** Host certificate paths and collector origins are supplied by the Jobs deployment at execution time. */
+export function parseRayConnectionConfig(value: unknown): RayConnectionConfig {
+  const config = expectRecord(value, "Ray connection");
+  if (config.deployment === undefined) return parseRayConfig(config);
+  rejectUnknown(config, ["deployment", "concurrency", "nodes"], "Jobs Ray connection");
+  if (config.deployment !== "ray-jobs") throw new TypeError("Ray connection deployment must be ray-jobs");
+  return { deployment: "ray-jobs",
+    ...(config.concurrency === undefined ? {} : { concurrency: expectPositiveInteger(config.concurrency, "Ray concurrency") }),
+    ...(config.nodes === undefined ? {} : { nodes: expectPositiveInteger(config.nodes, "Ray nodes") }),
+  };
+}
 export function parseRayConfig(value: unknown): RaySchedulerConfig {
   const config = expectRecord(value, "ray scheduler");
   rejectUnknown(

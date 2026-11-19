@@ -1,46 +1,16 @@
-# 新增内置基础插件
+# 新增内置流程步骤
 
-> [English](./add-built-in-plugin.en.md) | 中文
+> [English](add-built-in-plugin.en.md) | 中文
 
-基础插件指 Benchmark、Environment、Solver 等组件角色。这个例子演示如何在现有八种角色之外新增第九种角色 `runGuard`。它在一次评测开始前检查任务数上限，防止误跑超出预算的实验。
+新增数据检查、预处理或评分时，注册一个步骤即可，不需要向 PluginRole、EffectiveConfig 或 Engine 增加新的组件类别。
 
-例子中的 `runGuard` 和内置实现 `task-limit` 需要按教程加入源码。要在已有角色下增加一个实现，例如给 Metrics 增加指标，见[为已有角色新增内置实现](plugins.md#为已有角色新增内置实现)。
+例如，在模型调用前限制样例数量：
 
-![定义与现有八种角色并列的新组件类型，注册内置实现、接入评测流程并在 YAML 中选择实现](imgs/02-flowchart-built-in-role.png)
+1. 在 `src/plugins/steps/` 新建一个 StepDefinition，输入为样例列表，配置为 `maxCases`。
+2. 校验通过后原样返回样例，超限时抛出带数量的错误。
+3. 在 `registerWorkflowSteps` 中注册该步骤。
+4. 用 `inspect --output custom.yaml` 导出流程，把检查步骤插入选题之后，并让 `forEach.items` 读取检查步骤的输出。
 
-## 最小示例
+这样用户可以添加或删除检查步骤；没有这项检查的流程无需新增配置字段或默认分支。
 
-| 步骤 | 要改什么 |
-| --- | --- |
-| 定义角色 | 新建 `src/core/contracts/run-guard.ts`，在 `PluginRole` 和 `RoleImplementations` 中加入 `runGuard`。 |
-| 注册内置实现 | 新建 `src/plugins/run-guards/index.ts`，注册 `task-limit`，再由 `src/plugins/index.ts` 调用该入口。 |
-| 读取配置 | 让实验 YAML 接受可选的 `runGuard`，解析并校验所选实现。 |
-| 接入执行 | 在组件装配时创建所选实例，在 Engine 开始准备任务前调用它。 |
-
-按[完整实现步骤](built-in-role-development.md#1-定义角色和接口)改完源码后，在仓库根目录用 Bash 或 WSL 复制一份[本机 GSM8K 示例](../../playbook/gsm8k/gsm8k-quick-start.yaml)。
-
-```bash
-mkdir -p .scratch/run-guard-example
-cp playbook/gsm8k/gsm8k-quick-start.yaml .scratch/run-guard-example/experiment.yaml
-```
-
-它原有的 `run.maxTasks` 为 2。在副本末尾加入与 `run` 同级的 `runGuard`。
-
-```yaml
-runGuard:
-  name: task-limit
-  config:
-    maxTasks: 1
-```
-
-构建后检查配置，再运行评测。
-
-```bash
-export MODEL_NAME=unused-example MODEL_ENDPOINT=http://127.0.0.1:1/v1 MODEL_API_KEY=fixture-only
-pnpm typecheck
-pnpm build
-node dist/cli.js inspect .scratch/run-guard-example/experiment.yaml
-node dist/cli.js run .scratch/run-guard-example/experiment.yaml
-```
-
-`inspect` 应显示 `experiment.runGuard.name` 为 `task-limit`。`run` 应以非零状态退出，并提示 `run.maxTasks must be at most 1`。任务还没开始准备，也不会请求模型。该结果同时验证了配置能找到插件，以及 Engine 确实调用了它。
+接口及完整示例见[工作流插件开发](workflow-plugins.md)，资源与模板的选择见[内置流程插件开发](built-in-role-development.md)。原有 Solver 或 Metrics 的新增实现继续使用各自 Benchmark 组件契约。

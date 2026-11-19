@@ -53,7 +53,6 @@ export const runStoreFixture = {
 } satisfies RunStore;
 
 export const schedulerFixture = {
-  executeReady: async function* (): AsyncIterable<AttemptRecord> {},
 } satisfies TaskScheduler;
 
 export const verifierFixture: Verifier = {

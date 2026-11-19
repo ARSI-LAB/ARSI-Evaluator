@@ -15,7 +15,7 @@ import { writeFixture } from "../fixtures/dataset-tasks.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import { progressOperation } from "../../src/core/progress/progress-operation.js";
 import { enumerateSelectedTasks } from "../../src/core/selection/task-selection.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import type { ComponentActivity } from "../../src/core/contracts/activity.js";
 import type { ProgressEvent } from "../../src/core/progress/progress.js";
 import { harness, source } from "../fixtures/engine/fakes.js";
@@ -183,13 +183,13 @@ test("planning reports each task before preparation ends, retains failures, and 
   expect(elapsed).toEqual([...elapsed].sort((a, b) => a - b));
 });
 
-test("engine forwards source and enumeration observations without persisting temporary events", async () => {
+test("workflow forwards source and enumeration observations without persisting temporary events", async () => {
   const fixture = harness(await root()); cleanup.push(() => fixture.dispose());
   fixture.components.benchmark.resolveSource = async (_previous, _signal, activity) => {
     activity?.({ lines: ["来源文件 3/7"] }); return source;
   };
   const events: ProgressEvent[] = [];
-  const result = await runEngine({ components: fixture.components, config: fixture.config, signal: new AbortController().signal,
+  const result = await runBenchmarkFixture({ components: fixture.components, config: fixture.config, signal: new AbortController().signal,
     onProgress: event => events.push(event) });
   expect(events.some(event => event.phase === "source" && event.live?.lines.includes("来源文件 3/7"))).toBe(true);
   expect(events.some(event => event.phase === "enumerate" && event.live?.lines.includes("Enumeration completed: 3 tasks available, 3 selected"))).toBe(true);

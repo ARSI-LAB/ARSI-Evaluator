@@ -8,6 +8,7 @@
 
 | 你想做什么 | 从这里开始 | 需要深入时 |
 | --- | --- | --- |
+| 创建可自由组合的评测流程 | [工作流插件开发](workflow-plugins.md) | [用户操作](../users/workflows.zh-CN.md) |
 | 写一个负责作答的 Solver | [新增 Solver](add-solver.md) | [模型、运行时和资源清理](solver-development.md) |
 | 增加一种与 Environment、Scheduler 并列的组件角色 | [新增内置基础插件](add-built-in-plugin.md) | [角色接口、注册、配置和调用](built-in-role-development.md) |
 | 把自己写的文件用 `--patch` 加载进来 | [新增外部插件](add-external-plugin.md) | [TypeScript、包名加载和 Ray](external-plugins.md) |

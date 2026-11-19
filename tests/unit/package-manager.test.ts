@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -36,7 +36,7 @@ test("retains the Node-adjacent package layout", async () => {
   const target = join(bin, "node_modules", "npm", "bin", "npm-cli.js");
   await mkdir(join(target, ".."), { recursive: true });
   await writeFile(target, "console.log('fixture');\n");
-  await expect(packageManagerCli("npm")).resolves.toBe(target);
+  await expect(packageManagerCli("npm")).resolves.toBe(await realpath(target));
 });
 
 test.skipIf(process.platform === "win32")("ignores shell launchers and broken links before finding a valid later PATH entry", async () => {
@@ -51,7 +51,7 @@ test.skipIf(process.platform === "win32")("ignores shell launchers and broken li
   await mkdir(join(target, ".."), { recursive: true });
   await writeFile(target, "console.log('fixture');\n");
   vi.stubEnv("PATH", [bin, broken, last].join(delimiter));
-  await expect(packageManagerCli("npm")).resolves.toBe(target);
+  await expect(packageManagerCli("npm")).resolves.toBe(await realpath(target));
 });
 
 test("reports missing package managers without invoking a launcher", async () => {

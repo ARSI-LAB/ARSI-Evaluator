@@ -18,10 +18,11 @@ export class JobsClient {
     config: JobsConfig,
     resolvePath: (path: string) => string,
     modelApiKeys: readonly string[] = [],
+    env: Record<string, string | undefined> = process.env,
   ): Promise<JobsClient> {
     const caPath = resolvePath(config.caFile);
     const tokenPath = join(dirname(caPath), "jobs-token");
-    let token = process.env[config.tokenEnv];
+    let token = env[config.tokenEnv];
     let source = config.tokenEnv;
     if (!token) {
       source = tokenPath;

@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -457,12 +457,13 @@ test("explicit profile trees reject unsafe, changed, missing and incomplete sour
         { session: f.session, atomDirectory: join(f.session.workdir, "runtime") })).rejects.toThrow();
     }
     const helper = join(candidateRoot, "kernels/tiling.py");
-    const target = join(f.dir, "linked-helper.py");
-    await cp(helper, target);
-    await rm(helper);
-    await symlink(target, helper);
+    const kernels = dirname(helper), linked = join(f.dir, "linked-kernels");
+    await rename(kernels, linked);
+    await symlink(linked, kernels, process.platform === "win32" ? "junction" : "dir");
     await expect(kernelProfile({ ...args, candidateFiles }, {},
       { session: f.session, atomDirectory: join(f.session.workdir, "runtime") })).rejects.toThrow(/regular/);
+    await rm(kernels);
+    await rename(linked, kernels);
     await rm(helper);
     await mkdir(helper);
     await expect(kernelProfile({ ...args, candidateFiles }, {},

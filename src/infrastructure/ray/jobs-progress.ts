@@ -1,8 +1,45 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ProgressSnapshots } from "../../core/progress/live-progress.js";
-import { parseProgressSnapshot, ProgressPublisher, type ProgressSnapshot } from "../../core/progress/progress-wire.js";
+import { ProgressSnapshots, safeProgress } from "../../core/progress/live-progress.js";
+import { parseProgressEvent, parseProgressSnapshot, ProgressPublisher, type ProgressSnapshot } from "../../core/progress/progress-wire.js";
 import { JobsClient } from "./jobs-client.js";
+import type { ProgressEvent } from "../../core/progress/progress.js";
+import type { WorkflowEvent } from "../../core/contracts/workflow.js";
+import { redactDiagnostic } from "../../core/errors/diagnostics.js";
+
+const WORKFLOW_PROGRESS_PREFIX = "ARSI_WORKFLOW_PROGRESS ";
+
+/** Formal events may be retained in driver logs. Transient tool previews never enter this channel. */
+export function workflowProgressLine(event: ProgressEvent, secrets: readonly string[] = []): string {
+  return event.transient ? "" : `${WORKFLOW_PROGRESS_PREFIX}${JSON.stringify(safeProgress(event, secrets))}\n`;
+}
+
+export function workflowJobsProgress(onEvent: ((event: WorkflowEvent) => void) | undefined, secrets: readonly string[]) {
+  let pending = "";
+  const observe = (event: ProgressEvent) => {
+    const progress = safeProgress(event, secrets);
+    onEvent?.({ path: "deployment", status: "running", message: progress.message, progress });
+  };
+  const line = (value: string) => {
+    if (!value) return;
+    if (value.startsWith(WORKFLOW_PROGRESS_PREFIX)) {
+      let event: ProgressEvent | undefined;
+      try { event = parseProgressEvent(JSON.parse(value.slice(WORKFLOW_PROGRESS_PREFIX.length))); }
+      catch { /* Other driver output remains readable even if it resembles a malformed frame. */ }
+      if (event) { observe(event); return; }
+    }
+    onEvent?.({ path: "deployment", status: "running", message: redactDiagnostic(value, secrets) });
+  };
+  return { observe,
+    log(value: string) {
+      pending += value;
+      let end: number;
+      while ((end = pending.indexOf("\n")) >= 0) { const complete = pending.slice(0, end); pending = pending.slice(end + 1); line(complete); }
+      if (Buffer.byteLength(pending) > 128 * 1024) { line(pending); pending = ""; }
+    },
+    flush() { line(pending); pending = ""; },
+  };
+}
 
 /** Gateway RAM only. An ended publisher expires even if nobody reads its progress. */
 export class JobsProgressMailbox {

@@ -5,7 +5,7 @@ export type Deployment = { kind: "ray-jobs" } & Omit<JobsConfig, "concurrency" |
 
 export function parseDeployment(value: unknown): Deployment {
   const record = expectRecord(value, "deployment");
-  rejectUnknown(record, ["kind", "endpoint", "caFile", "tokenEnv", "managedLocal"], "deployment");
+  rejectUnknown(record, ["kind", "endpoint", "caFile", "tokenEnv", "managedLocal", "bundles"], "deployment");
   if (record.kind !== "ray-jobs") throw new TypeError("deployment.kind must be ray-jobs");
   const { kind: _kind, ...connection } = record;
   const { transport: _transport, concurrency: _concurrency, nodes: _nodes, ...config } = parseJobsConfig(connection);

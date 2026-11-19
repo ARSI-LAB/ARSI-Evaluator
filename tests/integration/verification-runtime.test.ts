@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { harness, source } from "../fixtures/engine/fakes.js";
 import { storeRun } from "../fixtures/results/store-fixture.js";
-import { runEngine } from "../../src/application/run-engine.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import type { VerificationRuntime, VerificationRuntimeSession } from "../../src/core/contracts/verification-runtime.js";
@@ -13,6 +13,8 @@ import type { EnvironmentSpec } from "../../src/core/contracts/environment.js";
 import { createTaskPreparer } from "../../src/core/preparation/materialize-task.js";
 
 const cleanup: (() => Promise<void>)[] = [];
+// Preparation ordering scenarios persist full runs, including separate verifier evidence.
+vi.setConfig({ testTimeout: 30_000 });
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 const job = { runId: "run-1", taskId: "a", attemptId: "attempt-1", ref: { id: "a", recordKey: "a" }, configFingerprint: "config-hash" };
 async function fixture(mode: "direct" | "batch" | "pipeline" = "direct") {
@@ -54,7 +56,7 @@ test.each(["direct", "batch", "pipeline"] as const)("%s waits for verifier depen
   const { components, config, runtime, events, inputs } = await fixture(mode);
   const entered = Promise.withResolvers<void>(), ready = Promise.withResolvers<void>();
   runtime.materialize = async () => { events.push("runtime.materialize"); entered.resolve(); await ready.promise; return { image: "private-image" }; };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try { await entered.promise; expect(inputs).toHaveLength(0); expect(events).not.toContain("runtime.prepare"); }
   finally { ready.resolve(); }
   const snapshot = await running;
@@ -99,7 +101,7 @@ test.each(["batch", "pipeline", "worker"] as const)("%s prepares solver, solve, 
     }));
     expect(tasks.every(task => task.verificationRuntime !== undefined)).toBe(true);
   } else {
-    const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+    const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
     expect(snapshot.run.status).toBe("completed");
     expect(snapshot.run.preparationRounds?.[0]?.tasks?.every(task => task.status === "ready")).toBe(true);
   }
@@ -110,7 +112,7 @@ test.each(["batch", "pipeline", "worker"] as const)("%s prepares solver, solve, 
 test.each(["direct", "batch", "pipeline"] as const)("%s preparation failure prevents model work", async mode => {
   const { components, config, runtime, inputs, events } = await fixture(mode);
   runtime.materialize = async () => { throw new Error("verifier dependency unavailable"); };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(inputs).toHaveLength(0); expect(events).not.toContain("runtime.prepare");
   expect(snapshot.records[0]?.errors.some(error => error.message.includes("verifier dependency unavailable"))).toBe(true);
   expect(snapshot.records[0]?.scoreStatus).toBe("invalid");
@@ -122,7 +124,7 @@ test.each(["verify-error", "cancel", "cleanup-error"] as const)("verifier lifecy
   if (mode === "verify-error") handle.verify = async () => { throw new Error("verifier failed"); };
   if (mode === "cancel") handle.verify = async () => { cancel.abort(new Error("cancelled during verification")); throw cancel.signal.reason; };
   if (mode === "cleanup-error") handle.dispose = async signal => { signal.throwIfAborted(); events.push("runtime.cleanup"); throw new Error("cannot remove verifier container"); };
-  const snapshot = await runEngine({ components, config, signal: cancel.signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: cancel.signal });
   expect(events).toContain("runtime.cleanup"); expect(events).toContain("solve.cleanup");
   expect(snapshot.records[0]?.errors.some(error => error.phase === (mode === "cleanup-error" ? "cleanup" : "verify"))).toBe(true);
   if (mode === "cleanup-error") expect(snapshot.records[0]).toMatchObject({ scoreStatus: "valid", cleanupStatus: "unconfirmed", verdict: { score: 1 } });
@@ -188,11 +190,11 @@ test("ready tasks missing verifier receipts fail without rerunning preparation o
 test("resume recovers verifier resources without repeating a valid score", async () => {
   const { components, config, runtime, handle, inputs } = await fixture();
   handle.dispose = async () => { throw new Error("unconfirmed verifier removal"); };
-  const first = await runEngine({ components, config, signal: new AbortController().signal });
+  const first = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   components.environment.recoverAttempts = async () => {};
   runtime.recoverAttempts = vi.fn(async () => {});
   await components.store.close();
-  const resumed = await runEngine({ components, config, signal: new AbortController().signal,
+  const resumed = await runBenchmarkFixture({ components, config, signal: new AbortController().signal,
     resumeDirectory: join(config.experiment.output.directory, first.run.runId) });
   expect(runtime.recoverAttempts).toHaveBeenCalledWith([first.records[0]!.key], expect.any(AbortSignal));
   expect(inputs).toHaveLength(1); expect(resumed.records).toEqual(first.records);

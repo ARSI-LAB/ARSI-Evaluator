@@ -1,12 +1,17 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: mmlu
-  solver:
-    name: choice-logprobs
-    config:
-      thinking: disabled
-environment: local
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: mmlu
+    solver:
+      name: choice-logprobs
+      config:
+        thinking: disabled
+  environment: local
+output:
+  directory: ../../results/mmlu/mmlu-simpleagent

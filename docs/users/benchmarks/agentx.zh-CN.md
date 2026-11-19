@@ -1,5 +1,7 @@
 # AgentX 性能评测
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./agentx.md) | 中文
 
 AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子 Agent 依赖和等待时间，测量模型服务的吞吐和延迟。它没有 ground truth，`passed` 为 `null`，不输出正确率或奖励分数。实现固定使用 [agentx-harness 1.0.7](https://inferencex.semianalysis.com/agentx/quickstart) 的 `agentx` 场景。
@@ -51,27 +53,30 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 
 首次运行会下载 trace、tokenizer 和 Python 依赖，所需墙钟时间大于测量窗口。`HF_ENDPOINT` 遵循[现有数据接入设置](../config.zh-CN.md)，`HF_TOKEN` 用于受限 tokenizer；`PIP_INDEX_URL` 可以选择 Python 包镜像。
 
-Trace 数据集公开，原有示例无需额外设置 HF_TOKEN。需要为数据下载提供显式凭据时，可设置 `benchmark.config.hfToken: ${HF_TOKEN}`，支持 SDK `env`，省略时使用执行进程的 HF_TOKEN；旧 hfTokenEnv 不再接受。tokenizer 由用户随推理服务准备并通过现有 tokenizer 字段提供本机目录，不增加 tokenizer 认证参数。
+Trace 数据集公开，原有示例无需额外设置 HF_TOKEN。需要为数据下载提供显式凭据时，可设置 `benchmark.config.hfToken: {credential: HF_TOKEN}`，支持 SDK `env`，省略时使用执行进程的 HF_TOKEN；旧 hfTokenEnv 不再接受。tokenizer 由用户随推理服务准备并通过现有 tokenizer 字段提供本机目录，不增加 tokenizer 认证参数。
 
 ## 并发与配置
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: agentx
-  scenario: standard
-  config:
-    variant: 256k
-    concurrency: [1, 4, 8]
-  solver:
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: agentx
+    scenario: standard
     config:
-      tokenizer: ${MODEL_NAME} # 别名或在线 API 模型 ID 不是仓库名时，改填匹配的 tokenizer
-      trustRemoteCode: false
-environment: local
+      variant: 256k
+      concurrency: [1, 4, 8]
+    solver:
+      config:
+        tokenizer: ${MODEL_NAME} # 别名或在线 API 模型 ID 不是仓库名时，改填匹配的 tokenizer
+        trustRemoteCode: false
+  environment: local
 ```
 
 `concurrency` 表示活动会话树数，由 Harness 管理；子 Agent 会让请求并发高于该值。Evaluator 的调度并发必须为 1，各点依次运行，避免测量点争用同一服务。`run.maxTasks`、`run.taskIds` 和采样作用于测量点，不限制 trace 中的请求。

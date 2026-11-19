@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { bindSolverService } from "arsi-evaluator";
 import type { Context } from "@deepseek-ai/cordis";
 import { DocOpsBenchmark, parseDocOpsConfig } from "./benchmark.js";
@@ -19,14 +20,14 @@ export type {
 export const inject = ["evaluator"];
 
 export function apply(ctx: Context): void {
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "benchmark",
     "docops",
     parseDocOpsConfig,
     (config, runtime) => new DocOpsBenchmark({ ...config, cacheDir: runtime.resolvePath(config.cacheDir) }),
     { nodeLocal: { cacheDir: "cache" } },
   );
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "environment",
     "docops-docker",
     parseDocOpsDockerConfig,

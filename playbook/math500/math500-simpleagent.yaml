@@ -1,14 +1,19 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-  judge:
-    model: ${JUDGE_NAME}
-    base_url: ${JUDGE_ENDPOINT}
-    api_key: ${JUDGE_API_KEY}
-benchmark:
-  name: math500
-  config:
-    judgeService: judge
-environment: local
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+    judge:
+      model: ${JUDGE_NAME}
+      base_url: ${JUDGE_ENDPOINT}
+      apiKeyEnv: JUDGE_API_KEY
+  benchmark:
+    name: math500
+    config:
+      judgeService: judge
+  environment: local
+output:
+  directory: ../../results/math500/math500-simpleagent

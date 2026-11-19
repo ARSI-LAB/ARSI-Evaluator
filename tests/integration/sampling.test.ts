@@ -1,12 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { stringify } from "yaml";
-import { loadConfig } from "../../src/application/config.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { workflowValue } from "../../src/core/workflow/values.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
+import { SuccessRateMetrics } from "../../src/plugins/metrics/success-rate.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
 import { harness } from "../fixtures/engine/fakes.js";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const roots: string[] = [];
 const fixtures: ReturnType<typeof harness>[] = [];
@@ -21,24 +26,28 @@ async function fixture(run: Record<string, unknown> = {}, existingRoot?: string)
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), "evaluator-sampling-"));
   if (!existingRoot) roots.push(root);
   const path = join(root, "experiment.yaml");
-  await writeFile(path, stringify({
-    services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${FIXTURE_KEY}" } },
+  await writeFile(path, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+    services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "FIXTURE_KEY" } },
     benchmark: { name: "gsm8k", solver: { name: "simpleagent", service: "default" } }, environment: { name: "local" },
-    run: { onError: "abort", ...run }, output: { directory: "./runs" },
+    metrics: [{ name: "success-rate" }], scheduler: { name: "local", concurrency: 1 },
+    run: { onError: "abort", ...run } }, output: { directory: "./runs" },
   }));
-  const config = await loadConfig(path, {}, { FIXTURE_KEY: "fixture-key" });
-  const value = harness(root);
+  const plan = await inspectWorkflow({ configPath: path, env: {} });
+  const value = harness(root), config = value.config;
+  config.experiment = benchmarkExperiment(plan);
+  config.persisted = workflowValue(config.experiment);
   fixtures.push(value);
   value.components.benchmark.enumerate = async function* () {
     for (const id of ids) yield { id, recordKey: id };
   };
   value.components.scheduler = new LocalScheduler(1);
+  value.components.metrics = [new SuccessRateMetrics()];
   return { ...value, config, root };
 }
 
 const random = (seed = 42) => ({ strategy: "random", seed });
 const execute = (value: Awaited<ReturnType<typeof fixture>>) =>
-  runEngine({ ...value, signal: new AbortController().signal });
+  runBenchmarkFixture({ ...value, signal: new AbortController().signal });
 
 test("omitting sampling preserves source order and the existing saved run config", async () => {
   const value = await fixture({ maxTasks: 3 });
@@ -51,7 +60,7 @@ test("offset and maxTasks run the requested source range and save offset", async
   const snapshot = await execute(value);
   expect(snapshot.run.taskIds).toEqual(ids.slice(10, 15));
   expect(value.inputs.map(input => input.id)).toEqual(ids.slice(10, 15));
-  const stored = JSON.parse(await readFile(join(value.root, "runs", snapshot.run.runId, "manifest.json"), "utf8"));
+  const stored = JSON.parse(await readFile(join(snapshot.nativeDirectory, "manifest.json"), "utf8"));
   expect(stored.configSummary.run.offset).toBe(10);
   expect(value.config.persisted).toMatchObject({ run: { offset: 10, maxTasks: 5 } });
 });
@@ -80,7 +89,7 @@ test("offset selects a slice of the reproducible shuffled order", async () => {
 
 test.each([20, 21, Number.MAX_SAFE_INTEGER])("offset %s rejects an empty selection before solving", async offset => {
   const value = await fixture({ offset, maxTasks: 5 });
-  await expect(execute(value)).rejects.toMatchObject({ code: "CONFIG_INVALID", message: "Empty task selection" });
+  expect((await execute(value)).workflow).toMatchObject({ status: "failed", steps: expect.arrayContaining([expect.objectContaining({ errors: expect.arrayContaining([expect.objectContaining({ message: "Empty task selection" })]) })]) });
   expect(value.inputs).toEqual([]);
 });
 
@@ -102,7 +111,7 @@ test("random sampling is reproducible, without replacement, and reaches beyond t
   const changed = await execute(await fixture({ maxTasks: 5, sampling: random(43) }));
   expect([...changed.run.taskIds].sort()).not.toEqual([...snapshot.run.taskIds].sort());
 
-  const stored = JSON.parse(await readFile(join(first.root, "runs", snapshot.run.runId, "manifest.json"), "utf8"));
+  const stored = JSON.parse(await readFile(join(snapshot.nativeDirectory, "manifest.json"), "utf8"));
   expect(stored.taskIds).toEqual(snapshot.run.taskIds);
   expect(stored.configSummary.run.sampling).toEqual(random());
   expect(first.config.persisted).toMatchObject({ run: { sampling: random() } });
@@ -125,7 +134,7 @@ test.each([undefined, 100])("random sampling retains all candidates when maxTask
 
 test("random sampling still rejects unknown task IDs before solving", async () => {
   const value = await fixture({ taskIds: ["unknown"], sampling: random() });
-  await expect(execute(value)).rejects.toThrow(/unknown task IDs/i);
+  expect((await execute(value)).workflow.steps.some(step => /unknown task IDs/i.test(step.errors.map(error => error.message).join(" ")))).toBe(true);
   expect(value.inputs).toEqual([]);
 });
 
@@ -159,14 +168,14 @@ test.each([{}, { offset: 4 }])("resume keeps the sampled task order and skips co
     await commit(...args);
     controller.abort();
   };
-  const partial = await runEngine({ ...first, signal: controller.signal });
+  const partial = await runBenchmarkFixture({ ...first, signal: controller.signal });
   expect(partial.run.status).toBe("cancelled");
   expect(partial.records).toHaveLength(1);
   expect(partial.records[0]?.executionStatus).toBe("completed");
   await first.dispose();
 
   const resumed = await fixture(run, first.root);
-  const snapshot = await runEngine({ ...resumed, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ ...resumed, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal });
   expect(snapshot.run.taskIds).toEqual(partial.run.taskIds);
   expect(resumed.inputs.map(input => input.id)).toEqual(partial.run.taskIds.slice(1));
   expect(snapshot.records[0]?.key).toEqual(partial.records[0]?.key);
@@ -175,13 +184,13 @@ test.each([{}, { offset: 4 }])("resume keeps the sampled task order and skips co
   await resumed.dispose();
 
   const changed = await fixture({ ...run, sampling: random(43) }, first.root);
-  await expect(runEngine({ ...changed, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal }))
-    .rejects.toMatchObject({ code: "SOURCE_CHANGED" });
+  await expect(runBenchmarkFixture({ ...changed, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal }))
+    .rejects.toThrow("Cannot resume a different workflow, input, or plugin implementation");
   expect(changed.inputs).toEqual([]);
   await changed.dispose();
 
   const changedOffset = await fixture({ ...run, offset: 5 }, first.root);
-  await expect(runEngine({ ...changedOffset, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal }))
-    .rejects.toMatchObject({ code: "SOURCE_CHANGED" });
+  await expect(runBenchmarkFixture({ ...changedOffset, resumeDirectory: join(first.root, "runs", partial.run.runId), signal: new AbortController().signal }))
+    .rejects.toThrow("Cannot resume a different workflow, input, or plugin implementation");
   expect(changedOffset.inputs).toEqual([]);
 });

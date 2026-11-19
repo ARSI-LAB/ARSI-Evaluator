@@ -3,6 +3,7 @@ import { isErrorCode, type ErrorCode } from "../../core/errors/registry.js";
 import { identifyNetworkFailure } from "../../core/errors/network-failure.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import type { WorkflowRemoteJob } from "./workflow-protocol.js";
 import type { RemoteJob } from "./protocol.js";
 import { parseImageCleanupRequest, parseImageCleanupSummary } from "./image-cleanup.js";
 import { expectRecord } from "../../core/validation/input.js";
@@ -25,6 +26,8 @@ export type RayResult =
   | { type: "result"; attemptId: string; result: { receipt: UploadReceipt; nodeId: string; hostname: string; warnings?: string[] } }
   | { type: "failed"; attemptId: string; code: ErrorCode; originalName?: string; retired?: boolean; network?: import("../../core/contracts/errors.js").ErrorDetails | null;
       environmentTimeouts?: import("../../core/contracts/result.js").TaskPreparationTiming["environmentTimeouts"] };
+export type WorkflowRayResult = { type: "workflow-result"; attemptId: string; result: { completed: boolean; nodeId: string; hostname: string } };
+type BridgeResult = RayResult | WorkflowRayResult;
 export type RayClientOptions = {
   imageGuard?: unknown;
   pythonExecutable: string;
@@ -41,10 +44,11 @@ export class RayClient {
   private child: ChildProcessWithoutNullStreams | undefined;
   private readonly ready = Promise.withResolvers<RayReady>();
   private readonly exited = Promise.withResolvers<void>();
-  private readonly pending = new Map<string, ReturnType<typeof Promise.withResolvers<RayResult>>>();
+  private readonly pending = new Map<string, ReturnType<typeof Promise.withResolvers<BridgeResult>>>();
   private readonly cleaned = Promise.withResolvers<void>();
   private readonly maintenance = new Map<string, { waiting: ReturnType<typeof Promise.withResolvers<ImageCleanupNode[]>>; preview: boolean; nodes: Set<string> }>();
   private readonly retired = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+  private readonly guards = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
   private failure: Error | undefined;
   private closing = false;
   /** Coordinator-side dispatch cap; set after the cluster slot count is known. */
@@ -62,6 +66,8 @@ export class RayClient {
     this.cleaned.reject(error);
     for (const operation of this.maintenance.values()) operation.waiting.reject(error);
     this.maintenance.clear();
+    for (const waiting of this.guards.values()) waiting.reject(error);
+    this.guards.clear();
     for (const value of this.pending.values()) value.reject(error);
     this.pending.clear();
     for (const value of this.retired.values()) value.reject(error);
@@ -123,7 +129,7 @@ export class RayClient {
             this.nodeSlots = value.nodeSlots as Record<string, number>;
             this.slots = value.slots;
             this.ready.resolve(value as RayReady);
-          } else if (value.type === "result" || value.type === "prepared" || value.type === "failed") {
+          } else if (value.type === "result" || value.type === "prepared" || value.type === "failed" || value.type === "workflow-result") {
             if (typeof value.attemptId !== "string" || !this.pending.has(value.attemptId))
               throw new Error("Unexpected Ray attempt response");
             if (
@@ -152,9 +158,19 @@ export class RayClient {
                 typeof result.nodeId !== "string" || typeof result.hostname !== "string") throw new Error("Invalid preparation acknowledgement");
               assertEnvironmentTimeouts(result.environmentTimeouts);
             }
+            if (value.type === "workflow-result") {
+              const result = expectRecord(value.result, "workflow Ray result");
+              if (typeof result.completed !== "boolean" || typeof result.nodeId !== "string" || typeof result.hostname !== "string")
+                throw new Error("Invalid workflow worker acknowledgement");
+            }
             const pending = this.pending.get(value.attemptId)!;
             this.pending.delete(value.attemptId);
-            pending.resolve(value as RayResult);
+            pending.resolve(value as BridgeResult);
+          } else if (value.type === "guarded") {
+            const waiting = typeof value.requestId === "string" ? this.guards.get(value.requestId) : undefined;
+            if (!waiting) throw new Error("Unexpected Ray image guard acknowledgement");
+            this.guards.delete(String(value.requestId));
+            waiting.resolve();
           } else if (value.type === "images-cleaned") {
             const operation = typeof value.requestId === "string" ? this.maintenance.get(value.requestId) : undefined;
             if (!operation) throw new Error("Unexpected image maintenance response");
@@ -210,10 +226,20 @@ export class RayClient {
       deadline.removeEventListener("abort", abort);
     }
   }
-  submit(job: RemoteJob): Promise<RayResult> {
+  async submit(job: RemoteJob): Promise<RayResult> {
+    const result = await this.dispatch(job);
+    if (result.type === "workflow-result") throw new Error("Unexpected workflow response to benchmark job");
+    return result;
+  }
+  async submitWorkflow(job: WorkflowRemoteJob): Promise<WorkflowRayResult | Extract<RayResult, { type: "failed" }>> {
+    const result = await this.dispatch(job);
+    if (result.type !== "workflow-result" && result.type !== "failed") throw new Error("Unexpected benchmark response to workflow job");
+    return result;
+  }
+  private dispatch(job: RemoteJob | WorkflowRemoteJob): Promise<BridgeResult> {
     if ((this.limit !== undefined && this.pending.size >= this.limit) || this.pending.has(job.job.attemptId))
       return Promise.reject(new Error("Ray concurrency or duplicate attempt violation"));
-    const pending = Promise.withResolvers<RayResult>();
+    const pending = Promise.withResolvers<BridgeResult>();
     this.pending.set(job.job.attemptId, pending);
     try {
       this.send({ type: "submit", job });
@@ -250,6 +276,20 @@ export class RayClient {
     } finally {
       signal.removeEventListener("abort", abort);
     }
+  }
+  /** Protect native environment images for the lifetime of this shared connection. */
+  async guardImages(payload: unknown, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const requestId = crypto.randomUUID();
+    const waiting = Promise.withResolvers<void>();
+    void waiting.promise.catch(() => {});
+    this.guards.set(requestId, waiting);
+    const abort = () => waiting.reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      this.send({ type: "guard-images", requestId, payload });
+      await waiting.promise;
+    } finally { signal.removeEventListener("abort", abort); this.guards.delete(requestId); }
   }
   async cleanupImages(payload: unknown, nodes: string[], signal: AbortSignal): Promise<ImageCleanupNode[]> {
     signal.throwIfAborted();
