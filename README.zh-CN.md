@@ -20,6 +20,7 @@
 
 <p align="center">
   <a href="docs/users/quick-start.zh-CN.md">快速开始</a> ·
+  <a href="#officeqa-pro-v2">OfficeQA 评测图表</a> ·
   <a href="docs/users/README.zh-CN.md">使用文档</a> ·
   <a href="playbook/README.md">实验配置</a> ·
   <a href="docs/development/plugins.md">插件开发</a>
@@ -140,7 +141,7 @@ Tracer 会按需启动本地 Collector。在运行 Collector 的机器上，通�
 
 ## 📊 评测结果
 
-模型为 **DeepSeek V4.1 Flash 1017**。`tbd` 表示待测。分数按各题库自己的规则计算。
+表中结果使用 **DeepSeek V4.1 Flash 1017**。`tbd` 表示待测。分数按各题库自己的规则计算。
 
 | Benchmark | Agent Harness | 结果 |
 | --- | --- | --- |
@@ -150,6 +151,22 @@ Tracer 会按需启动本地 Collector。在运行 Collector 的机器上，通�
 | Terminal-Bench 4.0 | SimpleAgent | `tbd` |
 | SWE-bench Verified | SimpleAgent | `tbd` |
 | OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
+
+### OfficeQA Pro V2
+
+九种 Solver 分别使用 `deepseek-v4.1-flash-1017` 评测了 OfficeQA Pro V2 的全部 90 道文档问答题。[本次测评报告](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) · [全部实验结果](docs/experiment/)
+
+**准确率**以全部 90 题为分母，超时计为未通过。DeepSeek Harness 答对 58 题（64.44%），Codex 答对 55 题（61.11%）。
+
+![九种 Solver 在 OfficeQA Pro V2 上的准确率，范围为 53.33% 至 64.44%](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.png)
+
+**求解耗时**只统计每题最终计分尝试的求解阶段，排除超时题。JiuwenSwarm 的中位数为 2 分 57 秒，第 90 百分位为 7 分 30 秒。
+
+![九种 Solver 在 OfficeQA Pro V2 上的求解耗时中位数、第 90 百分位和各自纳入统计的题数](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.png)
+
+**上报 Token 用量**取每题最终计分尝试上报的总量，图中以万 Token 为单位展示中位数和第 90 百分位。Claude Code 和 CodeBuddy 各有 89 题上报用量，其余七种 Solver 均为 90 题。
+
+![九种 Solver 在 OfficeQA Pro V2 上每题上报的 Token 用量中位数、第 90 百分位和上报题数](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.png)
 
 ## 📖 使用指南
 
