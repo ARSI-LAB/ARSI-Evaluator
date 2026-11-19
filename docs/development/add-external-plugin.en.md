@@ -15,10 +15,11 @@ Put all three files under `.scratch/external-plugin-example/`. Follow the [insta
 Run `mkdir -p .scratch/external-plugin-example` and create `completed-count.mjs` in that directory. Evaluator calls `apply(ctx)` when it loads the file, and this function registers the metric as `external-completed-count`.
 
 ```js
+import { registerNativeResource } from "arsi-evaluator";
 export const inject = ["evaluator"];
 
 export function apply(ctx) {
-  ctx.evaluator.register("metrics", "external-completed-count", config => {
+  registerNativeResource(ctx, "metrics", "external-completed-count", config => {
     if (config === null || typeof config !== "object" || Array.isArray(config) || Object.keys(config).length !== 0) {
       throw new TypeError("external-completed-count accepts no configuration fields");
     }

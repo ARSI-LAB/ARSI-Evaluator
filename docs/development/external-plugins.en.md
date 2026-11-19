@@ -16,7 +16,6 @@ work/
 └── evaluator-metrics/          # Run all commands below from this plugin project
     ├── package.json
     ├── tsconfig.json
-    ├── src/context.ts
     ├── src/index.ts
     ├── cordis.patch.yaml
     └── experiment.yaml
@@ -77,34 +76,19 @@ Create `tsconfig.json`:
 
 ## 2. Implement and compile the plugin
 
-Use component types exported from the package root. Cordis's `Context` type does not declare the `evaluator` service that Evaluator injects. Declare the `register()` signature used by these examples in `src/context.ts`. The `inject` declaration tells Cordis which service the plugin needs at runtime.
-
-```ts
-import type { Context } from "@deepseek-ai/cordis";
-import type { PluginConfigValidator, PluginFactory, PluginRole } from "arsi-evaluator";
-
-export type EvaluatorPluginContext = Context & {
-  evaluator: {
-    register<R extends PluginRole, T>(
-      role: R,
-      name: string,
-      validate: PluginConfigValidator<T>,
-      factory: PluginFactory<R, T>,
-    ): () => Promise<void>;
-  };
-};
-```
+Import component types and `registerNativeResource` from the package root and use Cordis `Context`. No handwritten registry signature is required; `inject` declares the runtime dependency.
 
 Create `src/index.ts` with a metric that counts tasks with valid scores.
 
 ```ts
+import { registerNativeResource } from "arsi-evaluator";
 import type { Metrics } from "arsi-evaluator";
-import type { EvaluatorPluginContext } from "./context.js";
+import type { Context } from "@deepseek-ai/cordis";
 
 export const inject = ["evaluator"];
 
-export function apply(ctx: EvaluatorPluginContext): void {
-  ctx.evaluator.register(
+export function apply(ctx: Context): void {
+  registerNativeResource(ctx,
     "metrics",
     "valid-count",
     (config: unknown) => {
@@ -138,20 +122,21 @@ pnpm build
 
 Commit the plugin's own `pnpm-lock.yaml` after the first installation; use `pnpm install --frozen-lockfile` thereafter. Rebuild after editing TypeScript. Evaluator rejects `.ts` entry points, and its root build does not compile this independent project.
 
-Other components use the same `register(role, name, validate, factory)` API. Import public types from the package root, not `arsi-evaluator/src/...`. Keep `validate` free of resource allocation. Factories can resolve experiment-relative paths with `runtime.resolvePath()`. Register long-lived resources with the plugin scope, for example `ctx.effect(() => () => resource.close())`; release attempt resources through their session contracts. See [component contracts and lifecycles](plugins.en.md).
+Other components use the same `registerNativeResource(ctx, role, name, validate, factory)` API. Import public types from the package root, not `arsi-evaluator/src/...`. Keep `validate` free of resource allocation. Factories can resolve experiment-relative paths with `runtime.resolvePath()`. Register long-lived resources with the plugin scope, for example `ctx.effect(() => () => resource.close())`; release attempt resources through their session contracts. See [component contracts and lifecycles](plugins.en.md).
 
 ### Solver in a standalone project
 
 Use the project structure from step 1. Save the [fixed-answer Solver implementation](add-solver.en.md#minimal-example) as `src/fixed-answer.ts` in the standalone project. Change the Solver type import to `import type { Solver } from "arsi-evaluator"`. Use this `src/index.ts` and run `pnpm build` in the standalone project.
 
 ```ts
-import type { EvaluatorPluginContext } from "./context.js";
+import { registerNativeResource } from "arsi-evaluator";
+import type { Context } from "@deepseek-ai/cordis";
 import { createFixedAnswerSolver, parseFixedAnswerConfig } from "./fixed-answer.js";
 
 export const inject = ["evaluator"];
 
-export function apply(ctx: EvaluatorPluginContext): void {
-  ctx.evaluator.register("solver", "external-fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
+export function apply(ctx: Context): void {
+  registerNativeResource(ctx, "solver", "external-fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
 }
 ```
 
@@ -190,7 +175,7 @@ The three names serve different purposes:
 | --- | --- | --- |
 | Patch `id` | `custom-metrics` | Module identity used for version records; unique within the patch |
 | Patch `name` | `./dist/index.js` or `@example/evaluator-metrics` | Module to import |
-| `register()` and experiment `name` | `valid-count` | Selected component; unique within its role |
+| `registerNativeResource()` and experiment `name` | `valid-count` | Selected component; unique within its role |
 
 One module can register several components. Patches currently support only `insert`, with `id` and `name` entries. Duplicate registrations cannot replace built-ins; use a new registration name and select it in YAML.
 
@@ -199,28 +184,32 @@ One module can register several components. Patches currently support only `inse
 Save this as `experiment.yaml`. Set `MODEL_NAME`, `MODEL_ENDPOINT`, and `MODEL_API_KEY` as described in the [quick start](../users/quick-start.md).
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: simpleagent
-    service: default
-environment: local
-scheduler:
-  name: local
-  concurrency: 1
-metrics:
-  - name: success-rate
-  - name: duration
-  - name: usage
-  - name: valid-count
-    config: {}
-run:
-  maxTasks: 1
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: simpleagent
+      service: default
+  environment: local
+  scheduler:
+    name: local
+    concurrency: 1
+  metrics:
+    - name: success-rate
+    - name: duration
+    - name: usage
+    - name: valid-count
+      config: {}
+  run:
+    maxTasks: 1
+
 output:
   directory: ./results
 ```

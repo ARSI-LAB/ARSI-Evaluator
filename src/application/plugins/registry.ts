@@ -1,29 +1,9 @@
-import type { HardwareKind } from "../../core/contracts/hardware.js";
-import type { PhaseTimeoutOverrides } from "../../core/contracts/task.js";
 import { Service, type Context } from "@deepseek-ai/cordis";
-
-import type { ModelConfig, RuntimeAuth, Selection } from "../../core/contracts/config.js";
-import type { Benchmark } from "../../core/contracts/benchmark.js";
-import type { Environment } from "../../core/contracts/environment.js";
-import type { Metrics } from "../../core/contracts/metrics.js";
-import type { Reporter } from "../../core/contracts/reporter.js";
-import type { RunStore } from "../../core/contracts/run-store.js";
-import type { TaskScheduler } from "../../core/contracts/scheduler.js";
-import type { Solver } from "../../core/contracts/solver.js";
-import type { Verifier } from "../../core/contracts/verifier.js";
+import { WorkflowDefinitions } from "../../core/workflow/catalog.js";
+import type { ResourceProvider, StepDefinition, WorkflowTemplate } from "../../core/contracts/workflow.js";
 import { parseConfigProfile, type ConfigProfile } from "../../config/profile-schema.js";
-import type { PluginConfigTransport } from "../../core/contracts/config-transport.js";
-
-import type { PluginRole, RoleImplementations, PluginConfigValidator, PluginFactory, FactoryContext, PreparedPlugin, PluginFactoryContext } from "../../core/contracts/plugin.js";
-import type { StoreDecoratorFactory } from "../../core/contracts/plugin-extension.js";
-
-type Registration<R extends PluginRole = PluginRole> = {
-  role: R;
-  name: string;
-  validate: PluginConfigValidator<unknown>;
-  factory: PluginFactory<R, unknown>;
-  transport?: PluginConfigTransport;
-};
+import type { PluginConfigValidator, PluginFactoryContext } from "../../core/contracts/plugin.js";
+import type { PluginActivation, StoreDecoratorFactory } from "../../core/contracts/plugin-extension.js";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -32,8 +12,8 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export class EvaluatorRegistry extends Service {
-  protected readonly registrations = new Map<string, Registration>();
   private readonly storeDecorators = new Map<string, { validate: PluginConfigValidator<unknown>; factory: StoreDecoratorFactory<unknown> }>();
+  readonly workflows = new WorkflowDefinitions();
   private readonly profileRegistrations = new Map<string, ConfigProfile>();
 
   constructor(ctx: Context) {
@@ -50,6 +30,18 @@ export class EvaluatorRegistry extends Service {
     }, `evaluator.registerStoreDecorator(${JSON.stringify(name)})`);
   }
 
+  private readonly pluginDecorators = new Map<string, string[]>();
+
+  recordStoreDecorators(id: string, names: string[]): void { this.pluginDecorators.set(id, names); }
+
+  prepareStoreDecorators(selections: readonly PluginActivation[]) {
+    return selections.flatMap(selection => {
+      const names = this.pluginDecorators.get(selection.id);
+      if (!names) throw new TypeError(`Plugin ${selection.id} has not been loaded`);
+      return names.map(name => this.prepareStoreDecorator(name, selection.config));
+    });
+  }
+
   storeDecoratorNames(): string[] { return [...this.storeDecorators.keys()]; }
 
   prepareStoreDecorator(name: string, config: unknown) {
@@ -57,6 +49,18 @@ export class EvaluatorRegistry extends Service {
     if (!entry) throw new TypeError(`Unknown store decorator: ${name}`);
     const validated = entry.validate(config);
     return (runtime: PluginFactoryContext) => entry.factory(validated, runtime);
+  }
+
+  registerStep(definition: StepDefinition): () => Promise<void> {
+    return this.ctx.effect(() => this.workflows.registerStep(definition), `workflow step ${definition.type}`);
+  }
+
+  registerResource(definition: ResourceProvider): () => Promise<void> {
+    return this.ctx.effect(() => this.workflows.registerResource(definition), `workflow resource ${definition.type}`);
+  }
+
+  registerWorkflow(definition: WorkflowTemplate): () => Promise<void> {
+    return this.ctx.effect(() => this.workflows.registerTemplate(definition), `workflow template ${definition.type}`);
   }
 
   registerProfile(value: ConfigProfile): () => Promise<void> {
@@ -73,78 +77,6 @@ export class EvaluatorRegistry extends Service {
     return structuredClone([...this.profileRegistrations.values()]);
   }
 
-  register<R extends PluginRole, T>(
-    role: R,
-    name: string,
-    validate: PluginConfigValidator<T>,
-    factory: PluginFactory<R, T>,
-    transport?: PluginConfigTransport,
-  ): () => Promise<void> {
-    if (name.trim() === "") throw new TypeError("plugin registration name must not be empty");
-    const key = `${role}:${name}`;
-
-    // Service tracing replaces this.ctx with the calling plugin context. The
-    // effect therefore belongs to that plugin fiber, including when apply
-    // throws after this call.
-    return this.ctx.effect(
-      () => {
-        if (this.registrations.has(key)) {
-          throw new TypeError(`duplicate ${role} plugin registration: ${name}`);
-        }
-        const registration: Registration<R> = {
-          role,
-          name,
-          validate: validate as PluginConfigValidator<unknown>,
-          factory: factory as PluginFactory<R, unknown>,
-          ...(transport === undefined ? {} : { transport }),
-        };
-        this.registrations.set(key, registration);
-        return () => {
-          if (this.registrations.get(key) === registration) {
-            this.registrations.delete(key);
-          }
-        };
-      },
-      `evaluator.register(${JSON.stringify(role)}, ${JSON.stringify(name)})`,
-    );
-  }
-
-  entries(): { role: PluginRole; name: string }[] {
-    return [...this.registrations.values()].map(({ role, name }) => ({ role, name }));
-  }
-
-  has(role: PluginRole, name: string): boolean {
-    return this.registrations.has(`${role}:${name}`);
-  }
-
-  configTransport(role: string, name: string): PluginConfigTransport | undefined {
-    return this.registrations.get(`${role}:${name}`)?.transport;
-  }
-
-  prepare<R extends PluginRole>(role: R, selection: Selection): PreparedPlugin<R> {
-    const registration = this.registrations.get(`${role}:${selection.name}`);
-    if (!registration) {
-      throw new TypeError(`unknown ${role} plugin: ${selection.name}`);
-    }
-    let config: unknown;
-    try {
-      config = registration.validate(selection.config);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new TypeError(`invalid ${role} plugin config for ${selection.name}: ${message}`, {
-        cause: error,
-      });
-    }
-    return async runtime => (await registration.factory(config, runtime)) as RoleImplementations[R];
-  }
-
-  async create<R extends PluginRole>(
-    role: R,
-    selection: Selection,
-    runtime: FactoryContext<R>,
-  ): Promise<RoleImplementations[R]> {
-    return await this.prepare(role, selection)(runtime);
-  }
 }
 
 export function apply(ctx: Context): void {

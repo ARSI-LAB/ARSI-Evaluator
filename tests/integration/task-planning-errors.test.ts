@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { harness } from "../fixtures/engine/fakes.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { EvaluatorError } from "../../src/core/errors/evaluator-error.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 
@@ -33,7 +33,7 @@ test.each(cases)("$mode / $code plans remaining tasks and obeys onError=$onError
   const open = components.environment.prepare.bind(components.environment);
   components.environment.prepare = async (...args) => ({ ...await open(...args), async quiesce() {} });
 
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(planned).toEqual(["a", "b", "c"]);
   expect(snapshot.records.find(record => record.key.taskId === "b")).toMatchObject({
     executionStatus: "failed", scoreStatus: "invalid", solve: null, verdict: null,

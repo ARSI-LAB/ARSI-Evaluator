@@ -1,0 +1,3 @@
+- insert:
+    - id: workflow-pelican
+      name: ./dist/index.js

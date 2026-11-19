@@ -1,85 +1,18 @@
-# Developing a Built-in Component Role
+# Built-in Workflow Components
 
-> English | [中文](./built-in-role-development.md)
+> English | [中文](built-in-role-development.md)
 
-This example adds `runGuard` alongside roles such as `environment` and `scheduler`. An experiment can select a guard. The built-in `task-limit` checks the configured `run.maxTasks` and rejects a run if the limit is missing or exceeds its policy. Experiments that omit `runGuard` follow the existing execution path.
+Choose the contract according to the operation:
 
-## 1. Define the role and contract
+| Behavior | Contract | Registration |
+| --- | --- | --- |
+| Validate or transform data, call an application, grade results | StepDefinition | registerStep |
+| Own a client, browser or memory session | ResourceProvider | registerResource |
+| Expand a few user parameters into ordered steps | WorkflowTemplate | registerWorkflow |
+| Add a Solver, Verifier or Metrics implementation for Benchmark evaluation | Domain-specific contract | registerNativeResource |
 
-Create `src/core/contracts/run-guard.ts`. The caller passes only the data the guard needs.
+Ordinary workflow extensions do not modify PluginRole, RunComponents or the execution kernel. The kernel reads nodes, ports and scopes, without branches based on plugin names.
 
-```ts
-export interface RunGuard {
-  assertAllowed(maxTasks: number | null): void;
-}
-```
+Steps belong under src/plugins/steps, resources under src/plugins/resources, and templates under src/plugins/workflows. Repository source imports relative modules; only third-party plugins import the package root. Template expansion performs no I/O. An example parameter object enables init --workflow. Users can export and edit expanded YAML without a dedicated CLI option for every plugin.
 
-Import `RunGuard` in [plugin.ts](../../src/core/contracts/plugin.ts). Add `"runGuard"` to `PluginRole` and `runGuard: RunGuard` to `RoleImplementations`. The factory uses the existing `PluginFactoryContext`. The [registry](../../src/application/plugins/registry.ts) already looks up components by role and name, so the example uses its existing `register()` and `prepare()`.
-
-## 2. Register a built-in implementation
-
-Create `src/plugins/run-guards/index.ts`. The validator checks plugin configuration. The factory creates the component, and `assertAllowed()` performs the run check.
-
-```ts
-import type { Context } from "@deepseek-ai/cordis";
-import type { RunGuard } from "../../core/contracts/run-guard.js";
-import { expectPositiveInteger, expectRecord, rejectUnknown } from "../../core/validation/input.js";
-
-export function apply(ctx: Context): void {
-  ctx.evaluator.register("runGuard", "task-limit", (value: unknown) => {
-    const config = expectRecord(value, "task-limit");
-    rejectUnknown(config, ["maxTasks"], "task-limit");
-    return { maxTasks: expectPositiveInteger(config.maxTasks, "task-limit.maxTasks") };
-  }, (config): RunGuard => ({
-    assertAllowed(maxTasks) {
-      if (maxTasks === null || maxTasks > config.maxTasks) {
-        throw new Error(`run.maxTasks must be at most ${config.maxTasks}`);
-      }
-    },
-  }));
-}
-```
-
-In [src/plugins/index.ts](../../src/plugins/index.ts), import `apply as runGuards` and call `runGuards(ctx)` from the existing `apply(ctx)`.
-
-## 3. Accept a selection in experiment configuration
-
-| File | Change |
-| --- | --- |
-| [user-schema.ts](../../src/config/user-schema.ts) | Add `runGuard?: string \| PluginSelection` to `UserConfig`. Allow `runGuard` as a top-level field. If `record.runGuard !== undefined`, set `result.runGuard` to `normalizeSelection(record.runGuard, "runGuard")`. |
-| [config.ts](../../src/core/contracts/config.ts) | Add `runGuard?: Selection` to `EffectiveConfig`. |
-| [effective.ts](../../src/config/effective.ts) | In the object returned by `parseEffectiveConfig()`, add `runGuard: parseSelection(source.runGuard, "runGuard")` when the input contains the field. Omit the property when the selection is absent. |
-| [load.ts](../../src/config/load.ts) | Add `if (experiment.runGuard) registry.validate("runGuard", experiment.runGuard);` inside the plugin validation block so `inspect` checks the registered name and private configuration. |
-
-The example uses an explicit YAML selection. The existing [resolve.ts](../../src/config/resolve.ts) merge carries the selection through. To support Benchmark Profile defaults, also allow the field in [profile-schema.ts](../../src/config/profile-schema.ts) and check how defaults and user selections merge.
-
-## 4. Create and invoke the component
-
-In [components.ts](../../src/core/contracts/components.ts), import the contract and add `runGuard?: RunGuard` to `RunComponents`. In `createRunComponents()` in [create-components.ts](../../src/application/plugins/create-components.ts), prepare the factory alongside the other roles.
-
-```ts
-const guardSelection = config.experiment.runGuard;
-const createRunGuard = guardSelection === undefined
-  ? undefined
-  : ctx.evaluator.prepare("runGuard", guardSelection);
-```
-
-After factory validation, create the instance with the existing `runtime`.
-
-```ts
-const runGuard = await createRunGuard?.(runtime);
-```
-
-Add `...(runGuard === undefined ? {} : { runGuard })` to the returned object. In `executeEngine()` in [engine.ts](../../src/core/execution/engine.ts), call the guard after the existing `signal.throwIfAborted()`, before opening a saved run or preparing tasks.
-
-```ts
-components.runGuard?.assertAllowed(config.experiment.run.maxTasks);
-```
-
-The guard runs on each entry to the Engine, including resumes and retries that start another Engine execution. It checks run configuration once, so online retries within the same run do not trigger it per task. `inspect` validates the selection and plugin options. The Engine performs the runtime check.
-
-## 5. Verify behavior and choose the scope
-
-- Run `pnpm check:dependencies`, `pnpm typecheck`, and `pnpm build`, then follow the [minimal example](add-built-in-plugin.en.md#minimal-example). Try an unknown implementation or invalid `maxTasks` to verify that `inspect` rejects it. Run a controlled evaluation with an allowed limit to verify that the Engine proceeds.
-- Cover existing YAML and saved configurations when adding optional fields. Check that a run and resume still work with the field omitted. If a role owns processes or connections, register cleanup in its Cordis plugin scope with `ctx.effect()` and verify success, failure, and cancellation.
-- The example verifies local execution. Before adding Ray support, decide whether the role runs on the coordinator or worker, then check configuration transport, version checks, and credential redaction. Export the new contract from the [package root](../../src/index.ts) if independent TypeScript plugins will implement it.
+Validate unknown fields, broken references after removing steps, semantic ports and private data boundaries. Resource tests also cover concurrency, cancellation, late-instance cleanup and crash recovery. Persist ownership before external allocation. Run dependency checks, typechecking, builds and affected behavioral tests. See [workflow plugin development](workflow-plugins.md) for contracts and lifecycle details.

@@ -1,18 +1,23 @@
-# Run on a Linux NPU host with CANN, torch_npu and triton-ascend installed.
-# KERNEL_MANIFEST points to tasks whose candidateRoot declares the candidate import directory.
-# KERNEL_EVAL_PYTHON points to Python in that NPU environment.
-# Set KERNEL_EVAL_PLACEHOLDER to unused-local-evaluation; no model is called.
-hardware: npu
-services:
-  default:
-    model: unused-local-evaluation
-    base_url: http://127.0.0.1:1/v1
-    api_key: ${KERNEL_EVAL_PLACEHOLDER}
-benchmark:
-  name: kernel
-  config:
-    # Supported modes: evaluate, precision, bench, profile.
-    operation: evaluate
-    manifest: ${KERNEL_MANIFEST}
-    python: ${KERNEL_EVAL_PYTHON}
-    device: 0
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  # Run on a Linux NPU host with CANN, torch_npu and triton-ascend installed.
+  # KERNEL_MANIFEST points to tasks whose candidateRoot declares the candidate import directory.
+  # KERNEL_EVAL_PYTHON points to Python in that NPU environment.
+  # Set KERNEL_EVAL_PLACEHOLDER to unused-local-evaluation; no model is called.
+  hardware: npu
+  services:
+    default:
+      model: unused-local-evaluation
+      base_url: http://127.0.0.1:1/v1
+      apiKeyEnv: KERNEL_EVAL_PLACEHOLDER
+  benchmark:
+    name: kernel
+    config:
+      # Supported modes: evaluate, precision, bench, profile.
+      operation: evaluate
+      manifest: ${KERNEL_MANIFEST}
+      python: ${KERNEL_EVAL_PYTHON}
+      device: 0
+output:
+  directory: ../../results/kernel/existing

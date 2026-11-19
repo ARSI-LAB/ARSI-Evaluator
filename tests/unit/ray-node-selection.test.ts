@@ -8,8 +8,7 @@ import { parseRayConfig } from "../../src/config/ray.js";
 import { parseJobsConfig } from "../../src/config/jobs.js";
 import { JobsClient } from "../../src/infrastructure/ray/jobs-client.js";
 import { RayClient } from "../../src/infrastructure/ray/client.js";
-import { RayJobsDeployment } from "../../src/application/ray/deployment.js";
-import { assertJsonValue } from "../../src/core/validation/input.js";
+import { runWorkflow } from "../../src/application/workflow.js";
 
 test("Python driver selection excludes ineligible nodes and freezes a capacity-ordered subset", () => {
   expect(() => execFileSync(process.platform === "win32" ? "python" : "python3", [resolve("tests/fixtures/ray-node-selection-tests.py"),
@@ -54,10 +53,13 @@ test.each([2, 4])("Ray Client forwards node count %s and exposes bounded startup
 
 test("Jobs submission preserves nodes and concurrency while projecting connection credentials away", async () => {
   const directory = await mkdtemp(join(tmpdir(), "ray-jobs-selection-"));
-  const config = { services: { default: { name: "fixture", endpoint: "https://model.invalid", api: "openai-completions", provider: null } },
-    benchmark: { name: "gsm8k", config: {} }, solver: { name: "simpleagent", config: {}, service: "default" },
-    environment: { name: "docker", config: {} }, store: { name: "local", config: {} }, reporter: { name: "markdown", config: {} },
-    metrics: [], run: { maxTasks: null, taskIds: null, timeoutSeconds: 300 }, output: { directory }, scheduler: { name: "ray", config: {} } };
+  const file = join(directory, "eval.yaml");
+  await writeFile(file, JSON.stringify({ schemaVersion: 2, workflow: "application.evaluate",
+    output: { directory: join(directory, "runs") },
+    deployment: { kind: "ray-jobs", endpoint: "https://cluster.invalid", caFile: "ca.pem", managedLocal: false },
+    with: { model: { model: "fixture", endpoint: "https://model.invalid", apiKeyEnv: "MODEL_KEY" }, cases: [],
+      scheduler: { name: "ray", config: { concurrency: 25, nodes: 2 } } },
+  }));
   const calls: unknown[] = [];
   const client = new JobsClient("https://cluster.invalid", Buffer.alloc(0), "gateway-credential");
   const create = vi.spyOn(JobsClient, "create").mockResolvedValue(client);
@@ -65,13 +67,13 @@ test("Jobs submission preserves nodes and concurrency while projecting connectio
     if (path.endsWith("/submit")) { calls.push(body); throw new Error("submission captured"); }
     return {};
   });
-  const model = config.services.default;
-  const auth = { value: "model-secret", reference: "MODEL_KEY" };
-  const scheduler = new RayJobsDeployment(parseJobsConfig({ endpoint: "https://cluster.invalid", caFile: "ca.pem", concurrency: 25, nodes: 2, managedLocal: false }),
-    { services: { default: { model, auth } }, solverService: "default", configDirectory: directory, resolvePath: path => join(directory, path) });
   try {
-    assertJsonValue(config);
-    await expect(scheduler.submitExperiment(config, {}, { signal: AbortSignal.timeout(10000), log: () => {} })).rejects.toThrow("submission captured");
-    expect(calls[0]).toMatchObject({ config: { scheduler: { name: "ray", config: { concurrency: 25, nodes: 2 } } } });
+    await expect(runWorkflow({ configPath: file, env: { MODEL_KEY: "model-secret" } })).rejects.toThrow("acknowledgement unavailable");
+    expect(calls[0]).toMatchObject({ kind: "workflow", plan: { document: { workflow: { resources: {
+      ray: { config: { concurrency: { value: 25 }, nodes: { value: 2 } } },
+    } } } }, credentialValues: { MODEL_KEY: "model-secret" } });
+    const submitted = calls[0] as { plan: unknown };
+    expect(JSON.stringify(submitted.plan)).not.toContain("model-secret");
+    expect(JSON.stringify(submitted.plan)).not.toContain("gateway-credential");
   } finally { create.mockRestore(); call.mockRestore(); await rm(directory, { recursive: true, force: true }); }
 });

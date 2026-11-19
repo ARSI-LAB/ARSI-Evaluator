@@ -55,6 +55,7 @@ export function validateTransferPath(value: unknown, missing = false): string {
     throw new TransferError("TRANSFER_UNSAFE", "Unsafe transfer path");
   const parts = value.split("/");
   const allowedRoot =
+    value === "workflow/run.json" ||
     ["agent", "verifier", "artifacts"].includes(parts[0]!) ||
     (parts[0] === "logs" && parts[1] === "artifacts" && (missing || parts.length >= 3));
   if (

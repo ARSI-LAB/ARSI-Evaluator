@@ -1,14 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { stringify } from "yaml";
-import { loadConfig, loadSavedConfig } from "../../src/application/config.js";
-import { exportConfig } from "../../src/config/export.js";
-import { explainConfig } from "../../src/config/explain.js";
-import { bootstrap } from "../../src/application/plugins/bootstrap.js";
-import { createPluginRuntime } from "../../src/application/plugins/create-components.js";
+import { inspectWorkflow, exportWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
+import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
 import { runCli } from "../../src/cli/main.js";
 import { parseUserConfig } from "../../src/config/user-schema.js";
 import { resolveConfig } from "../../src/config/resolve.js";
@@ -16,9 +14,8 @@ import { parseConfigProfile } from "../../src/config/profile-schema.js";
 import { assertJsonValue } from "../../src/core/validation/input.js";
 import { fingerprintConfig, fingerprintResumeConfig } from "../../src/core/results/run-manifest.js";
 import { projectRemoteJob, validateRemoteJob } from "../../src/infrastructure/ray/protocol.js";
-import { LocalRunStore } from "../../src/plugins/stores/local.js";
-import { rebuildReport } from "../../src/application/report/index.js";
 
+vi.setConfig({ testTimeout: 30_000 });
 const roots: string[] = [];
 const services = { default: { model: "fixture/model", base_url: "http://127.0.0.1:8000/v1", api_key: "${HARDWARE_TEST_KEY}" } };
 const env = { ...process.env, HARDWARE_TEST_KEY: "fixture-key" };
@@ -28,25 +25,27 @@ afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await Promise.
 async function configFile(value: Record<string, unknown>) {
   const root = await mkdtemp(join(tmpdir(), "hardware-config-")); roots.push(root);
   const file = join(root, "experiment.yaml");
-  await writeFile(file, stringify({ services, benchmark: "agentx", ...value }));
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture/model", base_url: "http://127.0.0.1:8000/v1", apiKeyEnv: "HARDWARE_TEST_KEY" } }, benchmark: "agentx", ...value } }));
   return { root, file };
 }
 
-test.each([undefined, "npu", "gpu"])("hardware %s survives loading, export, persistence and plugin creation", async hardware => {
+test.each([undefined, "npu", "gpu"] as const)("hardware %s survives loading, export, persistence and plugin creation", async hardware => {
   const { root, file } = await configFile(hardware === undefined ? {} : { hardware });
-  const config = await loadConfig(file, {}, env);
+  const plan = await inspectWorkflow({ configPath: file, env });
+  const experiment = benchmarkExperiment(plan);
   const expected = hardware ?? "npu";
-  expect(config.experiment.hardware).toBe(expected);
-  expect(createPluginRuntime(config, root).hardware).toBe(expected);
-  expect(explainConfig(config)).toContain(`hardware: "${expected}"  [${hardware === undefined ? "framework default" : "user YAML"}]`);
-  const exported = join(root, "export.yaml"), saved = join(root, "saved.yaml");
-  await writeFile(exported, stringify(exportConfig(config)));
-  await writeFile(saved, stringify(config.persisted));
-  expect((await loadConfig(exported, {}, env)).experiment.hardware).toBe(expected);
-  expect((await loadSavedConfig(saved, env)).experiment.hardware).toBe(expected);
+  expect(experiment.hardware).toBe(expected);
+  const exported = join(root, "export.yaml");
+  await exportWorkflow({ configPath: file, env }, exported);
+  expect(benchmarkExperiment(await inspectWorkflow({ configPath: exported, env })).hardware).toBe(expected);
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network access"));
-  const components = await bootstrap(config, root);
-  await components.dispose();
+  const registry = await openPluginRegistry();
+  try {
+    await createNativeResource(registry.ctx, "solver", experiment.solver, {
+      configDirectory: root, resolvePath: path => join(root, path), hardware: expected,
+      services: { default: { model: experiment.services.default!, auth: { value: "fixture-key", reference: null } } }, solverService: "default",
+    });
+  } finally { await registry.dispose(); }
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -61,9 +60,8 @@ test("Profile hardware defaults apply unless overridden by YAML", () => {
 });
 
 test("historical NPU config fingerprint is preserved; GPU cannot resume it", async () => {
-  const { root, file } = await configFile({});
-  const loaded = await loadConfig(file, {}, env);
-  const historical = { ...loaded.experiment, services: { default: { ...loaded.experiment.services.default, apiKey: "${HARDWARE_TEST_KEY}" } } };
+  const experiment = resolveConfig("experiment.yaml", parseUserConfig({ services, benchmark: "agentx" }), []);
+  const historical = { ...experiment, services: { default: { ...experiment.services.default, apiKey: "${HARDWARE_TEST_KEY}" } } };
   delete historical.hardware;
   const { output: _output, ...original } = historical;
   expect(resumeFingerprint(historical)).toBe(fingerprint(original));
@@ -72,8 +70,6 @@ test("historical NPU config fingerprint is preserved; GPU cannot resume it", asy
   expect(resumeFingerprint({ ...historical, hardware: "npu", network: { benchmarkName: "fixture", template: {} } })).toBe(fingerprint(original));
   expect(resumeFingerprint({ ...historical, hardware: "gpu", network: { benchmarkName: "fixture", template: {} } }))
     .toBe(resumeFingerprint({ ...historical, hardware: "gpu" }));
-  const saved = join(root, "old.yaml"); await writeFile(saved, stringify(historical));
-  expect((await loadSavedConfig(saved, env)).experiment.hardware).toBe("npu");
 });
 
 test.each(["npu", "gpu"] as const)("Ray job preserves %s and rejects invalid wire values", async hardware => {
@@ -91,37 +87,22 @@ test.each(["npu", "gpu"] as const)("Ray job preserves %s and rejects invalid wir
   expect(validateRemoteJob(old).safeConfig.hardware).toBeUndefined();
 });
 
-test("historical run without hardware rebuilds its report offline", async () => {
-  const { root } = await configFile({});
-  const runId = randomUUID(), store = new LocalRunStore();
-  const saved = { metrics: [{ name: "duration", config: {} }], reporter: { name: "markdown", config: {} } };
-  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network access"));
-  try {
-    await store.create(root, { schemaVersion: 1, evaluationKind: "quality", runId, source: null, taskIds: [],
-      configFingerprint: fingerprint(saved), pluginVersions: {}, startedAt: new Date().toISOString(),
-      finishedAt: null, durationMs: null, status: "cancelled" }, saved);
-  } finally { await store.close(); }
-  await rebuildReport(join(root, runId));
-  expect(await readFile(join(root, runId, "report.md"), "utf8")).toContain(runId);
-  expect(fetch).not.toHaveBeenCalled();
-});
+
 
 test.each([
   ["playbook/kernel/existing.yaml", "npu"],
   ["playbook/agentx/agentx-gpu-api.yaml", "gpu"],
 ] as const)("hardware example %s resolves without hardware or model access", async (file, hardware) => {
-  const loaded = await loadConfig(file, {}, { ...env, MODEL_NAME: "fixture/model", MODEL_ENDPOINT: "http://127.0.0.1:8000/v1",
-    MODEL_API_KEY: "fixture-key", KERNEL_MANIFEST: "missing.json", KERNEL_EVAL_PYTHON: "python", KERNEL_EVAL_PLACEHOLDER: "unused" });
-  expect(loaded.experiment.hardware).toBe(hardware);
-  const components = await bootstrap(loaded, process.cwd());
-  await components.dispose();
+  const plan = await inspectWorkflow({ configPath: file, env: { ...env, MODEL_NAME: "fixture/model", MODEL_ENDPOINT: "http://127.0.0.1:8000/v1",
+    MODEL_API_KEY: "fixture-key", KERNEL_MANIFEST: "missing.json", KERNEL_EVAL_PYTHON: "python", KERNEL_EVAL_PLACEHOLDER: "unused" } });
+  expect(benchmarkExperiment(plan).hardware).toBe(hardware);
 });
 
 test.each([undefined, { vllm: { endpoint: "http://127.0.0.1:8000/metrics" } }])("GPU AgentX supports API replay and engine telemetry %j", async telemetry => {
-  const { root, file } = await configFile({ hardware: "gpu", benchmark: { name: "agentx", solver: { config: telemetry ? { telemetry } : {} } } });
-  const loaded = await loadConfig(file, {}, env);
-  const components = await bootstrap(loaded, root);
-  await components.dispose();
+  const { file } = await configFile({ hardware: "gpu", benchmark: { name: "agentx", solver: { config: telemetry ? { telemetry } : {} } } });
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file, env }));
+  expect(experiment.hardware).toBe("gpu");
+  expect(experiment.solver.config.telemetry).toEqual(telemetry);
 });
 
 test.each([

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { setTimeout as delay } from "node:timers/promises";
-import { runEngine } from "../../src/application/run-engine.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { planResume } from "../../src/core/recovery/resume.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
@@ -28,6 +28,7 @@ async function fixture(options: Parameters<typeof harness>[1] = {}) {
   const value = harness(root, options);
   fixtures.push({ root, value });
   value.components.scheduler = new LocalScheduler(1);
+  value.config.experiment.scheduler.config.concurrency = 1;
   return value;
 }
 async function untilAborted(signal: AbortSignal) {
@@ -36,25 +37,26 @@ async function untilAborted(signal: AbortSignal) {
 }
 
 test.each([
-  { phase: "solve", taskLimit: 0.01, override: 0.3, status: "completed" },
-  { phase: "solve", taskLimit: 0.3, override: 0.01, status: "completed" },
-  { phase: "verify", taskLimit: 0.01, override: 0.3, status: "completed" },
-  { phase: "verify", taskLimit: 0.3, override: 0.01, status: "failed" },
+  { phase: "solve", taskLimit: 0.01, override: 3, status: "completed" },
+  { phase: "solve", taskLimit: 3, override: 1, status: "completed" },
+  { phase: "verify", taskLimit: 0.01, override: 3, status: "completed" },
+  { phase: "verify", taskLimit: 3, override: 1, status: "failed" },
 ] as const)("explicit $phase ceiling $override replaces task ceiling $taskLimit", async ({ phase, taskLimit, override, status }) => {
   const value = await fixture();
   value.config.experiment.run.taskIds = ["a"];
-  value.config.experiment.run.timeoutSeconds = 2;
+  // This test isolates the phase override; whole-task precedence has its own case below.
+  value.config.experiment.run.timeoutSeconds = 10;
   value.config.experiment.run[phase === "solve" ? "solveTimeoutSeconds" : "verifyTimeoutSeconds"] = override;
   const prepare = value.components.benchmark.prepare.bind(value.components.benchmark);
   value.components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { [phase]: taskLimit } });
   if (phase === "solve") {
     const solve = value.components.solver.solve.bind(value.components.solver);
-    value.components.solver.solve = async (...args) => { await delay(70, undefined, { signal: args[2].signal }); return solve(...args); };
+    value.components.solver.solve = async (...args) => { await delay(1500, undefined, { signal: args[2].signal }); return solve(...args); };
   } else {
     const verify = value.components.benchmark.verify.bind(value.components.benchmark);
-    value.components.benchmark.verify = async (...args) => { await delay(70, undefined, { signal: args[3] }); return verify(...args); };
+    value.components.benchmark.verify = async (...args) => { await delay(1500, undefined, { signal: args[3] }); return verify(...args); };
   }
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.records[0]?.executionStatus).toBe(status);
   if (phase === "solve" && override < taskLimit)
     expect(result.records[0]).toMatchObject({ scoreStatus: "valid", verdict: { score: 1 },
@@ -62,12 +64,24 @@ test.each([
   if (status === "failed") expect(result.records[0]).toMatchObject({ scoreStatus: "invalid", verdict: null });
 });
 
+test("a verify-only override leaves the task's solve deadline in effect", async () => {
+  const value = await fixture({ wait: true });
+  value.config.experiment.run.taskIds = ["a"];
+  value.config.experiment.run.verifyTimeoutSeconds = 2;
+  value.config.experiment.run.scoreAfterSolveTimeout = false;
+  const prepare = value.components.benchmark.prepare.bind(value.components.benchmark);
+  value.components.benchmark.prepare = async (...args) => ({ ...await prepare(...args), phaseTimeoutSeconds: { solve: 0.03 } });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
+  expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", verdict: null });
+  expect(value.events).not.toContain("verify");
+});
+
 test("a long phase override cannot extend a shorter whole-task deadline", async () => {
   const value = await fixture({ wait: true });
   value.config.experiment.run.taskIds = ["a"];
-  value.config.experiment.run.timeoutSeconds = 0.05;
+  value.config.experiment.run.timeoutSeconds = 1;
   value.config.experiment.run.solveTimeoutSeconds = 100;
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", verdict: null });
   expect(value.events).not.toContain("verify");
   expect(result.records[0]!.durationMs).toBeLessThan(2000);
@@ -98,7 +112,7 @@ test("a run can force a valid zero after solve timeout and skip the task on resu
     if (args[0].id === "a") await untilAborted(args[2].signal);
     return solve(...args);
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(calls).toEqual(["a", "b", "c"]);
   expect(value.events.filter(event => event === "verify")).toHaveLength(2);
   expect(result.run.status).toBe("completed");
@@ -110,7 +124,7 @@ test("a run can force a valid zero after solve timeout and skip the task on resu
   const attempts = await value.components.store.listAttempts();
   expect(planResume(result.run, attempts, result.run.configFingerprint).restartTaskIds).toEqual([]);
   await value.components.store.close();
-  const resumed = await runEngine({ ...value, signal: new AbortController().signal,
+  const resumed = await runBenchmarkFixture({ ...value, signal: new AbortController().signal,
     resumeDirectory: join(value.config.experiment.output.directory, result.run.runId) });
   expect(resumed.run.status).toBe("completed");
   expect(calls).toHaveLength(3);
@@ -119,11 +133,11 @@ test("a run can force a valid zero after solve timeout and skip the task on resu
 test("a task-wide deadline reached during solving is also an Agent timeout", async () => {
   const value = await fixture();
   value.config.experiment.run.taskIds = ["a"];
-  value.config.experiment.run.timeoutSeconds = 0.06;
+  value.config.experiment.run.timeoutSeconds = 1;
   value.components.solver.solve = async (_input, _session, context) => {
     await untilAborted(context.signal); throw new Error("unreachable");
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(result.records[0]).toMatchObject({ executionStatus: "agent_timeout", });
   expect(await value.components.store.listAttempts()).toHaveLength(1);
@@ -144,7 +158,7 @@ test.each(["partial", "missing-session", "missing-trajectory", "export-failure"]
       await untilAborted(context.signal);
       throw new Error("unreachable");
     };
-    const result = await runEngine({ ...value, signal: new AbortController().signal });
+    const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
     const record = result.records[0]!;
     if (evidence === "export-failure") {
       expect(record).toMatchObject({ executionStatus: "failed", scoreStatus: "invalid", verdict: null, cleanupStatus: "cleaned" });
@@ -172,7 +186,7 @@ test.each(["partial", "missing-session", "missing-trajectory", "export-failure"]
 test("environment deadline is invalid immediately, even when task retries are enabled", async () => {
   const value = await fixture();
   value.config.experiment.run.taskIds = ["a"];
-  value.config.experiment.run.timeoutSeconds = 0.1;
+  value.config.experiment.run.timeoutSeconds = 1;
   const prepare = value.components.environment.prepare.bind(value.components.environment);
   let calls = 0;
   let drained = false;
@@ -182,7 +196,7 @@ test("environment deadline is invalid immediately, even when task retries are en
     }
     return prepare(...args);
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(calls).toBe(1);
   expect(drained).toBe(true);
@@ -203,7 +217,7 @@ test("exhausted verifier timeouts are invalid even with a successful solve; othe
     if (args[0].input.id === "a") { failures++; await untilAborted(args[3]); }
     return verify(...args);
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(failures).toBe(1);
   expect(result.records[0]).toMatchObject({ executionStatus: "failed", verdict: null });
   expect(result.records[0]?.solve).not.toBeNull();
@@ -217,7 +231,7 @@ test("model service timeout is infrastructure, not an Agent deadline", async () 
   value.config.experiment.run.taskIds = ["a"];
   let calls = 0;
   value.components.solver.solve = async () => { calls++; throw new DOMException("model service unavailable", "TimeoutError"); };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(calls).toBe(1);
   expect(result.records[0]).toMatchObject({ executionStatus: "failed", });
   expect(computeSuccessRate(result)).toMatchObject({ denominator: 0, invalid: 1, rate: null });
@@ -229,7 +243,7 @@ test("user cancellation stays cancelled and never launches another attempt", asy
   value.config.experiment.run.taskIds = ["a"];
   const controller = new AbortController();
   value.components.solver.solve = async () => { controller.abort(new Error("user cancelled")); throw controller.signal.reason; };
-  const result = await runEngine({ ...value, signal: controller.signal });
+  const result = await runBenchmarkFixture({ ...value, signal: controller.signal });
   expect(result.run.status).toBe("cancelled");
   expect(result.records[0]?.executionStatus).toBe("cancelled");
   expect((result.records[0] ? attemptTimeoutKind(result.records[0]) : undefined)).toBeNull();

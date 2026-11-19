@@ -13,7 +13,8 @@ import { parseRunnerInput, projectRunnerInput } from "../../src/runtimes/pi/prot
 import { run } from "../../src/runtimes/pi/runner.js";
 import { TrajectoryWriter, validateSequence, type TrajectoryEvent } from "../../src/core/artifacts/trajectory.js";
 import { SimpleAgentSolver } from "../../src/plugins/solvers/simpleagent.js";
-import { loadConfig } from "../../src/application/config.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { loadBuiltinRuntimeDigest } from "../../src/infrastructure/provenance/builtin-runtime.js";
 import { taskMcpServer } from "../fixtures/task-mcp-server.js";
 
@@ -342,16 +343,16 @@ describe("simpleagent runner", () => {
   ])("returns provider or explicit truncated output with a warning for $kind", async ({ kind, maxTokens, expected }) => {
     const attemptPaths = await paths(`token-limit-${kind}`);
     const configPath = join(attemptPaths.root, "playbook.yaml");
-    await writeFile(configPath, JSON.stringify({
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
       services: {
-        default: { model: "fixture-model", base_url: endpoint, api: "openai-completions", api_key: "${LIMIT_KEY}", maxTokens },
+        default: { model: "fixture-model", base_url: endpoint, api: "openai-completions", apiKeyEnv: "LIMIT_KEY", maxTokens },
       },
       benchmark: { name: "gsm8k", solver: { name: "simpleagent", service: "default" } },
       environment: { name: "local" },
       output: { directory: "./out" },
-    }));
-    const config = await loadConfig(configPath, {}, { LIMIT_KEY: "key-limit" });
-    const solver = new SimpleAgentSolver(config.experiment.services.default!, config.auths.default!);
+    } }));
+    const experiment = benchmarkExperiment(await inspectWorkflow({ configPath, env: {} }));
+    const solver = new SimpleAgentSolver(experiment.services.default!, { value: "key-limit", reference: "LIMIT_KEY" });
     const workspaceRoot = join(root, `limit-workspaces-${kind}`);
     await mkdir(workspaceRoot);
     const environment = new LocalEnvironment(workspaceRoot);

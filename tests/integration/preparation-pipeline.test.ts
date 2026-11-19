@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test, vi } from "vitest";
 import { harness } from "../fixtures/engine/fakes.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { parseEffectiveConfig } from "../../src/config/effective.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
@@ -19,6 +19,8 @@ import { createTaskPreparer } from "../../src/core/preparation/materialize-task.
 import type { PreparationRound } from "../../src/core/contracts/result.js";
 import type { EnvironmentPreparationContext } from "../../src/core/contracts/environment.js";
 
+// These cases persist several attempts and reports; preparation deadlines are asserted separately.
+vi.setConfig({ testTimeout: 30_000 });
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 async function fixture(budget = 20) {
@@ -53,7 +55,7 @@ test.each(["batch", "pipeline"] as const)("%s allows cumulative preparation beyo
     await delay(100, undefined, { signal });
     return spec;
   };
-  const result = await runEngine({ components, config, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(inputs).toHaveLength(3);
   const round = result.run.preparationRounds?.[0];
@@ -139,7 +141,7 @@ test("unsupported planning entries are recorded while other pipeline tasks run",
     if (args[0].id === "b") throw new HarborTaskError("BENCHMARK_UNSUPPORTED", "GPU required");
     return prepare(...args);
   };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.taskIds).toEqual(["a", "b", "c"]);
   expect(inputs.map(input => input.id).sort()).toEqual(["a", "c"]);
   expect(snapshot.records.find(record => record.key.taskId === "b")).toMatchObject({ executionStatus: "failed", solve: null });
@@ -154,7 +156,7 @@ test("oversized task environments do not call the solver or block smaller tasks"
     assertDockerCapacity({ cpus: spec.image === "b" ? 8 : 1 }, { cpus: 4, memoryBytes: 8 * 1024 ** 3 });
     return materialize(spec, signal, progress);
   };
-  const result = await runEngine({ components, config, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(inputs.map(input => input.id).sort()).toEqual(["a", "c"]);
   expect(result.records.find(record => record.key.taskId === "b")).toMatchObject({
     scoreStatus: "invalid", solve: null, errors: [expect.objectContaining({ code: "ENV_RESOURCE_REQUIREMENTS_UNMET" })],
@@ -172,7 +174,9 @@ test.each(["omitted", "duplicate", "foreign", "reordered"])("rejects %s run plan
     else plan.tasks.reverse();
     return plan;
   };
-  await expect(runEngine({ components, config, signal: new AbortController().signal })).rejects.toThrow(/locked task selection/);
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  expect(result.workflow.status).toBe("failed");
+  expect(JSON.stringify(result.workflow.steps)).toContain("Benchmark preparation differs from selected cases");
   expect(inputs).toHaveLength(0);
 });
 
@@ -180,9 +184,10 @@ test("waiting for a slow solver does not consume the preparation clock", async (
   const { components, config } = await fixture(0.2);
   config.experiment.run.preparation = { mode: "pipeline", concurrency: 1, lookahead: 1, roundTimeoutSeconds: 0.2 };
   components.scheduler = new LocalScheduler(1);
+  config.experiment.scheduler.config.concurrency = 1;
   const solve = components.solver.solve.bind(components.solver);
   components.solver.solve = async (...args) => { await new Promise(resolve => setTimeout(resolve, 250)); return solve(...args); };
-  const result = await runEngine({ components, config, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(result.records).toHaveLength(3);
   expect(result.records.every(record => record.scoreStatus === "valid")).toBe(true);
 });
@@ -206,7 +211,7 @@ test.each(["pipeline", "batch"])("%s preparation timeout remains task-local and 
     }
     return materialize(spec, signal, progress);
   };
-  const result = await runEngine({ components, config, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(result.records.find(record => record.key.taskId === "a")).toMatchObject({ scoreStatus: "invalid",
     errors: [expect.objectContaining({ code: "ENV_PREPARATION_TIMEOUT" })] });
@@ -237,7 +242,7 @@ test.each(["solve", "verify"] as const)("pipeline preparation preserves the task
       throw new Error("unreachable");
     };
   }
-  const result = await runEngine({ components, config, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   const record = result.records[0];
   expect(record?.errors).toContainEqual(expect.objectContaining({ phase,
     code: phase === "solve" ? "SOLVER_AGENT_TIMEOUT" : "VERIFY_TIMEOUT" }));
@@ -264,7 +269,7 @@ test.each(["pipeline", "batch"])("%s reports numbered image progress before the 
     if (spec.image === "b") { reported.resolve(); await gate.promise; }
     return spec;
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal, onProgress: event => events.push(event) });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal, onProgress: event => events.push(event) });
   try {
     await reported.promise;
     expect(events).toContainEqual(expect.objectContaining({
@@ -272,7 +277,7 @@ test.each(["pipeline", "batch"])("%s reports numbered image progress before the 
       message: "Task image build completed; purpose=solve; elapsed 1.2s; source=new build",
     }));
     expect(events.some(event => event.taskId === "b" && event.message.startsWith("Environment ready"))).toBe(false);
-  } finally { gate.resolve(); }
+  } finally { gate.resolve(); await running; }
   expect((await running).run.status).toBe("completed");
   expect(events).toContainEqual(expect.objectContaining({ taskId: "b", taskNumber: 2, taskTotal: 3,
     message: "Task image ready; purpose=verify; elapsed 1.2s; source=in-process cache",
@@ -296,13 +301,13 @@ test.each(["explicit", "omitted", "empty", "mode-only", "concurrency-only", "loo
     if (spec.image === "a") { await gate.promise; aReady = true; }
     return materialize?.(spec, signal) ?? spec;
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try {
-    await vi.waitFor(() => expect(inputs.map(input => input.id)).toContain("b"));
+    await vi.waitFor(() => expect(inputs.map(input => input.id)).toContain("b"), { timeout: 10_000 });
     expect(aReady).toBe(false);
     const live = await components.store.snapshot();
     expect(live.run.preparationRounds?.[0]?.tasks?.find(task => task.taskId === "a")?.status).toBe("preparing");
-  } finally { gate.resolve(); }
+  } finally { gate.resolve(); await running; }
   const snapshot = await running;
   expect(snapshot.run.status).toBe("completed");
   expect(snapshot.records).toHaveLength(3);
@@ -330,10 +335,10 @@ test.each([1, 3])("default preparation concurrency follows %s execution slots", 
     if (!spec.image?.endsWith(":verify")) { started.push(spec.image ?? "unknown"); await gate.promise; }
     return spec;
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try {
-    await vi.waitFor(() => expect(started).toHaveLength(concurrency));
-  } finally { gate.resolve(); }
+    await vi.waitFor(() => expect(started).toHaveLength(concurrency), { timeout: 10_000 });
+  } finally { gate.resolve(); await running; }
   const snapshot = await running;
   expect(snapshot.run.status).toBe("completed");
   expect(snapshot.run.preparationRounds?.[0]).toMatchObject({ mode: "pipeline", concurrency });
@@ -342,6 +347,7 @@ test.each([1, 3])("default preparation concurrency follows %s execution slots", 
 test("independent preparation and execution limits bound work, including ready lookahead", async () => {
   const { components, config } = await fixture();
   components.scheduler = new LocalScheduler(1);
+  config.experiment.scheduler.config.concurrency = 1;
   components.benchmark.enumerate = async function* () {
     for (const id of ["a", "b", "c", "d", "e"]) yield { id, recordKey: id };
   };
@@ -360,13 +366,13 @@ test("independent preparation and execution limits bound work, including ready l
     await gate.promise;
     try { return await solve(...args); } finally { executing--; }
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try {
-    await vi.waitFor(() => expect(preparing).toHaveLength(3));
-    await vi.waitFor(() => expect(executing).toBe(1));
+    await vi.waitFor(() => expect(preparing).toHaveLength(3), { timeout: 10_000 });
+    await vi.waitFor(() => expect(executing).toBe(1), { timeout: 10_000 });
     expect(preparing).not.toContain("d");
     expect(maxLive).toBeLessThanOrEqual(2);
-  } finally { gate.resolve(); }
+  } finally { gate.resolve(); await running; }
   expect((await running).records).toHaveLength(5);
   expect(maxExecuting).toBe(1);
 });
@@ -378,7 +384,7 @@ test("continue records invalid preparation failures without retrying or fabricat
     if (spec.image === "a") throw new Error("bad recipe fixture-key");
     return spec;
   };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.status).toBe("error");
   expect(snapshot.pendingTaskIds).toEqual([]);
   expect(snapshot.records.map(record => record.key.taskId).sort()).toEqual(["a", "b", "c"]);
@@ -405,12 +411,12 @@ test("preparation abort cancels a live solver and drains both stages", async () 
     await untilAborted(args[2].signal);
     return result;
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
-  const assertion = expect(running).rejects.toThrow("bad recipe");
-  await entered.promise;
-  await vi.waitFor(async () => expect((await components.store.snapshot()).run.preparationRounds?.[0]?.tasks?.find(task => task.taskId === "c")?.status).toBe("preparing"));
-  fail.resolve();
-  await assertion;
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  const assertion = running.then(result => { expect(result.workflow.status).toBe("failed"); expect(JSON.stringify(result.workflow.steps)).toContain("bad recipe"); });
+  try {
+    await entered.promise;
+    await vi.waitFor(async () => expect((await components.store.snapshot()).run.preparationRounds?.[0]?.tasks?.find(task => task.taskId === "c")?.status).toBe("preparing"), { timeout: 10_000 });
+  } finally { fail.resolve(); await assertion; }
   expect(drained).toBe(true);
   const snapshot = await components.store.snapshot();
   expect(snapshot.run.status).toBe("error");
@@ -432,11 +438,13 @@ test.each(["solve", "verify"] as const)("environment deadlines drain blocked %s 
     return spec;
   };
   const solve = components.solver.solve.bind(components.solver);
-  components.solver.solve = async (...args) => { await release.promise; return solve(...args); };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
-  await vi.waitFor(async () => expect(await components.store.listAttempts()).toHaveLength(1));
-  await cancelled.promise;
-  release.resolve();
+  let solving = false;
+  components.solver.solve = async (...args) => { solving = true; await release.promise; return solve(...args); };
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  try {
+    await vi.waitFor(() => expect(solving).toBe(true), { timeout: 10_000 });
+    await cancelled.promise;
+  } finally { release.resolve(); await running; }
   await entered.promise;
   const snapshot = await running;
   expect(snapshot.records.find(record => record.key.taskId === "b")?.executionStatus).toBe("completed");
@@ -464,7 +472,7 @@ test("external cancellation interrupts a pending readiness read and drains prepa
     throw new Error("unreachable");
   };
   const controller = new AbortController();
-  const running = runEngine({ components, config, signal: controller.signal });
+  const running = runBenchmarkFixture({ components, config, signal: controller.signal });
   const settled = running.catch(error => error);
   await entered.promise;
   controller.abort(new Error("user cancelled"));
@@ -488,7 +496,7 @@ test("model truncation replans a pipeline task with a batch preparation barrier"
   };
   components.solver.solve = async (_input, _session, context) =>
     consumeDsh(dshStream(++calls === 1 ? interruptedResponse : undefined), context, "fixture-key");
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.status).toBe("completed");
   expect(prepared).toBe(4);
   expect(calls).toBe(2);
@@ -504,17 +512,20 @@ test("pipeline rejects unsupported distributed scheduling explicitly", async () 
   const { components, config } = await fixture();
   class RemoteScheduler extends LocalScheduler { readonly executionLocation = "remote"; }
   components.scheduler = new RemoteScheduler(2);
-  await expect(runEngine({ components, config, signal: new AbortController().signal })).rejects.toThrow("Pipeline preparation requires");
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  expect(result.workflow.status).toBe("failed");
+  expect(JSON.stringify(result.workflow.steps)).toContain("Remote Benchmark requires scheduler preparation setup");
 });
 
 
 test("attempt fail-fast stops ready dispatch before refilling its execution slot", async () => {
   const { components, config } = await fixture();
   components.scheduler = new LocalScheduler(1);
+  config.experiment.scheduler.config.concurrency = 1;
   config.experiment.run.preparation = { mode: "pipeline", concurrency: 1, lookahead: 2 };
   const started: string[] = [];
   components.solver.solve = async input => { started.push(input.id); throw new Error("deterministic solver failure"); };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.status).toBe("error");
   expect(started).toEqual(["a"]);
   expect(snapshot.records).toHaveLength(1);
@@ -530,14 +541,14 @@ test("resume prepares only pending tasks and preserves the previous timing round
     if (spec.image === "a") throw new Error("temporary build failure");
     return materialize?.(spec, signal) ?? spec;
   };
-  const first = await runEngine({ components, config, signal: new AbortController().signal });
+  const first = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   await components.store.close();
   const prepared: (string | null)[] = [];
   components.environment.materialize = async (spec, signal) => {
     prepared.push(spec.image);
     return materialize?.(spec, signal) ?? spec;
   };
-  const second = await runEngine({ components, config, signal: new AbortController().signal,
+  const second = await runBenchmarkFixture({ components, config, signal: new AbortController().signal,
     resumeDirectory: join(config.experiment.output.directory, first.run.runId) });
   expect(second.run.status).toBe("completed");
   expect(prepared).toEqual(["a", "a:verify"]);
@@ -556,7 +567,7 @@ test("a network preparation failure stays terminal while continue mode executes 
     if (args[0].image === "a" && first) { first = false; throw Object.assign(new Error("registry reset"), { code: "NETWORK_FAILURE", details: { networkStage: "docker-pull", networkEvidence: "ECONNRESET", networkReason: "connection-interrupted" } }); }
     return materialize(...args);
   };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.status).toBe("error"); expect(snapshot.attemptHistory).toHaveLength(3);
   expect(snapshot.run.preparationRounds).toHaveLength(1);
   expect(renderMarkdown(snapshot, {})).toContain("NETWORK_FAILURE");

@@ -25,6 +25,8 @@
   <a href="docs/development/plugins.en.md">Plugins</a>
 </p>
 
+[Composable workflows](docs/users/workflows.md) · [Step / Resource / WorkflowTemplate](docs/development/workflow-plugins.md)
+
 ## ℹ️ Introduction
 
 **ARSI-Evaluator** is a unified, plugin-based framework for **agent harness capability evaluation, inference engine performance evaluation, and kernel performance evaluation**. It can be extended to support more evaluation scenarios.
@@ -34,6 +36,16 @@ The framework uses YAML configuration and composable components to define evalua
 ![ARSI-Evaluator architecture and evaluation workflow](imgs/01-flowchart-evaluation-architecture.png)
 
 *ARSI-Evaluator architecture overview. For design details, see [Source architecture and execution flow](docs/development/architecture.en.md).*
+
+YAML selects ordered step plugins. Start with a template, or export the full workflow to add, remove, and replace data, model, application, memory, and scoring steps. Missing required connections fail before execution. The kernel handles persistence, cancellation, cleanup, and resume. Existing benchmarks run through `benchmark.evaluate` using the same entry point.
+
+```bash
+arsi-evaluator init --workflow application.evaluate --output experiment.yaml
+arsi-evaluator inspect experiment.yaml
+arsi-evaluator run experiment.yaml
+```
+
+[Source architecture and execution flow](docs/development/architecture.en.md)
 
 ## ⚙️ Features
 

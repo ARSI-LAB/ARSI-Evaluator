@@ -54,11 +54,11 @@ AgentX evidence processes saved output without loading installers, samplers or n
 
 Put unit tests in tests/unit, component/registration/config/resume tests in tests/integration and reusable inputs in tests/fixtures. Cover success, failure, cancellation, cleanup and offline reporting. Record real Docker/Ray/NPU/model acceptance separately from controlled tests.
 
-## Limits for Future Memory Evaluation
+## Memory and Custom Workflows
 
-A possible sequence is environment ready → import history → ask → verify → clean up. Benchmark owns history interpretation, ordering and scoring; Solver receives public questions; core manages timeouts, cancellation, records and cleanup. Specify isolation and recovery separately for within-task history and cross-task shared state.
+For “write history → query memory → call application → score”, use [step and resource plugins](workflow-plugins.md) directly without implementing Benchmark. Resource providers own memory services; per-sample state normally uses attempt scope. Steps exchange declared inputs and outputs. `memory.evaluate` provides an editable example with replaceable memory and application steps.
 
-Benchmark.prepare() runs before environment creation and cannot initialize a running memory service. Existing multi-step tasks also have the bash setup.sh initialization convention. New lifecycle stages require an explicit contract design before execution/scheduling changes. No placeholder hooks, workflow DSL or sample memory service are introduced for this future use case.
+Existing Benchmark `prepare()` still precedes environment creation, and private verifier material must not reach Solver. To retain Benchmark data while adding processing, export `benchmark.evaluate` and edit the expanded steps and bindings.
 
 ## Full Benchmark Interface
 
@@ -75,7 +75,7 @@ Benchmark.prepare() runs before environment creation and cannot initialize a run
 
 Put platform/resources in [EnvironmentSpec](../../src/core/contracts/environment.ts). phaseTimeoutSeconds.solve/verify bounds execution; preparationTimeoutSeconds.solve/verify supplies bases. planRun returns tasks/preparation.defaultTimeoutSeconds. Scheduler provides effective node `concurrency`; common preparation multiplies by `min(C, 10)`, with no default round cap. External schedulers pass concurrency/defaultTimeoutSeconds/roundSignal/optional `environmentTimeoutSeconds` through TaskPreparationContext. Shared description work uses `roundSignal`; task phases use their own signals. See [preparation budgets](../users/config.md#environment-preparation-timeouts).
 
-Optional `validateRun(config)` performs resource-free cross-component checks, called by bootstrap/dry-run/engine. discloseAnswer exposes controlled evidence without changing public inputs. `validateSourceOnCompletedResume` requests source checks for completed resume.
+Optional `validateRun(config)` performs resource-free cross-component checks, called by Benchmark resources during diagnosis, preview, and run assembly. discloseAnswer exposes controlled evidence without changing public inputs. `validateSourceOnCompletedResume` requests source checks for completed resume.
 
 ## Evaluator-Defined Conversion and Scoring
 
@@ -128,7 +128,7 @@ Download changes require lock/offline-resume tests; Definition changes require p
 | Benchmark.verify/Verifier | Interpret answers/evidence; private verification protocols, not scheduling/storage |
 | Metrics/Reporter | Offline ResultSnapshot calculations; configDirectory/resolvePath only, no model auth |
 
-One command owns one Registry shared explicitly across config/assembly; independent loadConfig/bootstrap calls own lifetimes. Validate all selected components before factories. Creators release resources through Cordis effects/Sessions/PreparedSolver on success/failure/cancellation.
+One command owns one Registry shared explicitly across config/assembly; each workflow application operation owns its registry lifetime. Validate all selected components before factories. Creators release resources through Cordis effects/Sessions/PreparedSolver on success/failure/cancellation.
 
 All I/O/process/container work must propagate/respond to AbortSignal. Promise timeouts alone do not stop underlying work. Stop writes/release resources before handing directories to later tasks. Avoid long synchronous computation blocking cancellation.
 

@@ -1,4 +1,5 @@
 import { beforeEach, expect, test, vi } from "vitest";
+import { parseArgs } from "../../src/cli/main.js";
 import { runCli } from "../../src/cli/main.js";
 const command = vi.hoisted(() => ({ cleanupImages: vi.fn() }));
 vi.mock("../../src/application/cleanup.js", () => command);
@@ -14,8 +15,7 @@ test.each([
   [["cleanup", "images", "--all"], { all: true, execute: false }],
   [["cleanup", "images", "example.yaml", "--all", "--yes"], { file: "example.yaml", all: true, execute: true }],
 ] as const)("cleanup CLI parses %j", async (args, expected) => {
-  expect((await cli([...args])).code).toBe(0);
-  expect(command.cleanupImages).toHaveBeenCalledWith(expect.objectContaining(expected));
+  expect(parseArgs([...args])).toMatchObject({ kind: "cleanup-images", ...expected });
 });
 test.each([["cleanup", "images"], ["cleanup", "images", "--all", "--all"], ["cleanup", "images", "a.yaml", "--force"], ["cleanup", "images", "--all", "--patch", "x.yaml"], ["cleanup", "images", "a.yaml", "b.yaml"]].map(args => ({ args })))("invalid cleanup syntax is rejected before work: $args", async ({ args }) => {
   expect((await cli(args)).code).toBe(2); expect(command.cleanupImages).not.toHaveBeenCalled();

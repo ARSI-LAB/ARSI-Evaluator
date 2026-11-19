@@ -6,20 +6,28 @@ This guide describes current module responsibilities, calls, and resource owners
 
 ## Directory Responsibilities
 
+Declarative workflows enter through application/workflow.ts and compile/execute under core/workflow. Templates, steps and resources are registered with Cordis. Plans pin implementations and block-output protocols; LocalWorkflowStore saves run.json and immutable artifacts. Independent units retain case/variant/repetition identities and input digests. Resume recovers resources, validates sources and reuses completed units. results.rescore grades saved public text outputs in a new run.
+
+Native Benchmark orchestration now resides under plugins/workflows/benchmark. Its declarative entry supports local execution, direct Ray, and Ray Jobs. Preparation and sample execution share ray.connection; credentials are fetched over authenticated HTTPS, and Jobs resume transfers complete evidence with digest verification. CLI and SDK now use the workflow entry; the previous Engine, bootstrap, and configuration loading entry points have been removed. See [workflow plugin development](workflow-plugins.md).
+
+The application adds network templates as `network.runtime` resources through `workflow-network.ts`. Models and Benchmarks borrow clients; the network resource creates and closes them. Plans retain unresolved templates, and execution nodes resolve proxy, source and credential values. Warmup opens only dependencies explicitly marked safe without evaluation state; recovery creates temporary clients from saved templates.
+
 | Location | Behavior and entry points |
 | --- | --- |
 | [src/index.ts](../../src/index.ts) | Explicit public API and type exports; internal modules import their implementations directly |
 | [src/cli.ts](../../src/cli.ts), [cli/](../../src/cli) | Process signals, command definitions and dispatch, terminal progress, and exit codes |
 | [application/](../../src/application) | Run, report, warmup, retry, and diagnostic operations; component creation and disposal; local execution or Ray Jobs deployment |
 | [config/](../../src/config) | YAML loading, environment and Profile expansion, validation, and redaction; no Cordis Context or runtime component creation |
-| [core/](../../src/core) | Component contracts, source locking, task selection, preparation, scheduling, attempts, recovery, results, and artifacts |
-| [plugins/](../../src/plugins) | Implementations of Benchmark, Verifier, Environment, Solver, Metrics, Reporter, Store, and Scheduler |
+| [core/](../../src/core) | Workflow contracts, compilation, resource scopes, execution, recovery, and result validation; remaining Benchmark contracts and helpers |
+| [plugins/](../../src/plugins) | Steps, resources, templates, workflow storage, and Benchmark-specific components |
 | [runtimes/](../../src/runtimes) | Installation recipes, bridges, protocols, and assets for specific programs such as Pi, DSH, AgentBundle, and AgentX |
 | [infrastructure/](../../src/infrastructure) | Process, shell, container, network, download, installation lock, IPC, transfer, and provenance I/O |
 
-Within core, `contracts/` defines interfaces, `execution/` runs evaluations, `preparation/` prepares tasks, `recovery/` handles resume and retry eligibility, `selection/` selects tasks, `results/` owns result/source rules, and `artifacts/` handles file manifests and trajectories. See the [repository directory tree](../../AGENTS.md#仓库目录结构).
+Within core, `contracts/` defines interfaces, `workflow/` compiles and executes declarative flows, `execution/` retains Benchmark queue helpers, `preparation/` prepares tasks, `recovery/` handles resume and retry eligibility, `selection/` selects tasks, `results/` owns result/source rules, and `artifacts/` handles file manifests and trajectories. See the [repository directory tree](../../AGENTS.md#仓库目录结构).
 
 Config reads and parses configuration without loading plugin modules. [plugin-patch.ts](../../src/config/plugin-patch.ts) reads and validates patches and computes their digests; [load-module.ts](../../src/application/plugins/load-module.ts) resolves modules relative to the patch directory, reads package versions or hashes local files, and performs dynamic imports. Configuration file reads still involve I/O, so config is not entirely pure. Core also performs file I/O and invokes component I/O through contracts; its boundary excludes application assembly and concrete component dependencies. Infrastructure can use Evaluator contracts but does not decide scores, retry eligibility, or scheduling policy.
+
+Resource providers declare maintenance operations. `workflow-maintenance.ts` opens only the non-evaluation dependencies listed by the operation. The Benchmark plugin invokes its diagnostics and image cleanup; shared network probes live in infrastructure/network and Ray network probes in infrastructure/ray. Jobs forwards the same maintenance request and returns separate results. Benchmark templates collect bundle names into deployment.bundles; deployment code validates directories and creates read-only named mounts.
 
 ## Allowed Source Dependencies
 
@@ -48,44 +56,42 @@ The checker covers static/type imports, re-exports, string-literal dynamic impor
 
 ## Execution and Resource Ownership
 
-CLI `run` and SDK `Evaluator.run()` use `executeExperiment` in [application/run.ts](../../src/application/run.ts). The ordinary execution path is:
+CLI `run` and SDK `Evaluator.run()` call [application/workflow.ts](../../src/application/workflow.ts).
 
-1. [plugins/open-registry.ts](../../src/application/plugins/open-registry.ts) creates a Cordis Context and registers built-in components, bundled repository plugins, and any plugins from an explicit patch.
-2. [application/config.ts](../../src/application/config.ts) supplies that registry's Profiles and validators to config. [plugins/create-components.ts](../../src/application/plugins/create-components.ts) calls `createRunComponents(registry, config, directory)` using the same registry.
-3. [run-engine.ts](../../src/application/run-engine.ts) supplies retry controls and run identity loading, then calls [core/execution/engine.ts](../../src/core/execution/engine.ts).
-4. Core handles sources, selection, recovery, and preparation, schedules through Scheduler, and executes attempts through [run-task.ts](../../src/core/execution/run-task.ts).
-5. Application saves metrics/reports and closes the registry on exit, releasing component resources through Cordis effects, including after failure or cancellation.
+1. `openPluginRegistry` creates the Cordis context and loads built-in, bundled, and explicitly patched plugins. The operation reuses this registry.
+2. `readWorkflowConfiguration` expands template parameters into steps and resources, binds network dependencies, and calls `compileWorkflow`. Templates determine ordering; the kernel has no Benchmark-name branches.
+3. [workflow-execution.ts](../../src/application/workflow-execution.ts) locks the run directory, opens the workflow store and retry control, and invokes the kernel. Jobs deployments submit the plan through the application layer; workers never read submitting-host paths.
+4. [execute.ts](../../src/core/workflow/execute.ts) executes ordered steps and bounded concurrent `forEach` units. Resources are accessed through declared ports and scoped to run, worker, attempt, or step. Outputs must satisfy their declared protocols.
+5. After completion, failure, or cancellation, the application rebuilds the offline report and closes the registry and write lock. Application errors retain persisted partial results.
 
-`runTask()` prepares the task, advances through steps, archives evidence, and saves the result. [run-attempt-step.ts](../../src/core/execution/run-attempt-step.ts) solves, collects, transfers, and verifies one step. On failure it recovers artifacts before the solve environment closes. [attempt-resources.ts](../../src/core/execution/attempt-resources.ts) opens and closes environment sessions, prepared solvers, and private verifiers, and switches the solve environment between phases. A multi-step attempt closes the current step's private verifier and separate verification environment before archiving its evidence and reusing the solve environment for the next step.
+Persistence, cancellation, cleanup, protocol validation, redaction, and recovery records are kernel services that users cannot remove. Data loading, application calls, memory operations, rendering, scoring, and business reports are replaceable steps. Removing a producer of required downstream data requires updating those bindings; otherwise compilation fails.
 
-`createRunComponents` and `createBenchmark` require an existing registry and never open or close it. The former returns `RunComponents` without `dispose()`; the latter returns a Benchmark directly. The registry owns factory resources, including resources allocated before an assembly failure, and its owner closes it in `finally`.
+The Benchmark template keeps selection, preparation, native components, and its Store in `benchmark.runtime`. Attempt resources own public tasks, private verifier material, and environments. Solvers receive public tasks only. Existing components register through `registerNativeResource`; their Cordis effects are released after successful work or factory failure.
 
-Public [bootstrap](../../src/application/plugins/bootstrap.ts) opens its own registry, closes it on failure, and returns `BootstrappedComponents` (component fields plus `dispose()`) on success. Its signature is `bootstrap(config, directory, patchPath?, onWarning?, imageConfigFingerprint?)`. The caller invokes the returned `dispose()` in `finally`; the registry handles repeated disposal.
+The workflow directory contains `plan.json`, `run.json`, artifacts, and `report.md`. Native Benchmark evidence lives under `benchmark-evidence/<run-id>`; model variants and repetitions have separate `benchmark-groups` directories. A native manifest is not the workflow completion record.
 
-`executeExperiment` closes its registry, including one transferred through the internal `execution` option. `executeWarmup` closes registries it opens; the Jobs entry closes a registry lent through `execution`. Preview, diagnosis, and Ray worker entries close their registries on exit. The worker execution function requires a registry and does not perform a no-op component disposal before uploading results. Public `runEngine` closes only the retry controls it creates; it does not open a registry, replace components, or close caller resources.
-
-Benchmark prepares public input and private verification material. Solver receives only public tasks and an execution environment; Benchmark.verify or a private verification runtime scores the result; Store saves results and artifacts. `Benchmark.prepare()` runs before environment creation. Arbitrary additional lifecycle stages after environment startup require contract changes; see [Benchmark lifecycle limits](benchmarks.en.md#limits-for-future-memory-evaluation).
-
-Offline reports use [application/report/](../../src/application/report) to load the Metrics and Reporter registration entries separately, read saved results, and invoke the selected components without loading the full built-in registration entry or running Solver again. Third-party reporting components use the same loadPluginModule function and retain checks against their saved plugin versions. Evidence format changes require checking readers, resume, Metrics, and Reporter together.
+[workflow-report.ts](../../src/application/workflow-report.ts) loads saved report steps and their declared rendering dependencies, validates source/version identity, and reads saved evidence. It creates no model or evaluation resources. Benchmark reports retain Metrics/Reporter behavior; workflows without a reporting step receive a generic summary.
 
 ## Retry, Ray, and Docker
 
-Within Engine, `admitRetryRequests` reads results, checks eligibility, reserves queue slots, and fills request bindings. `prepareRetryTask` replans and prepares dependencies for a new attempt. The internal queue carries the job and its preparation result together. The executor uses the attempt ID to retrieve that result and distinguish on-demand preparation, a task description, ready dependencies, or failed preparation. Pipeline readiness times belong to the corresponding attempt. [Preparation state types](../../src/core/preparation/task-preparation.ts)
+[application/retry-control/mailbox.ts](../../src/application/retry-control/mailbox.ts) handles request files, locks, transactions, and IPC. The kernel reserves units and persists bindings before committing queue admission. Repeated requests do not dispatch duplicates; shutdown stops admissions and waits for in-flight transactions.
 
-The public Scheduler still receives `TaskJob`. Ray workers retain their preparation receipts and validate them before handing a job with ready dependencies to the executor.
+A resource plugin decides automatic retry eligibility; the kernel bounds attempts and requires confirmed cleanup. Benchmark preparation runs again before retry dispatch, refreshing receipts and placement. Dispatch parameters are revalidated while the business-input fingerprint remains stable. Admission failure signals stop dispatch and cancel the execution block.
 
-[application/retry-control/mailbox.ts](../../src/application/retry-control/mailbox.ts) owns request files, locks, transactions, and IPC; core owns eligibility and queue reservations. The handoff contract is [core/contracts/retry-control.ts](../../src/core/contracts/retry-control.ts). Online retry requests reserve tasks, persist request state and attempt bindings, then `commit` admission only after persistence succeeds. `finally release` releases reservations. Failed persistence must not leave tasks queued; repeated requests must not schedule duplicates. Shutdown stops accepting requests and waits for in-flight transactions before closing the channel.
+Resume first recovers resources, then validates business inputs and sources, then reuses completed units. If native scoring committed before workflow outputs were saved, `admission.reconcile` validates the original attempt and artifacts before restoring outputs. Recovery uses the saved network template with current runtime environment variables and credentials; it does not reload a modified local network YAML.
+
+Scheduler handles Benchmark preparation, capacity, and maintenance. `executor.ray` dispatches execution blocks to the workflow worker. Preparation and execution share `ray.connection`; workers verify retained preparation receipts and complete dispatch parameters.
 
 | Operation | Implementation |
 | --- | --- |
 | Submit/follow Ray Jobs and download remote results | `application/ray/`, using `infrastructure/ray/` clients |
-| Dispatch attempts to Ray nodes | `plugins/schedulers/ray/`, using Ray protocols and the Python driver |
-| Load node plugins and execute tasks | `application/ray/node-worker.ts`, using application assembly and core execution |
+| Dispatch attempts to Ray nodes | `plugins/resources/ray-executor.ts`, using ray.connection and the Python driver |
+| Load node plugins and execute tasks | `application/ray/workflow-worker.ts`; node-worker.ts handles Benchmark preparation and maintenance only |
 | Prepare Docker images, runtimes, and sessions | `plugins/environments/docker/environment.ts` |
 | Execute, transfer, switch phases, and close a session | `plugins/environments/docker/session.ts` |
 | Shared Docker commands, image operations, and build tools | `infrastructure/containers/` |
 
-Ray Jobs deployment and RayScheduler task dispatch operate at different levels. Jobs entries call application operations directly rather than going through CLI argument parsing. Docker preparation still contains several image strategies; they are not each implemented as separate modules.
+Ray Jobs deployment and workflow sample dispatch operate at different levels. Jobs entries call application operations directly rather than going through CLI argument parsing. Docker preparation still contains several image strategies; they are not each implemented as separate modules.
 
 Docker's `materialize()` and on-demand `prepare()` share `prepareDependencies()` to resolve images and runtimes for the main container, gateway, and Compose services. With a receipt, `prepare()` checks the local images before passing the resolved images to `startSession()`. Main and gateway containers start with `--pull never`. Compose also uses `--no-build`. On startup failure, the startup code cleans up containers, the Compose project, and the gateway before the image lease is released. On success, `DockerSession.dispose()` owns that cleanup and lease release.
 

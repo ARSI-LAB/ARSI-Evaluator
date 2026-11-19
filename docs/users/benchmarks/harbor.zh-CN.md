@@ -1,5 +1,7 @@
 # 用配置接入 Harbor 数据集
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./harbor.md) | 中文
 
 Harbor 数据集通过任务目录中的指令、环境声明和验证入口完成评测。本文说明自定义来源配置、镜像选择、网络和文件交付；WorkBuddy 的场景与裁判要求见[WorkBuddy 指南](workbuddy.zh-CN.md)。

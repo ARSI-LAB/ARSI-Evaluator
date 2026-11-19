@@ -15,8 +15,9 @@ src/
 │   └── ray/                # Jobs、结果下载、worker 装配和进程入口
 ├── config/                 # YAML/patch 读取、展开、校验和脱敏
 ├── core/                   # 不依赖具体组件的公共契约和评测流程
-│   ├── contracts/          # 八类组件、任务、结果、工厂和配置契约
-│   ├── execution/          # run 编排、attempt 执行与队列
+│   ├── contracts/          # 工作流、步骤、资源及 Benchmark 组件契约
+│   ├── workflow/           # 声明式流程编译、执行单元、资源作用域与恢复
+│   ├── execution/          # Benchmark 可复用的执行工具
 │   ├── preparation/        # 准备轮次、依赖物化、时限和验证环境
 │   ├── selection/          # 选题、采样
 │   ├── recovery/           # 续跑、自动重试与补测资格
@@ -26,7 +27,10 @@ src/
 │   ├── policies/           # 超时、硬件、网络与错误处理规则
 │   ├── validation/         # 输入类型与字段校验
 │   └── errors/             # 错误码、错误归类与诊断
-├── plugins/                # 八类 Cordis 组件，各角色入口负责注册
+├── plugins/                # 步骤、资源、流程模板及 Benchmark 组件
+│   ├── steps/              # 数据读取、应用调用、评分、指标和报告步骤
+│   ├── resources/          # 模型客户端等资源提供者
+│   ├── workflows/          # 声明式模板；benchmark/ 保存原生评测执行细节
 │   ├── benchmarks/
 │   │   ├── agent-harness/ # definitions、Harbor 与本类 profiles
 │   │   ├── inference-engine/ # AgentX、离线 evidence 与 profiles
@@ -109,8 +113,9 @@ pnpm test --run
 
 ### 插件开发规范
 
-- 支持八类组件：`benchmark`、`verifier`、`environment`、`solver`、`metrics`、`reporter`、`store`、`scheduler`。实现对应的 `src/core/contracts/` 契约；第三方插件从包根 `arsi-evaluator` 导入公共类型，不依赖未导出的内部路径。
-- Cordis 插件声明 `inject = ["evaluator"]`，在 `apply(ctx)` 中通过 `ctx.evaluator.register(role, name, validate, factory)` 注册组件。同一 role 下名称唯一；一个模块可以注册多个组件。
+- 通用流程使用 StepDefinition、ResourceProvider、WorkflowTemplate，通过 `registerStep`、`registerResource`、`registerWorkflow` 注册。通用内核不依赖 Benchmark 类型，步骤之间只传显式 JSON 输入和产物引用；资源句柄不进入步骤输出。具体规则见[工作流插件开发](docs/development/workflow-plugins.md)。
+- Benchmark 领域保留 `benchmark`、`verifier`、`environment`、`solver`、`metrics`、`reporter`、`store`、`scheduler` 实现，注册为 native.* 资源。实现对应的 `src/core/contracts/` 契约；第三方插件从包根 `arsi-evaluator` 导入公共类型，不依赖未导出的内部路径。
+- Cordis 插件声明 `inject = ["evaluator"]`，在 `apply(ctx)` 中通过 `registerNativeResource(ctx, role, name, validate, factory)` 注册组件。同一 role 下名称唯一；一个模块可以注册多个组件。
 - 插件默认配置通过 `ctx.evaluator.registerProfile()` 注册声明式 Profile，类型从包根导入。Profile 属于配置元数据，不增加执行组件类别；继承、版本和场景由解析层展开，避免在 Loader 或 Engine 中新增按 Benchmark 名称分支的默认值。内置 Harbor Profile YAML 随构建发布并纳入摘要，外部 Profile 随显式 patch 插件发布。
 - 配置校验与实例创建分开。`validate` 校验类型、范围和未知字段，并给出明确错误；校验阶段不启动进程、访问模型或分配运行资源。模块导入和注册阶段也不启动评测工作。
 - 工厂通过 `(config, runtime)` 获取组件参数、模型和运行时认证，使用 `runtime.resolvePath()` 解析相对实验目录的路径。不要硬编码模型、key、用户目录或机器地址，也不要用全局可变状态串联实验。

@@ -7,7 +7,7 @@ import { loadGenericHarborTask } from "../../src/plugins/benchmarks/agent-harnes
 import { parseHarborConfig } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/config.js";
 import { HarborShellVerifier } from "../../src/plugins/verifiers/shell.js";
 import { evaluateHarborSteps } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/steps.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { writeFixture } from "../fixtures/dataset-tasks.js";
 import { harness, source } from "../fixtures/engine/fakes.js";

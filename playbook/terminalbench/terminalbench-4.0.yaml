@@ -1,13 +1,18 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: terminalbench
-  version: "4.0"
+  benchmark:
+    name: terminalbench
+    version: "4.0"
 
-# Official v4.0.0 prebuilt images target amd64. ARM64 nodes require QEMU/binfmt.
-environment:
-  platform: linux/amd64
+  # Official v4.0.0 prebuilt images target amd64. ARM64 nodes require QEMU/binfmt.
+  environment:
+    platform: linux/amd64
+output:
+  directory: ../../results/terminalbench/terminalbench-4.0

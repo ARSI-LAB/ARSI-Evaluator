@@ -2,7 +2,7 @@
 
 > [English](./network-retry.md) | 中文
 
-`arsi-evaluator retry` 为原 Run 中因明确网络故障而无效的题目创建新的完整 Attempt。它不改变任务集合、数据来源、模型、Solver、官方时限或评分规则。零分、正常答错和有效的 Agent 超时都禁止补测；没有网络证据的失败也不会被选中。
+`arsi-evaluator retry` 为原工作流中失败或中断的样例创建新的完整 attempt，不改变题目、来源、模型、步骤或评分规则。已保存的有效评分（包括合法零分）继续复用。网络故障是常见用途，手动补测不限于网络错误。
 
 ![图中区分原 Attempt 内的请求重试、响应截断且确认清理后的自动重跑，以及在原 Run 中创建新 Attempt 的手动补测](imgs/10-flowchart-network-retry.png)
 
@@ -36,11 +36,11 @@ arsi-evaluator retry --run <run-id>
 arsi-evaluator retry --run <run-directory> --task-id terminal-bench/example --request-id network-fix-1 --reason "registry network restored"
 ```
 
-重复传入 `--task-id` 可选择多道题；省略时筛选全部符合条件的网络失败任务。没有符合条件的题目时，命令正常返回，不创建新的执行记录。补测已结束的评测时，可传入 `--network network.yaml` 更换下载源或代理。仍在运行的评测继续使用启动时的网络配置。
+重复传入 `--task-id` 可选择多道题；省略时选择失败或中断的工作流样例。已完成且证据有效的样例不会重复执行。补测使用保存的网络模板，不接受 `--network` 更换模板；可修复模板引用的环境变量或节点网络后重试，例如更新 `HF_ENDPOINT`。正在运行的进程继续使用已打开的客户端。
 
 可用 Run ID 或结果目录指定原评测。ID 索引默认保存在 `~/.arsi-evaluator/runs/`，可用 `EVALUATOR_RUN_INDEX_DIR` 修改。跨主机复制结果后，请直接传结果目录。Ray Jobs 需要通过原网关操作远端 run，并保留原网关认证；下载到本机的结果副本不能直接代替远端 run。
 
-原评测仍在运行时，命令向原进程提交补测请求，其他题目继续执行；原评测已结束时，会在同一个 run 中恢复。`retry` 只选择符合条件的网络失败任务，`--resume` 则按续跑规则处理未完成任务。
+原评测仍在运行时，命令向原进程提交补测请求，其他题目继续执行；原评测已结束时，会在同一个 run 中恢复。`retry` 可指定失败样例并保留请求 ID；`--resume` 按整个工作流的恢复规则处理未完成任务。
 
 准备数据或环境期间，请求可能显示 `pending`，调度就绪后处理；`accepted` 表示已受理，`rejected` 表示未受理，应按返回原因处理。
 
@@ -52,13 +52,13 @@ arsi-evaluator retry --run <run-directory> --task-id terminal-bench/example --re
 
 每次手动请求为符合条件的任务增加一次执行。如果这次执行发生明确模型断流，且该题仍有自动重跑预算，也会使用上述兜底。同一个 `requestId` 重发不会重复创建执行；已经准备或运行中的题目也不会重复排队。
 
-原任务仍在运行或资源释放未确认时不能补测，以免同一道题同时执行。Local 和 Ray 均支持补测；Ray Jobs 仍通过原网关操作，并将新结果写回原 run。
+原任务仍在运行时不会重复派发；资源释放未确认时，必须先完成恢复清理才能重新执行。Local 和 Ray 均支持补测；Ray Jobs 仍通过原网关操作，并将新结果写回原 run。
 
 ## 哪些失败可以补测
 
-错误码需为 `NETWORK_FAILURE`，且记录中明确说明网络故障原因。程序还会检查该题是否已有有效评分、资源是否已释放；不是所有超时或失败都能补测。
+手动补测选择失败或中断的工作流样例，并校验保存计划、业务输入和清理状态。下表用于判断 Benchmark 网络问题的修复方向，不是手动补测仅允许 NETWORK_FAILURE 的限制；有效业务评分不会因为分数低而重跑。
 
-| 操作 | 可以补测的证据 | 不能据此补测 |
+| 操作 | 通常可通过恢复网络修复 | 需要检查配置或业务行为 |
 | --- | --- | --- |
 | Docker Pull | DNS、连接中断、传输超时、临时 5xx | 镜像不存在、鉴权、平台不兼容 |
 | Runtime 安装 | 非镜像构建操作中的明确下载网络诊断 | 镜像构建失败、依赖冲突、普通阶段截止时间 |
@@ -66,16 +66,16 @@ arsi-evaluator retry --run <run-directory> --task-id terminal-bench/example --re
 | 数据来源 | GitHub/HF/HTTP 的明确连接或下载故障 | 版本、格式、摘要及永久鉴权错误 |
 | Verifier | 没有产生奖励，失败操作输出明确依赖下载网络错误 | 官方测试得零分、验证逻辑错误、普通验证总超时 |
 
-镜像构建下载失败保留 `ENV_IMAGE_BUILD_FAILED`，不会触发任务自动或手动补测。APT 在当前命令内按下载配置重试；耗尽后本次构建失败，不重新执行整个 Attempt。
+镜像构建下载失败保留 `ENV_IMAGE_BUILD_FAILED`，不会触发整题自动重试；修复后可手动补测失败样例。APT 在当前命令内按下载配置重试；耗尽后本次构建失败，不重新执行整个 Attempt。
 
 模型工具调用里曾出现网络错误，但 Agent 最终正常完成并得到评分，不会因此补测。存在未解决的收集、存储或清理错误时，也不会仅凭另一条网络证据启动补测。
 
 ## 最新结果与历史
 
-每题只使用一个合法有效结果，不选最高分。如果首次 Docker Pull 失败、补测得到官方零分，最新报告显示该题正常完成、评分 0，原网络错误不再进入失败列表和错误统计。如果所有题目都有有效结果，且没有未解决的清理或运行级故障，Run 从 `error` 恢复为 `completed`。
+每题只使用一个合法有效结果，不选最高分。如果首次 Docker Pull 失败、补测得到官方零分，最新报告显示该题正常完成、评分 0，原网络错误不再进入失败列表和错误统计。如果所有题目都有有效结果，且没有未解决的清理或运行级故障，工作流从 `failed` 恢复为 `completed`。
 
-- `tasks/.../attempts/` 保留原始失败、轨迹、日志和新 Attempt。
-- `manifest.json` 保留初始化失败与准备轮次历史。
+- `benchmark-evidence/<run-id>/tasks/.../attempts/` 保留原始失败、轨迹、日志和新 Attempt。
+- `benchmark-evidence/<run-id>/manifest.json` 保留 Benchmark 初始化失败与准备轮次历史；根目录 `run.json` 记录工作流状态。
 - `retry` 更新根目录报告；若之前执行过 `--resume`，同时更新 `reports/current.json` 指向的续跑报告，不新增目录。
 - 显式 `--resume` 另建 `reports/resume-N/`；首次续跑前的报告保存在 `reports/initial/`，此前的续跑报告保留。报告生成中断时，可用下方命令重新生成。
 

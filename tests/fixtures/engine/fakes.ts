@@ -2,7 +2,7 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { RunComponents } from "../../../src/core/contracts/components.js";
-import type { LoadedConfig } from "../../../src/config/loaded.js";
+import type { ExecutionConfig } from "../../../src/core/contracts/config.js";
 import type { EnvironmentSession, PublicTask, SourceLock } from "../../../src/index.js";
 import { LocalRunStore } from "../../../src/plugins/stores/local.js";
 import { LocalScheduler } from "../../../src/plugins/schedulers/local/scheduler.js";
@@ -77,7 +77,7 @@ export function harness(root: string, options: { fail?: string | readonly string
       },
     },
   };
-  const config: LoadedConfig = {
+  const config: ExecutionConfig = {
     experiment: {
       services: { default: { name: "fixture", provider: "openai", endpoint: "http://fixture.invalid", api: "openai-completions" } },
       benchmark: { name: "fixture", config: {} }, solver: { name: "fixture", config: {}, service: "default" },

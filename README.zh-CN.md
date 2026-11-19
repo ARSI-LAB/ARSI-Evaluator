@@ -25,6 +25,8 @@
   <a href="docs/development/plugins.md">插件开发</a>
 </p>
 
+[自定义评测流程](docs/users/workflows.zh-CN.md) · [Step / Resource / WorkflowTemplate](docs/development/workflow-plugins.md)
+
 ## ℹ️ 简介
 
 **ARSI-Evaluator** 是一个插件化的统一评测框架，支持 **Agent Harness 能力评测、推理引擎性能评测和算子性能评测**，并可扩展至更多评测场景。
@@ -34,6 +36,16 @@
 ![ARSI-Evaluator 评测架构与执行流程](imgs/01-flowchart-evaluation-architecture.png)
 
 *ARSI-Evaluator 整体架构概览，详细设计参见 [源码架构与执行流程](docs/development/architecture.md)。*
+
+评测流程由 YAML 中有序的步骤插件决定。可以使用模板保持简单，也可以导出完整流程，增加、删除或替换数据、模型、应用、记忆和评分步骤；删除后缺少必需输入会在运行前报错。内核负责保存、取消、清理和续跑。已有题库通过 `benchmark.evaluate` 使用同一运行入口。
+
+```bash
+arsi-evaluator init --workflow application.evaluate --output experiment.yaml
+arsi-evaluator inspect experiment.yaml
+arsi-evaluator run experiment.yaml
+```
+
+[源码架构与执行流程](docs/development/architecture.md)
 
 ## ⚙️ 功能介绍
 

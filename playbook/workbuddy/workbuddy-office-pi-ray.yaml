@@ -1,23 +1,28 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: workbuddy
-  scenario: office
-  solver:
-    name: agentbundle
-    config:
-      path: ./bundles/pi
-      pi:
-        settings:
-          version: 1
-          office:
-            enabled: true
-            readOnly: false
-scheduler:
-  name: ray
-  concurrency: 2
-run:
-  includeTaskAnswer: true
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: workbuddy
+    scenario: office
+    solver:
+      name: agentbundle
+      config:
+        path: ./bundles/pi
+        pi:
+          settings:
+            version: 1
+            office:
+              enabled: true
+              readOnly: false
+  scheduler:
+    name: ray
+    concurrency: 2
+  run:
+    includeTaskAnswer: true
+output:
+  directory: ../../results/workbuddy/workbuddy-office-pi-ray

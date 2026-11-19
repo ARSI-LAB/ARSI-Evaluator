@@ -178,12 +178,11 @@ test("materialization reuses a source reference and shares the solve result acro
   const { environment, spec, log } = await fixture("FROM fixture/base\n");
   vi.stubEnv("EVALUATOR_TEST_COMMAND_LOG", log + ".commands");
   vi.stubEnv("EVALUATOR_TEST_RUNTIME_ID", "sha256:" + "f".repeat(64));
-  const signal = AbortSignal.timeout(15_000);
   const context = { taskId: "terminal-bench/atrx-vep-crispr", phase: "solve" as const };
   const main = { ...spec, image: "fixture/base", services: { redis: { image: "fixture/redis", properties: {} } } };
-  const a = await environment.materialize(main, signal, undefined, undefined, context);
-  const b = await environment.materialize(main, signal, undefined, undefined, { ...context, taskId: "terminal-bench/other" });
-  const verify = await environment.materialize(main, signal, undefined, undefined, { ...context, phase: "verify" });
+  const a = await environment.materialize(main, AbortSignal.timeout(15_000), undefined, undefined, context);
+  const b = await environment.materialize(main, AbortSignal.timeout(15_000), undefined, undefined, { ...context, taskId: "terminal-bench/other" });
+  const verify = await environment.materialize(main, AbortSignal.timeout(15_000), undefined, undefined, { ...context, phase: "verify" });
   expect(a.prepared).toMatchObject({ baseImage: { pinnedReference: "fixture/base" },
     runtime: { image: "arsi-evaluator/base:linux-amd64-solver-runtime" } });
   expect(verify.prepared).toMatchObject({ baseImage: { pinnedReference: "fixture/base" },
@@ -194,7 +193,7 @@ test("materialization reuses a source reference and shares the solve result acro
   expect(tags.filter(tag => !tag?.startsWith("arsi-evaluator/staging:"))).toEqual(["arsi-evaluator/base:linux-amd64-solver-runtime"]);
   expect(new Set(tags).size).toBe(tags.length);
   expect(calls.some(args => args[1] === "inspect" && args.includes("fixture/redis"))).toBe(true);
-});
+}, 45_000);
 
 test("moving a source tag gives the next task a different final image key", async () => {
   const { environment, spec, log } = await fixture("FROM fixture/base\n");

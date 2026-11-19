@@ -1,3 +1,4 @@
+import { createNativeResource, hasNativeResource, nativeResourceTransport } from "arsi-evaluator";
 import { Context } from "@deepseek-ai/cordis";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,12 +21,12 @@ afterEach(async () => {
 test("DocOps remains external until its Cordis plugin is loaded", async () => {
   const ctx = new Context();
   await ctx.plugin(registryPlugin);
-  expect(ctx.evaluator.has("benchmark", "docops")).toBe(false);
-  expect(ctx.evaluator.has("environment", "docops-docker")).toBe(false);
+  expect(hasNativeResource(ctx.evaluator.workflows, "benchmark", "docops")).toBe(false);
+  expect(hasNativeResource(ctx.evaluator.workflows, "environment", "docops-docker")).toBe(false);
 
   await ctx.plugin(docOpsPlugin);
-  expect(ctx.evaluator.has("benchmark", "docops")).toBe(true);
-  expect(ctx.evaluator.has("environment", "docops-docker")).toBe(true);
+  expect(hasNativeResource(ctx.evaluator.workflows, "benchmark", "docops")).toBe(true);
+  expect(hasNativeResource(ctx.evaluator.workflows, "environment", "docops-docker")).toBe(true);
   const cache = await mkdtemp(join(tmpdir(), "docops-plugin-cache-"));
   roots.push(cache);
   const model = { name: "fixture", endpoint: null, provider: "openai", api: null } as const;
@@ -38,19 +39,19 @@ test("DocOps remains external until its Cordis plugin is loaded", async () => {
     configDirectory: cache,
     resolvePath: (path: string) => join(cache, path),
   };
-  const benchmark = await ctx.evaluator.create("benchmark", {
+  const benchmark = await createNativeResource(ctx, "benchmark", {
     name: "docops",
     config: { repository: "icip-cas/DocOps", revision: "main", cacheDir: "./cache" },
   }, runtime);
   expect(benchmark).toBeInstanceOf(DocOpsBenchmark);
-  const environment = await ctx.evaluator.create("environment", {
+  const environment = await createNativeResource(ctx, "environment", {
     name: "docops-docker",
     config: { profile: "amd", cacheDir: "./images" },
   }, runtime);
   expect(environment).toBeInstanceOf(DocOpsDockerEnvironment);
   expect(environment.supportsRuntimeInstallation).toBe(true);
   expect(environment.materialize).toBeTypeOf("function");
-  expect(ctx.evaluator.configTransport("benchmark", "docops")).toEqual({ nodeLocal: { cacheDir: "cache" } });
-  expect(ctx.evaluator.configTransport("environment", "docops-docker")).toEqual({ nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" } });
+  expect(nativeResourceTransport(ctx.evaluator.workflows, "benchmark", "docops")).toEqual({ nodeLocal: { cacheDir: "cache" } });
+  expect(nativeResourceTransport(ctx.evaluator.workflows, "environment", "docops-docker")).toEqual({ nodeLocal: { cacheDir: "cache", dockerExecutable: "docker" } });
   await ctx.fiber.dispose();
 });

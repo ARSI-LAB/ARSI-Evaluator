@@ -1,3 +1,4 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,10 +70,10 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       "dataset/tasks/codex/instruction.md": "Write answer to /workspace/result.txt.",
       "dataset/tasks/codex/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
     });
-    await writeFile(configPath, JSON.stringify({
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
       services: {
-        default: { model: "unused", base_url: "http://127.0.0.1:1", api_key: "${CODEX_FIXTURE_KEY}" },
-        codex: { model, base_url: fixture.endpoint, api: "openai-responses", api_key: "${CODEX_FIXTURE_KEY}" },
+        default: { model: "unused", base_url: "http://127.0.0.1:1", apiKeyEnv: "CODEX_FIXTURE_KEY" },
+        codex: { model, base_url: fixture.endpoint, api: "openai-responses", apiKeyEnv: "CODEX_FIXTURE_KEY" },
       },
       benchmark: {
         name: docker ? "harbor" : "gpqa",
@@ -81,10 +82,9 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
       },
       environment,
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 900, roundTimeoutSeconds: 900 } },
-      output: { directory: "./results" },
+  }
     }));
-    const result = await new Evaluator().run({ configPath, env: { CODEX_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000) });
-    if (result.kind !== "local") throw new Error("Expected evaluation on the local scheduler");
+    const result = await readBenchmarkResult(await new Evaluator().run({ configPath, env: { CODEX_FIXTURE_KEY: secret }, signal: AbortSignal.timeout(900_000) }));
     const [attempt] = result.snapshot.records;
     expect(attempt, JSON.stringify(attempt?.errors)).toMatchObject({
       executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1 },

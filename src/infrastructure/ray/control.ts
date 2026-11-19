@@ -46,6 +46,7 @@ export class RayControl {
     private readonly services: Record<string, ServiceBinding>,
     private readonly update: (update: RemoteAttemptUpdate) => Promise<void>,
     private readonly onProgress?: ProgressListener,
+    private readonly credentials?: { names: readonly string[]; resolve(name: string): Promise<string | undefined> },
   ) {
     this.progressTimer = setInterval(() => {
       for (const state of this.attempts.values()) if (state.progressSeen !== undefined && !state.progressEnded && !state.progressInterrupted && Date.now() - state.progressSeen > 10_000) {
@@ -118,10 +119,11 @@ export class RayControl {
       }
       return { accepted: true };
     }
+    const credentialRequest = route === "runtime" && input !== null && typeof input === "object" && "name" in input;
     const value = object(
       input,
       route === "runtime"
-        ? ["key", "nodeId", "hostname", "packageDigest", "pluginVersions"]
+        ? ["key", "nodeId", "hostname", "packageDigest", "pluginVersions", ...(credentialRequest ? ["name"] : [])]
         : ["key", "nodeId", "state"],
     );
     const key = object(value.key, ["runId", "taskId", "attemptId"]);
@@ -158,7 +160,13 @@ export class RayControl {
       }
       state.lastSeen = Date.now();
       state.progressSeen ??= Date.now();
+      if (credentialRequest) {
+        label(value.name);
+        if (!this.credentials?.names.includes(value.name)) throw new TransferError("RAY_PROTOCOL_INVALID", "Undeclared Ray credential", 403);
+        return { value: await this.credentials.resolve(value.name) ?? null };
+      }
       return {
+        ...(this.credentials ? { credentialNames: this.credentials.names } : {}),
         services: Object.fromEntries(Object.entries(this.services).map(([name, binding]) =>
           [name, { model: structuredClone(binding.model), auth: { value: state.preparation ? "" : binding.auth.value, reference: null } }])),
       };

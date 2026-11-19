@@ -6,12 +6,9 @@ import { afterEach, expect, test } from "vitest";
 import { LocalRunStore } from "../../src/plugins/stores/local.js";
 import { buildFileManifest } from "../../src/core/artifacts/artifacts.js";
 import { storeRun, storeKey, storeRecord, trajectoryLines } from "../fixtures/results/store-fixture.js";
-import { loadConfig as readConfig } from "../../src/application/config.js";
-// These tests exercise assembly validation separately from structural configuration loading.
-const loadConfig = (path: string, overrides: Parameters<typeof readConfig>[1], env: Parameters<typeof readConfig>[2]) =>
-  readConfig(path, overrides, env, { validatePlugins: false });
-import { bootstrap } from "../../src/application/plugins/bootstrap.js";
-import { saveReport } from "../../src/application/report/index.js";
+import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
+import { saveReport } from "../../src/plugins/workflows/benchmark/report.js";
 import { MarkdownReporter } from "../../src/plugins/reporters/markdown.js";
 
 const roots: string[] = []; const stores: LocalRunStore[] = [];
@@ -309,16 +306,16 @@ test("resume preserves prior reports and updates keep evidence links usable with
 });
 
 test("builtin local store is selected through Cordis and disposal releases its writer lock", async () => {
-  const fixture = join(import.meta.dirname, "..", "fixtures", "plugins", "valid");
-  const loaded = await loadConfig(join(fixture, "experiment.yaml"), { apiKey: "fixture-secret" }, {});
-  loaded.experiment.store = { name: "local", config: {} };
-  const components = await bootstrap(loaded, fixture, join(fixture, "cordis.patch.yaml"));
   const root = await mkdtemp(join(tmpdir(), "evaluator-store-plugin-")); roots.push(root);
+  const registry = await openPluginRegistry();
   try {
-    await components.store.create(root, storeRun, loaded.persisted);
-    await components.store.allocate(storeKey);
-    await components.store.commit(storeRecord(), { files: [], missing: [] });
-  } finally { await components.dispose(); }
+    const store = await createNativeResource(registry.ctx, "store", { name: "local", config: {} }, {
+      configDirectory: root, resolvePath: path => resolve(root, path), services: {}, solverService: "default",
+    });
+    await store.create(root, storeRun, {});
+    await store.allocate(storeKey);
+    await store.commit(storeRecord(), { files: [], missing: [] });
+  } finally { await registry.dispose(); }
   const reopened = instance(); await reopened.open(join(root, storeRun.runId));
   expect((await reopened.snapshot()).records[0]?.verdict?.passed).toBe(true);
 });

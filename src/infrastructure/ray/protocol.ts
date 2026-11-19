@@ -1,5 +1,6 @@
 import { validateNetworkSnapshot } from "../../config/network-schema.js";
 import { parsePluginActivations } from "../../core/plugins/activation.js";
+import { credentialReference, configurationCredentials } from "../../core/validation/credential.js";
 import type { NetworkSnapshot } from "../../core/contracts/network.js";
 import { join, posix, win32 } from "node:path";
 import { parseHardware } from "../../config/hardware.js";
@@ -117,7 +118,10 @@ export function validatePortableSelection(value: unknown, role: string, lookup?:
   const config = object(record.config);
   const transport = lookup?.(role, record.name);
   for (const [key, entry] of Object.entries(config)) {
-    if (transport?.secretFields?.includes(key)) throw new TypeError("Credentials are forbidden in Ray plugin config");
+    if (transport?.secretFields?.includes(key)) {
+      if (credentialReference(entry)) continue;
+      throw new TypeError("Credentials are forbidden in Ray plugin config");
+    }
     if (secretKey.test(key)) throw new TypeError("Credentials are forbidden in Ray plugin config");
     if (["cacheDir", "dockerExecutable"].includes(key) || Object.hasOwn(transport?.nodeLocal ?? {}, key))
       throw new TypeError("Node-local paths must not be serialized");
@@ -130,10 +134,17 @@ export function validatePortableSelection(value: unknown, role: string, lookup?:
 /** Strip only fields declared by the installed component, then check the wire value. */
 export function projectPortableSelection<T extends Selection>(selection: T, role: string, lookup?: ConfigTransportLookup): T {
   const projected = structuredClone(selection);
-  for (const field of lookup?.(role, selection.name)?.secretFields ?? []) delete projected.config[field];
+  for (const field of lookup?.(role, selection.name)?.secretFields ?? []) if (!credentialReference(projected.config[field])) delete projected.config[field];
   for (const field of Object.keys(lookup?.(role, selection.name)?.nodeLocal ?? {})) delete projected.config[field];
   validatePortableSelection(projected, role, lookup);
   return projected;
+}
+
+export function portableCredentialNames(config: Pick<EffectiveConfig, "benchmark" | "environment" | "solver" | "verifier">, lookup?: ConfigTransportLookup): string[] {
+  return ["benchmark", "environment", "solver", "verifier"].flatMap(role => {
+    const selection = config[role as keyof typeof config];
+    return selection ? configurationCredentials(selection.config, lookup?.(role, selection.name)?.secretFields) : [];
+  });
 }
 
 /** Validate before adding host paths; the sender cannot supply these values. */

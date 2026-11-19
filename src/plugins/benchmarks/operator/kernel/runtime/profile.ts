@@ -57,6 +57,17 @@ export interface KernelProfileArgs { problem: string; kernel: string; out: strin
   seed?: number; warmup?: number; caseId?: string; contractSha256?: string; collection?: "Default" | "PipeTimeline,Default";
   msprofBin?: string; deviceName?: string; maxAttempts?: number; attemptTimeoutSeconds?: number; retryDelayMs?: number; cacheEnabled?: boolean; cacheDir?: string; cacheMaxEntries?: number }
 
+async function isRegularSource(path: string): Promise<boolean> {
+  if (!(await lstat(path)).isFile()) return false;
+  if (await realpath(path) === path) return true;
+  if (process.platform !== "win32") return false;
+  // Windows can expand 8.3 names even for a path without any links.
+  for (let parent = dirname(path); parent !== dirname(parent); parent = dirname(parent)) {
+    if ((await lstat(parent)).isSymbolicLink()) return false;
+  }
+  return true;
+}
+
 async function stageCandidateTree(args: KernelProfileArgs, artifactsDir: string): Promise<{
   root: string; sourceRoot: string; entry: string; files: { path: string; sha256: string }[]; hashes: Record<string, string>; bytes: Buffer;
 }> {
@@ -81,7 +92,7 @@ async function stageCandidateTree(args: KernelProfileArgs, artifactsDir: string)
   let bytes: Buffer | undefined;
   for (const file of files) {
     const source = join(root, file.path);
-    if (await realpath(source) !== source || !(await lstat(source)).isFile())
+    if (!await isRegularSource(source))
       throw new TypeError(`Candidate source must be a safe regular file: ${source}`);
     const content = await readFile(source);
     if (createHash("sha256").update(content).digest("hex") !== file.sha256)
@@ -148,7 +159,7 @@ async function listArtifacts(root: string, directory: string): Promise<string[]>
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else out.push(resolve(path).replace(`${resolve(root)}/`, ""));
+      else out.push(relativeTo(root, path));
     }
   };
   await walk(directory);
@@ -233,7 +244,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   if (context) {
     if (!isAbsolute(context.dataRoot)) throw new TypeError("Profile source dataRoot must be absolute");
     for (const [path, expected] of Object.entries(context.hashes)) {
-      if (!isAbsolute(path) || !/^[a-f0-9]{64}$/.test(expected) || !(await lstat(path)).isFile() || await realpath(path) !== path)
+      if (!isAbsolute(path) || !/^[a-f0-9]{64}$/.test(expected) || !await isRegularSource(path))
         throw new TypeError(`Profile source must be a safe locked regular file: ${path}`);
       if (sha256File(path) !== expected) throw new Error(`Locked profile source changed: ${path}`);
       const dataPath = relative(context.dataRoot, path);

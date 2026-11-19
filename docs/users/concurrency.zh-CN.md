@@ -1,5 +1,7 @@
 # 并发与环境准备
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./concurrency.md) | 中文
 
 本地默认使用流水线，环境就绪的题目在有空闲执行位置时立即开始解题；准备并发默认等于 `scheduler.concurrency`，无需额外填写 `run.preparation`。Ray 仍使用整批准备屏障。本文说明任务并发、准备预算、执行与清理的关系。第一次使用请先看[两题快速上手](quick-start.zh-CN.md)。

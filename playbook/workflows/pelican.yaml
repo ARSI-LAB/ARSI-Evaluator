@@ -1,0 +1,18 @@
+# node dist/cli.js run playbook/workflows/pelican.yaml --patch plugins/workflow-pelican/cordis.patch.yaml
+schemaVersion: 2
+workflow: pelican.svg
+with:
+  model:
+    endpoint: ${MODEL_ENDPOINT}
+    model: ${MODEL_NAME}
+    apiKeyEnv: MODEL_API_KEY
+  judge:
+    endpoint: ${MODEL_ENDPOINT}
+    model: ${VISION_MODEL}
+    apiKeyEnv: MODEL_API_KEY
+  browser:
+    executable: ${CHROME_BIN}
+    width: 768
+    height: 768
+output:
+  directory: ../../results/workflow-pelican

@@ -2,7 +2,7 @@
 
 > English | [中文](./sdk.zh-CN.md)
 
-`Evaluator` provides a CLI and ESM SDK, requiring Node.js 24.22.1 or later 24.x. Import `Evaluator` from the package root to load configuration, execute, report, and release resources in one call. Low-level APIs such as `loadConfig`, `bootstrap`, and `runEngine` remain available.
+`Evaluator` provides a CLI and ESM SDK, requiring Node.js 24.22.1 or later 24.x. Import `Evaluator` from the package root to load configuration, execute, report, and release resources in one call. Execution uses declarative workflows; the old `loadConfig`, `bootstrap`, and `runEngine` APIs have been removed.
 
 [User documentation](README.md) · [Installation](installation.md) · [Plugin development](../development/plugins.en.md)
 
@@ -28,110 +28,65 @@ pnpm add '/path/to/arsi-evaluator-0.1.0.tgz'
 
 Evaluator uses `private: true` in its package manifest. The commands above install the SDK from a local link or tarball.
 
-## Run a YAML Experiment
+## Execution, Cancellation, and Results
 
-Set `"type": "module"` in the application's `package.json`. For example, create `evaluate.mjs`:
+YAML uses `schemaVersion: 2`; see [composable workflows](workflows.md) for templates and expanded step definitions.
 
 ```js
 import { Evaluator, EvaluatorRunError } from "arsi-evaluator";
 
 const evaluator = new Evaluator();
 const controller = new AbortController();
-
 try {
   const result = await evaluator.run({
-    configPath: "/path/to/config.yaml",
+    configPath: "/path/to/experiment.yaml",
     signal: controller.signal,
-    onProgress(event) {
-      console.log(event.phase, event.message);
-    },
+    onProgress(event) { console.log(event.phase, event.message); },
   });
-  console.log(result.runId, result.exitCode, result.reportPath);
-  if (result.kind === "local") {
-    console.log(result.snapshot.run.status);
-  } else {
-    console.log(result.jobId, result.collectionError, result.reportError);
-  }
+  console.log(result.runId, result.record.status, result.exitCode);
+  console.log(result.runDirectory, result.reportPath);
 } catch (error) {
   if (!(error instanceof EvaluatorRunError)) throw error;
-  console.error(error.phase, error.message);
-  console.error("Partial results: ", error.result?.runDirectory);
+  console.error(error.phase, error.message, error.result?.runDirectory);
 }
 ```
 
-Set the YAML model variables in the current terminal as shown in [quick start](quick-start.md#3-set-model-variables). Configuration, benchmark, model, Docker, and task requirements match the CLI; SDK use retains authentication and preparation checks.
+Local, direct Ray, and Ray Jobs runs all return `kind: "workflow"`. `record` contains step/unit states, resource cleanup, outputs, and errors. Native Benchmark evidence is stored below the run directory. Exit codes are 0 for completion, 1 for execution failure, and 130 for cancellation; configuration errors throw `EvaluatorRunError` with code 2. A zero business score does not itself fail execution.
+
+Cancel with `controller.abort()`, then await `run()` so cleanup can finish. The SDK installs no process signal handlers. A synchronous progress callback failure cancels the operation. Error `result` is null or contains persisted partial results. No `dispose()` call is required.
 
 ## Options and Paths
 
-`EvaluatorRunOptions`, `ProgressEvent`, and `ProgressListener` are exported from the package root.
-
-| Option | Meaning |
+| Option | Behavior |
 | --- | --- |
-| `configPath` | Experiment YAML; relative to the working directory at call time |
-| `networkConfigPath` | Network YAML, relative to the working directory; defaults to `EVALUATOR_NETWORK_CONFIG`, then `~/.arsi-evaluator/network.yaml` |
-| `patchPath` | Adds plugins alongside bundled defaults. The path is relative to the current directory |
-| `overrides` | CLI-equivalent `model` `overrides`: `model`, `endpoint`, `apiKey`, `apiKeyEnv` |
-| `env` | YAML variable expansion and model authentication; defaults to `process.env`; an explicit object replaces it without merging |
-| `signal` | Caller-provided `AbortSignal` |
-| `resume` | `true` selects the sole existing run in the output directory; a string selects a run ID; omitted or `false` starts a new run |
-| `onProgress` | Synchronous callback; task phases include task/attempt IDs; Ray Jobs logs use phase `deployment` |
+| `configPath` | YAML path relative to the current directory |
+| `patchPath` | Explicit additional plugin patch; modules resolve relative to the patch |
+| `networkConfigPath` | Network file; otherwise uses EVALUATOR_NETWORK_CONFIG or the user default YAML |
+| `parameterOverrides` | Template-supported fields such as model, endpoint, apiKeyEnv, taskIds; expanded workflows reject template overrides |
+| `env` | Current variables and credentials; an explicit object is not merged with process.env |
+| `signal` | Caller cancellation signal |
+| `resume` | true selects the only saved run; a string selects a run ID |
+| `onEvent` | Workflow events with optional structured progress |
+| `onProgress` | Stage, task, and live output events |
 
-YAML bundle/output paths remain relative to the YAML directory; patch module paths are relative to the patch file. The SDK does not call `process.chdir()` or modify `process.env`. One instance supports concurrent calls, each with separate registry/resources. Choose appropriate output paths and avoid concurrent resume calls on the same run.
+YAML paths resolve against the configuration directory. The SDK changes neither the working directory nor process globals. Use `apiKeyEnv` for models and `{credential: "HF_TOKEN"}` for datasets. Merge `process.env` explicitly when needed. Each operation owns its registry and resources; concurrent writers cannot share a run directory.
 
-`env` supplies variables for both experiment and network YAML without automatically merging process.env. Docker daemon and Ray gateway variables still come from the actual process or execution node. Ray Jobs tokens, for example, continue to use `tokenEnv` or secure files without changing process globals through `env`.
-
-## Networks and Local Datasets
+## Inspect, Warmup, Maintenance, Retry, and Reports
 
 ```js
-const result = await evaluator.run({
-  configPath: "/path/to/experiment.yaml",
-  networkConfigPath: "/path/to/network.yaml",
-  env: { ...process.env, DOWNLOAD_PROXY: "http://proxy.example:8080" },
-});
+const plan = await evaluator.inspect({ configPath: "/path/to/experiment.yaml" });
+const prepared = await evaluator.warmup({ configPath: "/path/to/experiment.yaml" });
+const checks = await evaluator.maintain(
+  { configPath: "/path/to/experiment.yaml" },
+  { operation: "doctor", options: {} },
+);
+const resumed = await evaluator.run({ configPath: "/path/to/experiment.yaml", resume: "saved-run-id" });
+const retried = await evaluator.retry("/path/to/results/saved-run-id", { taskIds: ["failed-case"] });
+const report = await evaluator.report("/path/to/results/saved-run-id");
 ```
 
-The network YAML can reference `proxy: { https: "${DOWNLOAD_PROXY}" }`. When `networkConfigPath` is omitted, Evaluator checks `EVALUATOR_NETWORK_CONFIG` before using the default file in the user directory. An empty file uses built-in values, with supported environment overrides still applied. See [network configuration fields](reference/network.md).
+`inspect` creates no evaluation resources. Warmup and maintenance create only declared preparation dependencies. Resume validates plans, implementations, business inputs, sources, and saved evidence, recovering resources before reusing completed samples. Retry keeps the saved network template while resolving current environment variables and credentials; changing the template requires a new run.
 
-Set local data paths in the experiment YAML: `benchmark.config.localPath` for record datasets, or `benchmark.config.source: { kind: local, path: ./dataset }` for Harbor tasks. Paths are relative to the experiment YAML for both SDK and CLI. See [local datasets](local-datasets.md). The SDK does not expose `doctor()` or `inspect()`; use `arsi-evaluator doctor experiment.yaml` for diagnosis.
+`report` reads saved results and reporting plugins only, without model credentials or execution. Plugins must remain available with matching versions. The current report is `report.md`; resume history lives under `reports/`.
 
-## Cancellation, Resume, and Reports
-
-Call `controller.abort()` to cancel. The SDK registers no SIGINT/SIGTERM listeners; servers should convert HTTP disconnects, cancellation, or process signals into AbortSignal. Cleanup and partial evidence storage take time. Wait for `run()` before exiting; do not abandon a running evaluation after a `Promise.race` timeout.
-
-```js
-const result = await evaluator.run({
-  configPath: "/path/to/config.yaml",
-  resume: "saved-run-id",
-});
-
-const reportPath = await evaluator.report("/path/to/results/saved-run-id");
-```
-
-Resume requires identical configuration, sources, external plugins, and solver identity; updated and rebuilt Evaluator code is allowed. See [resume](usage.md#resume-and-rebuild-reports). Validation failure refuses execution without rewriting the original report. `report()` rebuilds offline without model calls or keys. Third-party reporting plugins must remain available; failures propagate `rebuildReport()` errors. Each `run()` releases its resources before returning or throwing; no `evaluator.dispose()` is required.
-
-Progress callbacks should return quickly; applications may queue asynchronous messages. A synchronous callback exception aborts the run, releases resources, and throws `EvaluatorRunError` while retaining saved partial results.
-
-## Results and Errors
-
-`EvaluationResult` is a union discriminated by `kind`:
-
-| Field | Meaning |
-| --- | --- |
-| `exitCode` | `0` completed, `1` runtime failure, `2` configuration/preparation entry error, `130` cancelled; wrong answers may still return `0` |
-| `runId` | Local run ID or remote receipt ID; may be `null` before the remote receipt provides one |
-| `runDirectory` / `reportPath` | Saved results/report paths; may be `null` before creation or after collection failure |
-| `snapshot` for `kind: "local"` | Results coordinated by the current process, including task/run status; also applies to Docker and direct Ray Client scheduling |
-| `jobId` for `kind: "ray-jobs"` | Ray Jobs ID; follows CLI receipt, follow, and cancellation behavior |
-| `collectionError` / `reportError` | Redacted Ray Jobs download/report failures; missing results are not treated as success |
-
-Wrong answers and Engine-saved task failures appear in returned results; inspect `exitCode`, snapshots, and reports. Configuration, assembly, entry execution, report, or disposal exceptions throw `EvaluatorRunError` with `phase`, `exitCode`, `result`, and a redacted `cause` chain. `result` may be `null`. Redacted diagnostics do not imply redacted task contents; inspect files before sharing trajectories.
-
-## Ray Jobs and Package Requirements
-
-SDK and CLI select the same `deployment` paths, including explicit Ray Jobs and managed local clusters triggered by Ray configuration. See [Ray and execution nodes](config.md#ray-and-execution-nodes). Remote text logs use `onProgress` phase `deployment`. A separate progress channel supplies transient task/attempt activity rather than reconstructing events from text.
-
-`ProgressEvent.transient` marks presentation events that need not be saved. Optional `live` includes operation/parent IDs, sequence, start/update/completed/failed/cancelled states, elapsed and idle times, and up to 10 redacted preview lines. `live.preparation` marks steps that make environments ready. Optional `summary` reports task totals, prepared and completed counts; `connection` reports disconnected, recovered, or unsupported remote progress. Repeated snapshots are not new work: deduplicate by operation ID and sequence, and reject late updates to finished operations. The SDK draws no terminal UI and saves none of these events to stores or trajectories. See [live execution previews](usage.md#live-execution-previews).
-
-Source resolution, enumeration, and batch planning also emit `live` operations. Built-in sources report download bytes, file verification, and processing counts; planning updates the current task and index. `message` may change with activity; `elapsedMs` accumulates from the start of a `live.id`. Planning counts do not increase `summary.prepared`.
-
-Managed local clusters require repository `scripts/ray-smoke/`, Docker, and local deployment resources, fitting source `link:` installations. A `.tgz` alone excludes management scripts. Standalone packages connecting to deployed Ray Jobs must provide endpoint, CA, gateway authentication, and `managedLocal: false`. Node packages, plugins, and authentication requirements remain unchanged. An SDK installation alone does not supply Docker or Ray execution capability.
+For direct workflow control, the package exports `inspectWorkflow`, `runWorkflow`, `retryWorkflow`, `warmupWorkflow`, `rebuildWorkflowReport`, `compileWorkflow`, and `executeWorkflow`. Plugins import public contracts from the package root rather than internal paths.

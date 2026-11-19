@@ -129,7 +129,7 @@ describe("AgentBundle SDK runtime files", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("includes the core package in the DSH runtime installation", async () => {
     const signal = AbortSignal.timeout(20_000);

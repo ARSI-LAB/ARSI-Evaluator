@@ -1,5 +1,15 @@
 import type { JsonValue } from "../contracts/task.js";
 
+/** Credential-bearing URLs can surface either whole or as a decoded password in client errors. */
+export function credentialSecrets(value: string): string[] {
+  const secrets = [value];
+  try {
+    const password = decodeURIComponent(new URL(value).password);
+    if (password) secrets.push(password);
+  } catch { /* Most credentials are opaque strings. */ }
+  return secrets;
+}
+
 /** Human-readable diagnostics only; never serialize arbitrary error properties or request headers. */
 export function redactDiagnostic(text: string, secrets: readonly string[] = []): string {
   for (const secret of secrets) {

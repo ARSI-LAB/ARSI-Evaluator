@@ -1,0 +1,29 @@
+# node dist/cli.js run playbook/workflows/compare.yaml --patch plugins/workflow-compare/cordis.patch.yaml
+schemaVersion: 2
+workflow: application.compare
+with:
+  variants:
+    - id: model-a
+      config:
+        endpoint: ${MODEL_ENDPOINT}
+        model: ${MODEL_A}
+        apiKeyEnv: MODEL_API_KEY
+    - id: model-b
+      config:
+        endpoint: ${MODEL_ENDPOINT}
+        model: ${MODEL_B}
+        apiKeyEnv: MODEL_API_KEY
+  judge:
+    model:
+      endpoint: ${MODEL_ENDPOINT}
+      model: ${JUDGE_MODEL}
+      apiKeyEnv: MODEL_API_KEY
+    rubric: 比较回答的正确性、完整性和表达清晰程度。
+  cases:
+    - id: refund-policy
+      request:
+        question: 请为一家小型咖啡店设计一套简明、合理的顾客退款处理流程。
+  concurrency: 2
+  repetitions: 2
+output:
+  directory: ../../results/workflow-compare

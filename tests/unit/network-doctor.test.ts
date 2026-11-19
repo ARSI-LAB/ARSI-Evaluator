@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { networkDocument } from "../../src/config/network-schema.js";
 import { NetworkRuntime } from "../../src/infrastructure/network/runtime.js";
-import { diagnoseNetwork } from "../../src/application/diagnostics/network.js";
+import { diagnoseNetwork } from "../../src/infrastructure/network/diagnostics.js";
 import { networkCommand } from "../../src/infrastructure/network/command.js";
 import { runDockerCommand } from "../../src/infrastructure/containers/command.js";
 

@@ -9,6 +9,8 @@ export type TracerConfig = {
   collector: string;
   /** Persistent SQLite database; relative paths await resolveTracerConfig. */
   db: string;
+  /** An explicitly addressed Collector owns its database unless the caller selected one. */
+  useCollectorDatabase?: boolean;
   /** Persistent spool directory; relative paths await resolveTracerConfig. */
   spool: string;
   /** Optional Bearer token for the Collector write APIs. */
@@ -92,6 +94,8 @@ export function parseTracerConfig(value: unknown): TracerConfig {
     url: parsed.origin,
     collector,
     db,
+    ...((record.url !== undefined || process.env.TRACER_URL) && record.db === undefined && !process.env.TRACER_DB
+      ? { useCollectorDatabase: true } : {}),
     spool,
     token,
     autostart: record.autostart ?? true,

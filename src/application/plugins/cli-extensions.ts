@@ -52,7 +52,10 @@ export async function loadCliExtensions(patchPath?: string, catalog: InstalledPl
   const patch = await loadPluginPatch(patchPath);
   const patchIds = new Set(patch.entries.map(entry => entry.id));
   for (const plugin of catalog) {
-    if (patchIds.has(plugin.id)) throw new TypeError(`Duplicate installed/patch plugin id: ${plugin.id}`);
+    if (patchIds.has(plugin.id)) {
+      if (plugin.cli || plugin.flags?.length) throw new TypeError(`Duplicate installed/patch plugin id: ${plugin.id}`);
+      continue;
+    }
     // Declarative flags need no CLI module: the host registers them from the manifest.
     for (const flag of plugin.flags ?? []) result.options.push({ id: plugin.id, command: flag.command, option: {
       flags: flag.flag, description: flag.description,

@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from "node:util";
 import type { ActivityListener, ComponentActivity } from "../contracts/activity.js";
 import type { ProgressEvent, ProgressListener, LiveProgress } from "./progress.js";
 import { redactDiagnostic } from "../errors/diagnostics.js";
+import { normalizeFailure } from "../errors/classify.js";
 
 export const LIVE_LINE_BYTES = 2048;
 export const LIVE_LINES = 10;
@@ -24,6 +25,7 @@ export function safeLiveText(text: string, secrets: readonly string[] = []): str
 
 export function safeProgress(event: ProgressEvent, secrets: readonly string[] = []): ProgressEvent {
   return { ...event, message: event.live ? safeLiveText(event.message, secrets) : redactDiagnostic(event.message, secrets),
+    ...(event.failure ? { failure: normalizeFailure(event.failure, secrets) } : {}),
     ...(event.taskId === undefined ? {} : { taskId: safeLiveText(event.taskId, secrets) }),
     ...(event.live ? { live: { ...event.live, id: safeLiveText(event.live.id, secrets),
       ...(event.live.parentId === undefined ? {} : { parentId: safeLiveText(event.live.parentId, secrets) }),

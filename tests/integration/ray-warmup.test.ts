@@ -2,8 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { RayConnection } from "../../src/infrastructure/ray/connection.js";
+import { RayClient } from "../../src/infrastructure/ray/client.js";
 import { RayScheduler } from "../../src/plugins/schedulers/ray/scheduler.js";
-import { warmupSelectedTasks } from "../../src/application/warmup.js";
+import { warmupSelectedTasks } from "../../src/plugins/workflows/benchmark/warmup.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import type { RayResult } from "../../src/infrastructure/ray/client.js";
 import type { RemoteJob } from "../../src/infrastructure/ray/protocol.js";
@@ -15,7 +17,7 @@ import { fingerprintConfig } from "../../src/core/results/run-manifest.js";
 
 const digest = `sha256:${"a".repeat(64)}`;
 const bridge = vi.hoisted(() => ({ submit: vi.fn<(job: RemoteJob) => Promise<RayResult>>(), cancel: vi.fn(),
-  close: vi.fn(async () => {}), server: vi.fn<(options: ReceiverServerOptions) => void>(),
+  guard: vi.fn(async () => {}), close: vi.fn(async () => {}), server: vi.fn<(options: ReceiverServerOptions) => void>(),
   env: {} as Record<string, string | undefined>,
   nodes: ["node-b", "node-a"], nodeSlots: { "node-a": 1, "node-b": 1 } as Record<string, number> }));
 vi.mock("../../src/infrastructure/ray/client.js", () => ({ RayClient: class {
@@ -23,6 +25,7 @@ vi.mock("../../src/infrastructure/ray/client.js", () => ({ RayClient: class {
   nodes = bridge.nodes; nodeSlots = bridge.nodeSlots;
   slots = Object.values(bridge.nodeSlots).reduce((a, b) => a + b, 0);
   start = async () => {};
+  guardImages = bridge.guard;
   submit = bridge.submit; cancel = bridge.cancel; close = bridge.close;
 } }));
 vi.mock("../../src/infrastructure/provenance/package.js", () => ({ PACKAGE_RUNTIME_ID: "arsi-evaluator:package", loadPackageDigest: async () => `sha256:${"a".repeat(64)}` }));
@@ -68,7 +71,6 @@ test("six warmup tasks go to exactly one of two nodes; coordinator never prepare
   vi.stubEnv("WARMUP_MODEL_API_KEY", "unused-private-model-key");
   const create = vi.spyOn(components.store, "create"), allocate = vi.spyOn(components.store, "allocate");
   const solve = vi.spyOn(components.solver, "solve"), verify = vi.spyOn(components.benchmark, "verify");
-  const execute = vi.spyOn(components.scheduler, "executeReady");
   const result = await warmupSelectedTasks(components, config, new AbortController().signal);
   expect(result.status).toBe("ready"); expect(result.readyTaskIds).toHaveLength(6);
   expect(result.placements.filter(item => item.nodeId === "node-a").map(item => item.taskId)).toEqual(["t0", "t2", "t4"]);
@@ -77,7 +79,7 @@ test("six warmup tasks go to exactly one of two nodes; coordinator never prepare
   expect(new Set(bridge.submit.mock.calls.map(([remote]) => remote.job.taskId)).size).toBe(6);
   expect(bridge.server.mock.calls[0]?.[0].receiver).toBeUndefined();
   expect(bridge.env.WARMUP_MODEL_API_KEY).toBeUndefined();
-  for (const call of [create, allocate, solve, verify, execute]) expect(call).not.toHaveBeenCalled();
+  for (const call of [create, allocate, solve, verify]) expect(call).not.toHaveBeenCalled();
 });
 
 test("capacity weighting and node ordering are the same for warmup and formal preparation", async () => {
@@ -92,7 +94,7 @@ test("capacity weighting and node ordering are the same for warmup and formal pr
   const source = await components.benchmark.resolveSource(null, new AbortController().signal);
   const run = { ...storeRun, source, configFingerprint: fingerprintConfig(config.persisted), pluginVersions: components.pluginVersions };
   vi.spyOn(components.store, "listAttempts").mockResolvedValue([]);
-  await scheduler.setup({ run, safeConfig: config.persisted, store: components.store }, new AbortController().signal);
+  await scheduler.setupPreparation({ session: run, safeConfig: config.persisted }, new AbortController().signal);
   const refs = []; for await (const ref of components.benchmark.enumerate(source, new AbortController().signal)) refs.push(ref);
   const plan = await components.benchmark.planRun!(refs, source, new AbortController().signal);
   const prepared = await scheduler.prepareTasks(refs.map(ref => ({ runId: run.runId, taskId: ref.id, ref,
@@ -156,4 +158,29 @@ test.each(["cancel", "deadline"] as const)("remote warmup %s drains active prepa
   await rejected;
   expect(pending.size).toBe(0);
   expect(bridge.submit).toHaveBeenCalledTimes(2);
+});
+
+
+test("preparation borrows the shared connection and leaves its driver available for execution", async () => {
+  const { components, config, scheduler } = await fixture(1);
+  const client = new RayClient({ endpoint: "local", pythonExecutable: "unused", driverPath: "unused", startupTimeoutMs: 1000, env: {} });
+  const closeServer = vi.fn(async () => {});
+  const connection = new RayConnection({ endpoint: "local", pythonExecutable: "unused", startupTimeoutMs: 1000,
+    heartbeatTimeoutMs: 1000, cancelGraceMs: 1000, collector: { certFile: "unused", keyFile: "unused",
+      tokenEnv: "WARMUP_RAY_TOKEN", host: "127.0.0.1", port: 0 } }, client, "https://shared.invalid", new Map(),
+    { url: "https://shared.invalid", close: closeServer });
+  scheduler.bindConnection(connection, async name => process.env[name]);
+  const result = await warmupSelectedTasks(components, config, new AbortController().signal);
+  expect(result.status).toBe("ready");
+  expect(bridge.guard).toHaveBeenCalledTimes(1);
+  expect(bridge.server).not.toHaveBeenCalled();
+  expect(bridge.submit.mock.calls[0]?.[0].uploadEndpoint).toBe("https://shared.invalid");
+  await scheduler.close();
+  expect(bridge.close).not.toHaveBeenCalled();
+  const runId = bridge.submit.mock.calls[0]![0].job.runId;
+  const unbind = connection.subscribe("run", runId, async () => ({}));
+  unbind();
+  await connection.close();
+  expect(bridge.close).toHaveBeenCalledTimes(1);
+  expect(closeServer).toHaveBeenCalledTimes(1);
 });

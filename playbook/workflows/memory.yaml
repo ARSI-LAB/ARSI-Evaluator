@@ -1,0 +1,22 @@
+schemaVersion: 2
+workflow: memory.qa
+with:
+  cases:
+    - id: preference
+      sessions:
+        - history:
+            - key: language
+              value: Chinese
+          questions:
+            - key: language
+              reference: Chinese
+            - key: city
+              reference: "null"
+        - history:
+            - key: city
+              value: Shanghai
+          questions:
+            - key: language
+              reference: Chinese
+            - key: city
+              reference: Shanghai

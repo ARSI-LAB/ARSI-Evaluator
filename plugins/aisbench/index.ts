@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 import type { Context } from "@deepseek-ai/cordis";
 import { readProfileDirectory } from "arsi-evaluator";
 import { AisbenchBenchmark } from "./benchmark.js";
@@ -25,10 +26,10 @@ function emptyConfig(value: unknown): Record<string, never> {
 export async function apply(ctx: Context): Promise<void> {
   await verifyResources();
   for (const profile of await readProfileDirectory(profileDirectory)) ctx.evaluator.registerProfile(profile);
-  ctx.evaluator.register("benchmark", "aisbench", parseAisbenchConfig, config => new AisbenchBenchmark(config));
-  ctx.evaluator.register("solver", "aisbench-ssh", parseAisbenchSshConfig, (config, runtime) =>
+  registerNativeResource(ctx, "benchmark", "aisbench", parseAisbenchConfig, config => new AisbenchBenchmark(config));
+  registerNativeResource(ctx, "solver", "aisbench-ssh", parseAisbenchSshConfig, (config, runtime) =>
     new AisbenchSshSolver({ ...config, remote: { ...config.remote, ssh: { ...config.remote.ssh,
       ...(config.remote.ssh.identityFile === undefined ? {} : { identityFile: runtime.resolvePath(config.remote.ssh.identityFile) }) } } }, runtime));
-  ctx.evaluator.register("metrics", "aisbench-performance", emptyConfig, () => new AisbenchPerformanceMetrics());
-  ctx.evaluator.register("reporter", "aisbench-markdown", emptyConfig, () => new AisbenchMarkdownReporter());
+  registerNativeResource(ctx, "metrics", "aisbench-performance", emptyConfig, () => new AisbenchPerformanceMetrics());
+  registerNativeResource(ctx, "reporter", "aisbench-markdown", emptyConfig, () => new AisbenchMarkdownReporter());
 }

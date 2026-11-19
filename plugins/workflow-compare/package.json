@@ -1,0 +1,7 @@
+{
+  "name": "arsi-workflow-compare",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "peerDependencies": { "arsi-evaluator": "*", "@deepseek-ai/cordis": "^4.0.2" }
+}

@@ -1,30 +1,49 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { stringify } from "yaml";
-import { loadConfig, loadSavedConfig } from "../../src/application/config.js";
-import { exportConfig } from "../../src/config/export.js";
-import { fingerprintResumeConfig } from "../../src/core/results/run-manifest.js";
+import { exportWorkflow, readWorkflowPlan } from "../../src/application/workflow.js";
+import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { expectRecord } from "../../src/core/validation/input.js";
+import { workflowObject } from "../../src/core/workflow/values.js";
+import { workflowPlanCredentialNames } from "../../src/core/workflow/credentials.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-const services = { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${KEY}" } };
+const services = { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "KEY" } };
 async function file(value: unknown, filename = "experiment.yaml") {
   const root = await mkdtemp(join(tmpdir(), "config-")); roots.push(root);
-  const path = join(root, filename); await writeFile(path, stringify(value)); return path;
+  const raw = expectRecord(value, "fixture configuration"), { output, ...parameters } = raw;
+  const input = raw.schemaVersion === 2 ? raw : { schemaVersion: 2, workflow: "benchmark.evaluate", with: parameters, ...(output === undefined ? {} : { output }) };
+  const path = join(root, filename); await writeFile(path, stringify(input)); return path;
 }
-const load = (path: string) => loadConfig(path, {}, { KEY: "secret" });
+async function load(path: string, env: Record<string, string | undefined> = {}) {
+  const registry = await openPluginRegistry();
+  try {
+    const plan = await readWorkflowPlan(path, registry, env);
+    const binding = plan.document.workflow.resources.benchmark?.config.experiment;
+    if (!binding || !("value" in binding)) throw new Error("Missing Benchmark parameters");
+    return { path, plan, experiment: benchmarkExperiment(plan), persisted: workflowObject(binding.value),
+      credentials: workflowPlanCredentialNames(plan, registry.ctx.evaluator.workflows) };
+  } finally { await registry.dispose(); }
+}
+async function roundTrip(loaded: Awaited<ReturnType<typeof load>>) {
+  const destination = join(dirname(loaded.path), "exported.yaml");
+  await exportWorkflow({ configPath: loaded.path, env: {} }, destination);
+  return load(destination);
+}
 
 test.each(["minimal", "low", "medium", "high", "xhigh", "max"])("service reasoning effort %s survives export, save and resume identity", async reasoningEffort => {
   const loaded = await load(await file({ services: { default: { ...services.default, reasoningEffort } }, benchmark: "gsm8k" }));
   expect(loaded.experiment.services.default?.reasoningEffort).toBe(reasoningEffort);
-  expect(exportConfig(loaded)).toHaveProperty("services.default.reasoningEffort", reasoningEffort);
-  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  expect(loaded.persisted).toHaveProperty("services.default.reasoningEffort", reasoningEffort);
+  const saved = await roundTrip(loaded);
   expect(saved.experiment.services.default?.reasoningEffort).toBe(reasoningEffort);
   const defaults = await load(await file({ services, benchmark: "gsm8k", output: loaded.experiment.output }));
   expect(defaults.experiment.services.default).not.toHaveProperty("reasoningEffort");
-  expect(fingerprintResumeConfig(loaded.persisted)).not.toBe(fingerprintResumeConfig(defaults.persisted));
+  expect(loaded.plan.fingerprint).not.toBe(defaults.plan.fingerprint);
 });
 
 test.each(["", "automatic", "MAX", 1, null, false])("rejects invalid service reasoning effort %j", async reasoningEffort => {
@@ -35,12 +54,12 @@ test.each(["", "automatic", "MAX", 1, null, false])("rejects invalid service rea
 test("model input capabilities survive export and saved loading and change resume identity", async () => {
   const path = await file({ services: { default: { ...services.default, inputModalities: ["text", "image"] } }, benchmark: "gsm8k" });
   const loaded = await load(path);
-  expect(exportConfig(loaded)).toHaveProperty("services.default.inputModalities", ["text", "image"]);
-  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  expect(loaded.persisted).toHaveProperty("services.default.inputModalities", ["text", "image"]);
+  const saved = await roundTrip(loaded);
   expect(saved.experiment.services.default?.inputModalities).toEqual(["text", "image"]);
   expect(JSON.stringify(loaded.persisted)).not.toContain("secret");
   const text = await load(await file({ services, benchmark: "gsm8k", output: loaded.experiment.output }));
-  expect(fingerprintResumeConfig(loaded.persisted)).not.toBe(fingerprintResumeConfig(text.persisted));
+  expect(loaded.plan.fingerprint).not.toBe(text.plan.fingerprint);
 });
 
 test.each([undefined, { name: "local" }, { name: "local", config: {} }])("local execution and preparation default to one with scheduler %j", async scheduler => {
@@ -57,7 +76,7 @@ test("explicit execution/preparation limits and saved serial configurations reta
   expect(loaded.experiment.scheduler.config.concurrency).toBe(3);
   expect(loaded.experiment.run.preparation?.concurrency).toBe(2);
   const serial = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 1 } }));
-  const saved = await loadSavedConfig(await file(serial.persisted, "saved.yaml"), { KEY: "secret" });
+  const saved = await roundTrip(serial);
   expect(saved.experiment.scheduler.config.concurrency).toBe(1);
 });
 
@@ -81,7 +100,7 @@ test("whole-task and the two phase ceilings are independently configured and sav
 test.each([undefined, true, false])("run.scoreAfterSolveTimeout %j survives config save and reload", async scoreAfterSolveTimeout => {
   const run = scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout };
   const loaded = await load(await file({ services, benchmark: "gsm8k", run }));
-  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  const saved = await roundTrip(loaded);
   for (const config of [loaded, saved]) {
     expect(config.experiment.run.scoreAfterSolveTimeout).toBe(scoreAfterSolveTimeout);
     expect(Object.hasOwn(config.experiment.run, "scoreAfterSolveTimeout")).toBe(scoreAfterSolveTimeout !== undefined);
@@ -98,7 +117,7 @@ test("preparation base and optional round limit survive saving without injecting
   const loaded = await load(await file({ services, benchmark: "gsm8k", run: { preparation } }));
   expect(loaded.experiment.run.preparation).toEqual(preparation);
   expect(loaded.persisted).toHaveProperty("run.preparation", preparation);
-  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  const saved = await roundTrip(loaded);
   expect(saved.experiment.run.preparation).toEqual(preparation);
   const omitted = await load(await file({ services, benchmark: "gsm8k", run: { preparation: { concurrency: 2 } } }));
   expect(omitted.experiment.run.preparation).not.toHaveProperty("roundTimeoutSeconds");
@@ -115,27 +134,17 @@ test.each(["solveTimeoutSeconds", "verifyTimeoutSeconds"])("phase ceiling %s rej
   }
 });
 
-test.each([
-  ["gsm8k", "gsm8k-agentbundle.yaml", "gsm8k", "gsm8k-agentbundle"],
-  ["deepswe", "experiment.v2.yml", "deepswe", "experiment.v2"],
-  [{ name: "workbuddy", scenario: "office" }, "Office 评测.YAML", "workbuddy", "Office 评测"],
-] as const)("default output groups %j and %s beneath the repository results directory", async (benchmark, filename, name, stem) => {
-  const path = await file({ services, benchmark }, filename);
+test.each(["example.yaml", "Office 评测.YAML"])("default output is relative to workflow configuration %s", async filename => {
+  const path = await file({ services, benchmark: "gsm8k" }, filename);
   const loaded = await load(path);
-  const expected = join(import.meta.dirname, "../..", "results", name, stem);
-  expect(loaded.experiment.output.directory).toBe(expected);
-  expect(loaded.persisted).toHaveProperty("output.directory", expected);
-  expect(loaded.resolution?.origins["output.directory"]).toBe("generated");
+  expect(loaded.experiment.output.directory).toBe(join(dirname(path), "results"));
+  expect((await roundTrip(loaded)).plan.document).toEqual(loaded.plan.document);
 });
 
-test("empty output uses the filename default, and exported or saved configs retain that directory", async () => {
-  const loaded = await load(await file({ services, benchmark: "gsm8k", output: {} }, "original.yml"));
-  const expected = join(import.meta.dirname, "../..", "results", "gsm8k", "original");
-  expect(loaded.experiment.output.directory).toBe(expected);
-  const exported = await load(await file(exportConfig(loaded), "renamed-export.yaml"));
-  expect(exported.experiment.output.directory).toBe(expected);
-  const saved = await loadSavedConfig(await file(loaded.persisted, "saved-config.yaml"), { KEY: "secret" });
-  expect(saved.experiment.output.directory).toBe(expected);
+test("explicit output survives workflow export", async () => {
+  const loaded = await load(await file({ services, benchmark: "gsm8k", output: { directory: "./custom-runs" } }));
+  expect(loaded.experiment.output.directory).toBe(join(dirname(loaded.path), "custom-runs"));
+  expect((await roundTrip(loaded)).experiment).toEqual(loaded.experiment);
 });
 
 test.each([
@@ -159,7 +168,7 @@ test.each([
 test.each([{}, { mode: "batch" }, { mode: "pipeline" }, { concurrency: 2 }, { lookahead: 4 }])("defaults local preparation fields for %j", async preparation => {
   const loaded = await load(await file({ services, benchmark: "gsm8k", scheduler: { concurrency: 4 }, run: { preparation } }));
   expect(loaded.experiment.run.preparation).toEqual({ mode: "pipeline", concurrency: 4, ...preparation });
-  expect(loaded.persisted).toHaveProperty("run.preparation", { mode: "pipeline", concurrency: 4, ...preparation });
+  expect((await roundTrip(loaded)).experiment.run.preparation).toEqual(loaded.experiment.run.preparation);
 });
 
 test("lookahead is validated against execution concurrency when preparation concurrency is omitted", async () => {
@@ -177,7 +186,7 @@ test("Ray partial preparation retains batch mode and inherits execution concurre
     run: { preparation: { lookahead: 4 } } }))).rejects.toThrow(/run.preparation.lookahead/);
 });
 
-test("omitted preparation keeps the historical configuration fingerprint inputs unchanged", async () => {
+test("omitted preparation does not inject preparation settings into the plan", async () => {
   const loaded = await load(await file({ services, benchmark: "gsm8k" }));
   expect(loaded.experiment.run.preparation).toBeUndefined();
   expect(loaded.persisted).not.toHaveProperty("run.preparation");
@@ -192,30 +201,25 @@ test.each([{ benchmarks: [] }, { model: {} }, { solver: {} }])("rejects legacy r
   await expect(load(await file({ services, benchmark: "gsm8k", ...legacy }))).rejects.toThrow(/unknown field/);
 });
 
-test("exports current YAML and explicitly reads saved execution configuration", async () => {
+test("exported workflow preserves validated Benchmark configuration and credential references", async () => {
   const loaded = await load(await file({ services, benchmark: "gsm8k", environment: "local" }));
-  expect((await load(await file(exportConfig(loaded)))).experiment).toEqual(loaded.experiment);
-  const saved = await file(loaded.persisted);
-  await expect(load(saved)).rejects.toThrow(/unknown field/);
-  expect((await loadSavedConfig(saved, { KEY: "secret" })).experiment).toEqual(loaded.experiment);
+  const exported = await roundTrip(loaded);
+  expect(exported.experiment).toEqual(loaded.experiment);
+  expect(exported.credentials).toContain("KEY");
+  expect(JSON.stringify(exported.plan)).not.toContain("model-secret");
 });
 
-test("sensitive plugin references survive nested config persistence but expanded values do not", async () => {
-  const path = await file({ services, benchmark: { name: "unregistered", config: {
-    accessToken: "${DATA_TOKEN}", nested: [{ secret: "${NESTED_SECRET}" }], literalSecret: "literal-sensitive-value",
-  } } });
-  const loaded = await loadConfig(path, {}, { KEY: "model-secret", DATA_TOKEN: "dataset-secret", NESTED_SECRET: "nested-value" }, { validatePlugins: false });
-  expect(loaded.persisted).toMatchObject({ benchmark: { config: { accessToken: "${DATA_TOKEN}", nested: [{ secret: "${NESTED_SECRET}" }], literalSecret: "[redacted]" } } });
-  for (const secret of ["dataset-secret", "nested-value", "literal-sensitive-value"]) expect(JSON.stringify(loaded.persisted)).not.toContain(secret);
+test("sensitive interpolation is rejected before plugin loading", async () => {
+  const path = await file({ services, benchmark: { name: "gsm8k", config: { accessToken: "${DATA_TOKEN}" } } });
+  await expect(load(path, { DATA_TOKEN: "dataset-secret" })).rejects.toThrow("resource credential binding");
 });
 
-
-test("resolves only referenced credentials and preserves unused references", async () => {
+test("declares only credentials of referenced services without resolving them during inspection", async () => {
   const loaded = await load(await file({ services: { ...services,
-    unused: { model: "other", base_url: "https://unused.invalid", api_key: "${UNSET_KEY}" } }, benchmark: "gsm8k" }));
-  expect(loaded.auths.default).toEqual({ value: "secret", reference: "KEY" });
-  expect(loaded.auths.unused).toBeUndefined();
-  expect(JSON.stringify(loaded.persisted)).toContain("${UNSET_KEY}");
+    unused: { model: "other", base_url: "https://unused.invalid", apiKeyEnv: "UNSET_KEY" } }, benchmark: "gsm8k" }));
+  expect(loaded.credentials).toContain("KEY");
+  expect(loaded.credentials).not.toContain("UNSET_KEY");
+  expect(JSON.stringify(loaded.plan)).toContain("UNSET_KEY");
 });
 
 test("requires explicit routes with multiple non-default services", async () => {
@@ -225,26 +229,18 @@ test("requires explicit routes with multiple non-default services", async () => 
     .rejects.toThrow(/unknown service missing/);
 });
 
-test("expands judgeService before selecting its required credential", async () => {
-  const path = await file({ services: { ...services, grader: { ...services.default, api_key: "${JUDGE_KEY}" } },
+test("expands judgeService before declaring its credential", async () => {
+  const path = await file({ services: { ...services, grader: { ...services.default, apiKeyEnv: "JUDGE_KEY" } },
     benchmark: { name: "healthbench", config: { judgeService: "${JUDGE_ROUTE}" } } });
-  const loaded = await loadConfig(path, {}, { KEY: "solver-secret", JUDGE_KEY: "grader-secret", JUDGE_ROUTE: "grader" });
+  const loaded = await load(path, { JUDGE_ROUTE: "grader", KEY: "solver-secret", JUDGE_KEY: "grader-secret" });
   expect(loaded.experiment.benchmark.config.judgeService).toBe("grader");
-  expect(loaded.auths.grader?.value).toBe("grader-secret");
-  expect(JSON.stringify(loaded.persisted)).not.toContain("grader-secret");
-  await expect(loadConfig(path, {}, { KEY: "solver-secret", JUDGE_ROUTE: "grader" })).rejects.toThrow(/JUDGE_KEY/);
+  expect(loaded.credentials).toEqual(expect.arrayContaining(["JUDGE_KEY", "KEY"]));
+  expect(JSON.stringify(loaded.plan)).not.toContain("grader-secret");
 });
 
-test("rejects inline YAML credentials and CLI authentication conflicts", async () => {
-  await expect(load(await file({ services: { default: { ...services.default, api_key: "plaintext" } }, benchmark: "gsm8k" })))
-    .rejects.toThrow(/api_key must reference/);
-  const path = await file({ services, benchmark: "gsm8k" });
-  await expect(loadConfig(path, { apiKey: "inline-test-secret", apiKeyEnv: "OTHER" }, {})).rejects.toThrow(/cannot be used together/);
-  const loaded = await loadConfig(path, { apiKey: "inline-test-secret" }, {});
-  expect(JSON.stringify(loaded.persisted)).not.toContain('"inline-test-secret"');
-  expect(loaded.auths.default?.value).toBe("inline-test-secret");
-  const exported = await file(exportConfig(loaded));
-  expect((await loadConfig(exported, {}, { EVALUATOR_API_KEY: "replacement" })).auths.default?.value).toBe("replacement");
+test("rejects inline credentials in workflow YAML", async () => {
+  await expect(load(await file({ services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "plaintext" } }, benchmark: "gsm8k" })))
+    .rejects.toThrow(/apiKeyEnv/);
 });
 
 test.each([0, -1, 1.5, null, "32768"])("rejects invalid model token budget %j", async maxTokens => {

@@ -1,7 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { JobsClient } from "../../src/infrastructure/ray/jobs-client.js";
 import { LiveOperation } from "../../src/core/progress/live-progress.js";
-import { JobsProgressMailbox } from "../../src/infrastructure/ray/jobs-progress.js";
+import { JobsProgressMailbox, workflowJobsProgress, workflowProgressLine } from "../../src/infrastructure/ray/jobs-progress.js";
+import { parseProgressEvent } from "../../src/core/progress/progress-wire.js";
+import { classifyError } from "../../src/core/errors/classify.js";
+import type { WorkflowEvent } from "../../src/core/contracts/workflow.js";
 import type { ProgressEvent } from "../../src/core/progress/progress.js";
 
 vi.mock("node:timers/promises", () => ({ setTimeout: (ms: number, value: unknown, options?: { signal?: AbortSignal }) => new Promise((resolve, reject) => {
@@ -13,6 +16,33 @@ vi.mock("node:timers/promises", () => ({ setTimeout: (ms: number, value: unknown
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 function clock() { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] }); }
+
+test("workflow Jobs frames preserve diagnostics across chunks, redact secrets, and exclude previews from logs", () => {
+  const secret = "fixture-authentication-secret";
+  const failure = classifyError(new Error(`failed ${secret}`, { cause: new Error(`cause ${secret}`) }), { phase: "solve" });
+  const progress: ProgressEvent = { phase: "solve", message: `failure ${secret}`, taskId: "task", attemptId: "attempt", error: true,
+    failure, summary: { total: 2, prepared: 2, completed: 1 } };
+  const events: WorkflowEvent[] = [];
+  const observer = workflowJobsProgress(event => events.push(event), [secret]);
+  const frame = workflowProgressLine(progress, [secret]);
+  observer.log(frame.slice(0, 17));
+  expect(events).toEqual([]);
+  observer.log(frame.slice(17) + `driver ${secret}`);
+  observer.flush();
+  expect(events[0]?.progress).toMatchObject({ phase: "solve", taskId: "task", error: true, failure: { code: failure.code }, summary: progress.summary });
+  expect(JSON.stringify(events)).not.toContain(secret);
+  expect(JSON.stringify(events)).toContain("[redacted]");
+  expect(workflowProgressLine({ phase: "solve", message: "tool preview", transient: true })).toBe("");
+  observer.observe({ phase: "solve", message: "tool preview", transient: true });
+  expect(events.at(-1)?.progress?.transient).toBe(true);
+  expect(() => parseProgressEvent({ ...progress, summary: { total: 1, prepared: 2, completed: 0 } })).toThrow("summary");
+  expect(() => parseProgressEvent({ ...progress, failure: { ...failure, code: "INVALID_CODE" } })).toThrow("failure");
+});
+
+test("workflow Jobs parsing does not swallow consumer errors", () => {
+  const observer = workflowJobsProgress(() => { throw new Error("observer failed"); }, []);
+  expect(() => observer.log(workflowProgressLine({ phase: "solve", message: "finished" }))).toThrow("observer failed");
+});
 
 test("Jobs client receives RAM previews before completion and never routes them to formal logs", async () => {
   clock(); const client = new JobsClient("https://unused", Buffer.alloc(0), "token");

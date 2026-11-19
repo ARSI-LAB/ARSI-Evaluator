@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { runTask, type RunTaskOptions } from "../../src/core/execution/run-task.js";
+import { runTask, type RunTaskOptions } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import type { ProcessHandle } from "../../src/core/contracts/environment.js";
 import { attemptTimeoutKind } from "../../src/core/results/evaluation-outcome.js";

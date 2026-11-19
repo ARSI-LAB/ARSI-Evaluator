@@ -1,16 +1,21 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: agentbundle
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: agentbundle
+      config:
+        path: ${AGENT_BUNDLE_PATH}
+  environment:
     config:
-      path: ${AGENT_BUNDLE_PATH}
-environment:
-  config:
-    image: debian:bookworm-slim
-run:
-  timeoutSeconds: 3600
+      image: debian:bookworm-slim
+  run:
+    timeoutSeconds: 3600
+output:
+  directory: ../../results/gsm8k/gsm8k-deepagents-docker

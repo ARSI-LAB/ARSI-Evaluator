@@ -8,6 +8,8 @@
 
 Tracer 随 ARSI-Evaluator 发布，将每次 Attempt 的评测证据同步到 Collector。Collector 作为 Node.js 进程运行，使用 SQLite 保存数据。评测结果以配置的 Store 为准。Collector 连接或推送失败时，评测会记录告警并继续运行。
 
+在工作流中，`--tracer` 用于包含 `benchmark.runtime` 的测评，如 `benchmark.evaluate`。使用 Ray Jobs 时，协调端负责推送轨迹。续跑和补测会读取原运行保存的插件选项，可直接使用原来的续跑和补测命令。
+
 在仓库根目录按 [GSM8K 快速开始](quick-start.zh-CN.md#3-设置模型变量)设置模型变量，然后执行：
 
 ```bash
@@ -17,6 +19,8 @@ arsi-evaluator run playbook/gsm8k/gsm8k-quick-start.yaml --tracer
 Tracer 默认按需启动本地 Collector，或复用使用同一数据库的健康实例。在运行 Collector 的机器上，将 `http://127.0.0.1:8787` 粘贴到浏览器地址栏。在 **Trajectory** 查看模型调用和工具事件，在 **Metrics** 查看性能指标，在 **Feedback** 查看规则反馈和已配置的 LLM 分析。反馈也可以导出给 RSI。
 
 在 `--tracer` 后传入 URL 可以为本次运行指定 Collector 地址。单独启动、查看状态、读取日志和停止 Collector 的命令见 [CLI 参考](reference/cli.zh-CN.md#tracer)。
+
+例如，`--tracer http://collector:8787` 使用该服务已有的数据库。使用 Ray Jobs 时，请填写协调端能访问的地址。仅在需要校验特定数据库时才配置 `tracer.db` 或 `TRACER_DB`，其值须与 Collector 报告的路径一致。
 
 ### 分析轨迹
 

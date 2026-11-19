@@ -8,7 +8,7 @@ import { readProcess } from "../../src/infrastructure/process/output.js";
 import type { EnvironmentSession, EnvironmentSpec } from "../../src/core/contracts/environment.js";
 import { writeFixture } from "../fixtures/dataset-tasks.js";
 import { HarborBenchmark, parseHarborConfig } from "../../src/plugins/benchmarks/agent-harness/protocols/harbor/index.js";
-import { runTask } from "../../src/core/execution/run-task.js";
+import { runTask } from "../../src/plugins/workflows/benchmark/attempt.js";
 import { onDemand } from "../../src/core/preparation/task-preparation.js";
 import { harness } from "../fixtures/engine/fakes.js";
 import { storeRun } from "../fixtures/results/store-fixture.js";

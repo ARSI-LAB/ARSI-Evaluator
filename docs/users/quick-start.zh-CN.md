@@ -23,19 +23,23 @@ arsi-evaluator init --benchmark gsm8k --output first-run.yaml
 打开 `first-run.yaml`，将内容改为下面这份完整配置：
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark: gsm8k
-environment: local
-scheduler:
-  concurrency: 1
-run:
-  maxTasks: 2
-  timeoutSeconds: 300
+  benchmark: gsm8k
+  environment: local
+  scheduler:
+    concurrency: 1
+  run:
+    maxTasks: 2
+    timeoutSeconds: 300
+
 output:
   directory: ./results/first-run
 ```
@@ -110,7 +114,7 @@ arsi-evaluator report results/first-run/<RUN_ID>
 arsi-evaluator run first-run.yaml --resume
 ```
 
-也可用 `--resume <RUN_ID>` 明确指定。续跑跳过已有有效结果，未完成或无效任务会新建 attempt，不是从对话的某一轮继续。Evaluator 代码允许更新并重新构建后续跑；改了模型、题目、并发等配置后应开始新 run。配置、来源、外部插件和 Solver 身份检查仍然有效，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
+也可用 `--resume <RUN_ID>` 明确指定。续跑跳过已有有效结果，未完成或无效任务会新建 attempt，不是从对话的某一轮继续。续跑要求工作流计划与插件、包实现指纹一致；修改实现后应开始新 run。改了模型、题目、并发等配置后应开始新 run。配置、来源、外部插件和 Solver 身份检查仍然有效，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## 下一步
 

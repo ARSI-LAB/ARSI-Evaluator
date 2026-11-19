@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
@@ -5,7 +6,19 @@ import { buildFileManifest, fingerprintConfig } from 'arsi-evaluator';
 export const inject = ['evaluator'];
 const source = { source: 'ray-fixture', revision: 'v1', files: [], metadata: {} };
 export function apply(ctx) {
-  ctx.evaluator.register('benchmark', 'ray-fixture', value => value, (config, runtime) => ({
+  ctx.evaluator.registerResource({ type: 'fixture.maintenance', apiVersion: 1, version: '1', capabilities: [], resources: {},
+    validateConfig: value => value, credentials: config => [config.apiKeyEnv],
+    async create() { throw new Error('Maintenance must not create evaluation state'); },
+    maintenance: { doctor: { resources: [], credentials: config => [config.apiKeyEnv], validateRequest(value) { if (Object.keys(value).length) throw new Error('Unexpected maintenance options'); return value; },
+      async execute(config, _request, context) {
+        const secret = await context.runtime.credential(config.apiKeyEnv);
+        if (secret !== 'jobs-model-memory-fixture-authentication') throw new Error('Missing maintenance credential');
+        context.log(`Maintenance credential: ${secret}`);
+        return { status: 'passed', output: { checked: true, privateValue: secret } };
+      },
+    } },
+  });
+  registerNativeResource(ctx, 'benchmark', 'ray-fixture', value => value, (config, runtime) => ({
     async planRun(refs, _source, signal) {
       const tasks = [];
       for (const ref of refs) { signal.throwIfAborted(); tasks.push(await this.prepare(ref)); }
@@ -14,6 +27,8 @@ export function apply(ctx) {
     async resolveSource() { return source; },
     async *enumerate() { for (let i = 0; i < 6; i++) yield { id: `task-${i}`, recordKey: i }; },
     async prepare(ref) {
+      if (config.requireDatasetAccess && config.hfToken !== 'coordinator-only-dataset-fixture') throw new Error('Dataset credential was not resolved by the resource');
+      if (config.expectedNetworkEndpoint && runtime.network?.settings.sources.huggingface !== config.expectedNetworkEndpoint) throw new Error('Network source was not resolved on the execution node');
       if (config.failNodePreparation && process.env.EVALUATOR_NODE_CONFIG && ref.id === 'task-1') throw new Error('Injected node preparation failure');
       if (config.imagePreparation) {
         const context = runtime.resolvePath(`contexts/${ref.id}`);
@@ -26,14 +41,15 @@ export function apply(ctx) {
       }
       return { input: { id: ref.id, prompt: 'Write durable evidence' }, verification: {}, solveEnv: { workdir: '.', image: null, initialFiles: [], runtime: [] }, verifyEnv: null, transfer: null }; },
     async verify() { return { score: 1, passed: true, details: {} }; },
-  }));
-  ctx.evaluator.register('solver', 'ray-fixture', value => value, (config, runtime) => ({
+  }), { secretFields: ['hfToken'] });
+  registerNativeResource(ctx, 'solver', 'ray-fixture', value => value, (config, runtime) => ({
     requirements: () => [],
     ...(config.installRuntime ? { async runtimeInstallation() { return { id: 'ray-warmup-fixture', files: [],
       commands: [{ executable: 'node', args: ['-e', "require('node:fs').writeFileSync('installed', 'ready')"] }],
       probes: [{ executable: 'node', args: ['-e', "if(require('node:fs').readFileSync('installed','utf8')!=='ready') throw Error('missing installation')"] }] }; } } : {}),
     ...(config.candidate === undefined ? {} : { async provenance() { return { bundle: config.candidate }; } }),
     async solve(input, _session, context) {
+      if (config.progress) context.activity?.({ message: 'remote tool running', lines: [`remote-live-preview ${runtime.services[runtime.solverService].auth.value}`] });
       if (Object.values(process.env).includes(runtime.services[runtime.solverService].auth.value)) throw new Error('Model credential inherited through worker environment');
       if (config.countSolves) {
         const path = join(runtime.configDirectory, 'solve-count.txt');
@@ -43,6 +59,18 @@ export function apply(ctx) {
       const event = (seq, type) => JSON.stringify({ schemaVersion: 1, key: context.key, seq, at: new Date().toISOString(), type, data: null }) + '\n';
       await writeFile(join(context.paths.agent, 'trajectory.jsonl'), event(1, 'start'));
       await writeFile(join(context.paths.artifacts, 'worker.json'), JSON.stringify({ hostname: hostname(), pid: process.pid, taskId: input.id }));
+      if (config.failOnceTask === input.id) {
+        let fail = false;
+        try { await writeFile(join(runtime.configDirectory, `fail-${input.id}.marker`), 'started', { flag: 'wx' }); fail = true; }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+        if (fail) throw new Error('Injected one-time solver failure');
+      }
+      if (config.truncateOnceTask === input.id) {
+        let fail = false;
+        try { await writeFile(join(runtime.configDirectory, `truncate-${input.id}.marker`), 'started', { flag: 'wx' }); fail = true; }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+        if (fail) throw Object.assign(new Error('Response payload is not completed: TransferEncodingError'), { code: 'SOLVER_RESULT_INCOMPLETE' });
+      }
       if (config.crashOnce) {
         let crash = false;
         try { await writeFile(join(runtime.configDirectory, 'crash-once.marker'), input.id, { flag: 'wx' }); crash = true; }

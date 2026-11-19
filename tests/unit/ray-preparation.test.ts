@@ -15,6 +15,25 @@ const job = {
   preparation: { concurrency: 2, defaultTimeoutSeconds: 600, environmentTimeoutSeconds: null, roundId: "round", nodeId: "node", deadlineAt: "2026-10-01T00:00:00.000Z", mode: "prepare", digest: null },
 };
 
+test("preparation credentials require declared names, matching versions and the assigned node", async () => {
+  const resolve = vi.fn(async () => "private-proxy-credential");
+  const control = new RayControl({}, async () => {}, undefined, { names: ["NETWORK_PROXY"], resolve });
+  const request = { key, nodeId: "node", hostname: "host", packageDigest: "digest", pluginVersions: versions };
+  try {
+    await expect(control.handle("runtime", { ...request, name: "NETWORK_PROXY" })).rejects.toThrow("not registered");
+    control.register(key, "digest", versions, true);
+    expect(await control.handle("runtime", request)).toEqual({ services: {}, credentialNames: ["NETWORK_PROXY"] });
+    await expect(control.handle("runtime", { ...request, name: "OTHER_SECRET" })).rejects.toThrow("Undeclared");
+    await expect(control.handle("runtime", { ...request, name: "NETWORK_PROXY", nodeId: "another" })).rejects.toThrow("another node");
+    await expect(control.handle("runtime", { ...request, name: "NETWORK_PROXY", packageDigest: "changed" })).rejects.toThrow();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(await control.handle("runtime", { ...request, name: "NETWORK_PROXY" })).toEqual({ value: "private-proxy-credential" });
+    control.cancel(key);
+    await expect(control.handle("runtime", { ...request, name: "NETWORK_PROXY" })).rejects.toThrow("cancelled");
+    expect(resolve).toHaveBeenCalledTimes(1);
+  } finally { control.close(); }
+});
+
 test("preparation control grants runtime without recording an executing attempt", async () => {
   const update = vi.fn(async () => {});
   const control = new RayControl({ default: { model: { name: "fixture", api: "openai-completions", provider: null, endpoint: null },
