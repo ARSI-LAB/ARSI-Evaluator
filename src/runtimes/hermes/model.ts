@@ -15,6 +15,8 @@ export const HERMES_AUTH_ENV = "ARSI_EVALUATOR_API_KEY";
  * (which the bundle install owns).
  */
 export function hermesModelSettings(model: ModelConfig): string {
+  if (model.reasoningEffort !== undefined && model.api !== "openai-completions")
+    throw new AgentBundleError("CONFIG_INVALID", "Hermes reasoningEffort requires openai-completions");
   if (model.endpoint === null) {
     throw new AgentBundleError("CONFIG_INVALID", "a hermes bundle requires an explicit model endpoint (custom alias)");
   }

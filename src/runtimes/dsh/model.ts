@@ -17,10 +17,12 @@ export function dshModelPatch(model: ModelConfig): string {
     (model.provider === "deepseek-official" || (model.provider === "deepseek" && model.api === null))
   ) {
     return stringify([
-      { id: "agent-default-model", config: { provider: "deepseek-official", model: model.name } },
+      { id: "agent-default-model", config: { provider: "deepseek-official", model: model.name,
+        ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) } },
       { id: "llm-deepseek", config: {
         apiKeyEnv: DSH_AUTH_ENV,
         ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+        ...(model.reasoningEffort === undefined ? {} : { thinking: "enabled", reasoningEffort: model.reasoningEffort }),
       } },
     ]);
   }
@@ -38,14 +40,21 @@ export function dshModelPatch(model: ModelConfig): string {
   const provider = model.endpoint !== null ? DSH_ENDPOINT_PROVIDER : model.provider;
   if (!provider) throw new AgentBundleError("CONFIG_INVALID", "a provider is required without an endpoint");
   return stringify([
-    { id: "agent-default-model", config: { provider, model: model.name } },
+    { id: "agent-default-model", config: { provider, model: model.name,
+      ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }) } },
     { id: "llm-pi-ai", config: {
       providers: {
         [provider]: {
           apiKeyEnv: DSH_AUTH_ENV,
           ...(model.endpoint === null ? {} : { baseURL: model.endpoint }),
           ...(model.api === null ? {} : { api: model.api }),
-          models: [{ id: model.name, ...(model.inputModalities === undefined ? {} : { input: model.inputModalities.filter(kind => kind !== "pdf") }), ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }) }],
+          ...(model.reasoningEffort === undefined ? {} : { reasoning: model.reasoningEffort }),
+          models: [{ id: model.name, ...(model.inputModalities === undefined ? {} : { input: model.inputModalities.filter(kind => kind !== "pdf") }), ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
+            ...(model.reasoningEffort === undefined ? {} : {
+              reasoningEfforts: { [model.reasoningEffort]: model.reasoningEffort },
+              compat: model.api === "anthropic-messages" ? { forceAdaptiveThinking: true }
+                : model.api === "openai-completions" ? { thinkingFormat: "openai", supportsReasoningEffort: true } : {},
+            }) }],
         },
       },
     } },

@@ -1,19 +1,23 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { startMessagesRelay } from "./messages-relay.mjs";
+import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, entry, ...args] = process.argv.slice(2);
-const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, media = [] } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, reasoningEffort, media = [] } = JSON.parse(readFileSync(0, "utf8"));
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
   const shellPrefix = join(home, "shell");
+  const needsShellPrefix = process.platform === "linux";
+  const relayKey = randomUUID();
+  if (needsShellPrefix || reasoningEffort !== undefined)
+    relay = await startModelRelay({ api: "anthropic-messages", baseUrl: baseUrl + "/v1", apiKey, token: relayKey, reasoningEffort });
   // Claude Code requires nested PID namespaces for its Linux env scrub.
   // The standard task container does not grant those permissions.
-  if (process.platform === "linux") {
-    relay = await startMessagesRelay(baseUrl, apiKey);
+  if (needsShellPrefix) {
     // The CLI passes the entire Bash command as one argument to the prefix.
     await writeFile(shellPrefix, '#!/bin/sh\nunset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL\nexec /bin/bash -c "$1"\n',
       { mode: 0o700 });
@@ -22,16 +26,17 @@ try {
     !/^(?:ANTHROPIC_|CLAUDE_|DISABLE_(?:UPDATES|AUTOUPDATER|TELEMETRY|ERROR_REPORTING)$)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
   if (media.length) args.push("--input-format", "stream-json");
+  if (reasoningEffort !== undefined) args.push("--effort", reasoningEffort);
   const cli = spawn(entry, args, {
     env: {
       ...env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, ".claude"),
       ...(process.env.CLAUDE_CODE_GIT_BASH_PATH === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: process.env.CLAUDE_CODE_GIT_BASH_PATH }),
-      ANTHROPIC_API_KEY: relay?.key ?? apiKey, ANTHROPIC_BASE_URL: relay?.endpoint ?? baseUrl, ANTHROPIC_MODEL: model,
+      ANTHROPIC_API_KEY: relay ? relayKey : apiKey, ANTHROPIC_BASE_URL: relay ? new URL(relay.endpoint).origin : baseUrl, ANTHROPIC_MODEL: model,
       ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
       CLAUDE_CODE_SUBAGENT_MODEL: model, CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      ...(relay ? {
-        NO_PROXY: noProxy, no_proxy: noProxy,
+      ...(relay ? { NO_PROXY: noProxy, no_proxy: noProxy } : {}),
+      ...(needsShellPrefix ? {
         CLAUDE_CODE_SHELL_PREFIX: shellPrefix,
       } : { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" }),
       DISABLE_UPDATES: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1",

@@ -128,6 +128,30 @@ Pi / SimpleAgent 和内置 Judge 对显式 `base_url` 的 OpenAI Chat Completion
 
 Pi 的本地模型预算依次使用显式 `maxTokens`、随包发布的 [模型默认配置](../../src/runtimes/pi/model-defaults.json)、已注册模型参数，最后为 `128000`。默认配置支持模型 ID 或 `provider/模型 ID`，后者优先；配置参与运行时内容摘要。服务端仍可能因自身回复或上下文限制截断；Evaluator 会保留真实终止原因，不将截断回复当作合法评分。
 
+### 思考强度
+
+在 Solver 选择的模型服务里配置 `reasoningEffort`。
+
+```yaml
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+    api: openai-completions
+    reasoningEffort: max
+```
+
+可选值为 `minimal`、`low`、`medium`、`high`、`xhigh`、`max`。显式配置后，每轮请求采用该档位，覆盖 Agent 或 Bundle 的默认档位。省略字段时保留 Agent 和模型服务原有默认行为。所选模型服务需要支持该档位，服务拒绝时保留错误信息，档位不会自动降低。Messages 不接受 `minimal`。
+
+SimpleAgent 和 Pi 在模型请求 hook 中设置档位。DSH 在模型 patch 中选择档位并声明对应的实际请求值。JiuwenSwarm 替换安装配置中的模型请求默认值，并在 SDK 请求中再次应用。Codex 使用原生 `model_reasoning_effort`。Claude Code 和 CodeBuddy 同时使用原生 `--effort` 和已有模型代理。ZCode 使用已有模型代理。TRAE 的 Chat Completions 使用原生配置，Responses 和 Messages 使用模型代理。
+
+Chat Completions 发送 `reasoning_effort`，Responses 发送 `reasoning.effort`，Messages 发送 `output_config.effort` 并启用 adaptive thinking。输出格式、思考摘要等其他请求字段继续保留。指定的档位会保存到解析配置、导出配置和续跑指纹中。Judge 采用其自身选择的 Service 档位。
+
+DeepAgents 和 Hermes 会对所选模型的同步、异步 SDK 请求设置 Chat Completions 档位，Hermes 同时接收原生 `--reasoning`。AgentX 在额外请求参数中保存档位，并在各 worker 组装完请求后再次应用，覆盖原始轨迹里不同的档位。Dify 的工作流发布功能需要单独实现，当前遇到显式 Service 覆盖会报配置错误。
+
+使用 LiteLLM 等会转换协议的服务时，还需要核对网关实际发送给上游的请求。网关负责将 Service 协议转换为模型厂商协议。
+
 ### 环境准备时限
 
 ```yaml

@@ -95,7 +95,7 @@ export class ClaudeCodeSolver implements Solver {
         env: gitBash === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: gitBash },
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, baseUrl, model: model.name,
-          maxTokens: model.maxTokens, contextWindow: model.contextWindow, media }), "utf8"),
+          maxTokens: model.maxTokens, contextWindow: model.contextWindow, reasoningEffort: model.reasoningEffort, media }), "utf8"),
       }, signal);
       return await consumeClaudeCode(handle, context, auth.value, requiredWebTools);
     } finally {

@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { stageAttachments } from "./stage-attachments.mjs";
+import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, ...args] = process.argv.slice(2);
-const { apiKey, prompt, media } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, prompt, media, relay: modelRelay } = JSON.parse(readFileSync(0, "utf8"));
 const root = import.meta.dirname;
 const entry = join(root, process.platform === "win32" ? "traecli.exe" : "traecli");
 await mkdir(home, { mode: 0o700 });
+let relay;
 try {
   // This release also discovers ~/.agents/skills on the host outside TRAE_HOME.
   // Disable those paths in the attempt config without reading or copying skill content.
@@ -28,6 +31,13 @@ try {
   if (images.length) args.splice(-1, 0, ...images.map(path => `--image=${path}`));
   // Docker passes CommandSpec.env in docker exec arguments, so receive the key over stdin.
   const env = { ...process.env, HOME: home, USERPROFILE: home, TRAE_HOME: home, CODEX_HOME: home, EVALUATOR_TRAE_API_KEY: apiKey };
+  if (modelRelay) {
+    const token = randomUUID();
+    relay = await startModelRelay({ ...modelRelay, apiKey, token });
+    args.splice(-1, 0, "-c", `model_providers.arsi-evaluator.base_url=${JSON.stringify(relay.endpoint)}`);
+    env.EVALUATOR_TRAE_API_KEY = token;
+    env.NO_PROXY = env.no_proxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
+  }
   if (process.platform === "linux") {
     env.PATH = [join(root, "traecli-resources"), process.env.PATH].filter(Boolean).join(delimiter);
   }
@@ -48,5 +58,6 @@ try {
     process.removeListener("SIGTERM", terminate);
   }
 } finally {
+  relay?.close();
   await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

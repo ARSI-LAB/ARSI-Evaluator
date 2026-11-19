@@ -12,6 +12,9 @@ async function fixture(): Promise<string> {
   for (const dir of ["src", "scripts", "dist", "bin", "src/infrastructure/ray/python", "src/application/ray/entries", "src/plugins/verifiers/python/runtime", "src/runtimes/pi", "src/runtimes/dsh/assets", "src/runtimes/deepagents/assets", "src/runtimes/dify/assets", "src/runtimes/jiuwenswarm/assets", "src/runtimes/agentbundle/assets", "src/plugins/benchmarks/agent-harness/profiles", "src/plugins/benchmarks/inference-engine/profiles", "src/plugins/benchmarks/operator/profiles"]) await mkdir(join(root, dir), { recursive: true });
   await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
   await writeFile(join(root, "package-lock.json"), JSON.stringify({ packages: { "": {} } }));
+  await mkdir(join(root, "src/infrastructure/models"), { recursive: true });
+  await cp(new URL("../../src/infrastructure/models/reasoning-effort.mjs", import.meta.url),
+    join(root, "src/infrastructure/models/reasoning-effort.mjs"));
   await cp(new URL("../../src/plugins/benchmarks/agent-harness/definitions/scoring/", import.meta.url), join(root, "src/plugins/benchmarks/agent-harness/definitions/scoring"), { recursive: true });
   await cp(new URL("../../src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/runtime/", import.meta.url), join(root, "src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/runtime"), { recursive: true });
   await mkdir(join(root, "src/plugins/benchmarks/operator/kernel/runtime"), { recursive: true });

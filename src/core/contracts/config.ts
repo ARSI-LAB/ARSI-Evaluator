@@ -10,12 +10,16 @@ export type CliOverrides = {
   plugins?: PluginActivation[];
 };
 
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export type ModelConfig = {
   inputModalities?: InputModality[];
   name: string;
   endpoint: string | null;
   provider: string | null;
   api: string | null;
+  /** Explicit request effort. Omission leaves the solver and service defaults in effect. */
+  reasoningEffort?: ReasoningEffort;
   /** Per-response ceiling; custom OpenAI Chat Completions omits the wire limit when unset. */
   maxTokens?: number;
   /** Input context threshold for automatic compaction, independent of output length. */

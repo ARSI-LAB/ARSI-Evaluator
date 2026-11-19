@@ -46,7 +46,9 @@ export async function requestChatLogprobs(model: ModelConfig, auth: RuntimeAuth,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.value}` },
     body: JSON.stringify({ model: model.name, messages: [{ role: "user", content: prompt }],
       max_tokens: 1, temperature: 0, stream: false, logprobs: true, top_logprobs: parameters.topLogprobs,
-      ...(parameters.thinking === "disabled" ? { thinking: { type: "disabled" } } : {}) }),
+      ...(model.reasoningEffort === undefined
+        ? parameters.thinking === "disabled" ? { thinking: { type: "disabled" } } : {}
+        : { reasoning_effort: model.reasoningEffort }) }),
   }, { context: { phase: "solve", component: "model" }, maxAttempts: model.retry?.maxAttempts ?? 4 });
   if (!response.ok) {
     const text = redactDiagnostic(await response.text(), [auth.value]).slice(0, 2000);

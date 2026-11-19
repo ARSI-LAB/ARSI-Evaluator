@@ -2,16 +2,16 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { startModelRelay } from "./model-relay.mjs";
+import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 import { stageAttachments } from "./stage-attachments.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, inputModalities, prompt, token, media = [], toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, inputModalities, reasoningEffort, prompt, token, media = [], toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
 const settings = join(home, ".zcode", "cli");
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
-  relay = await startModelRelay({ api, baseUrl, apiKey, token });
+  relay = await startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort });
   await mkdir(settings, { recursive: true, mode: 0o700 });
   const providerFile = join(home, "provider_config.json");
   const providerId = "arsi-evaluator";

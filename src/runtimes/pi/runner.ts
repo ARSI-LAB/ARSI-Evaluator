@@ -16,7 +16,10 @@ import {
   type SessionStats,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, type Api, type AssistantMessage } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, type Api, type AssistantMessage, type ProviderStreams } from "@earendil-works/pi-ai";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +38,7 @@ import { classifyError } from "../../core/errors/classify.js";
 import { streamWithProviderOutput } from "../../infrastructure/models/openai-output.js";
 import { LIVE_LINES, safeLiveText, toolActivity, toolOutputLines } from "../../core/progress/live-progress.js";
 import { installEnvProxy } from "../../infrastructure/network/env-proxy.js";
+import { applyReasoningEffort } from "../../infrastructure/models/reasoning-effort.mjs";
 
 installEnvProxy();
 
@@ -230,6 +234,22 @@ export function contextWindowFor(contextBudget: number | undefined): number {
   return (contextBudget ?? 128_000) + COMPACTION_RESERVE_TOKENS;
 }
 
+function serviceStream(model: RunnerInput["model"], api: string): ProviderStreams["streamSimple"] | undefined {
+  const useProviderBudget = api === "openai-completions" && model.maxTokens === undefined;
+  const effort = model.reasoningEffort;
+  if (effort === undefined) return useProviderBudget ? streamWithProviderOutput : undefined;
+  const stream = useProviderBudget ? streamWithProviderOutput :
+    api === "openai-completions" ? openAICompletionsApi().streamSimple :
+    api === "openai-responses" ? openAIResponsesApi().streamSimple :
+    api === "anthropic-messages" ? anthropicMessagesApi().streamSimple : undefined;
+  if (!stream) throw new RunnerFailure("CONFIG_INVALID", `Pi cannot set reasoning effort for ${api}`);
+  return (model, context, options) => stream(model, context, {
+    ...options,
+    onPayload: async (payload, payloadModel) => applyReasoningEffort(
+      await options?.onPayload?.(payload, payloadModel) ?? payload, api, effort),
+  });
+}
+
 export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
   const defaults = await loadModelDefaults();
   const matches = runtime.getModels().filter(model => model.id === input.model.name);
@@ -240,18 +260,21 @@ export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
     if (input.model.api === null)
       throw new RunnerFailure("CONFIG_INVALID", "an explicit endpoint requires an API protocol");
     providerId = "arsi-evaluator-runtime";
+    const streamSimple = serviceStream(input.model, input.model.api);
     runtime.registerProvider(providerId, {
       name: "ARSI-Evaluator runtime provider",
       baseUrl: input.model.endpoint,
       api: input.model.api as Api,
-      ...(input.model.api === "openai-completions" && input.model.maxTokens === undefined
-        ? { streamSimple: streamWithProviderOutput } : {}),
+      ...(streamSimple === undefined ? {} : { streamSimple }),
       models: [
         {
           id: input.model.name,
           name: input.model.name,
           api: input.model.api as Api,
-          reasoning: false,
+          reasoning: input.model.reasoningEffort !== undefined,
+          ...(input.model.reasoningEffort === undefined ? {} : {
+            thinkingLevelMap: { [input.model.reasoningEffort]: input.model.reasoningEffort },
+          }),
           input: (input.model.inputModalities ?? registered?.input ?? ["text"]).filter((kind): kind is "text" | "image" => kind !== "pdf"),
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: contextWindowFor(input.model.contextWindow ?? input.model.maxTokens),
@@ -445,6 +468,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     cwd: input.workdir,
     modelRuntime: runtime,
     model,
+    ...(input.model.reasoningEffort === undefined ? {} : { thinkingLevel: input.model.reasoningEffort }),
     ...(noTools ? { noTools: "all" } : {}),
     ...(excluded.length ? { excludeTools: excluded } : {}),
     ...(shellPath === undefined ? {} : {

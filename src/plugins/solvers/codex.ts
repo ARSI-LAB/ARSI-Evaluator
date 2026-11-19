@@ -100,6 +100,7 @@ export class CodexSolver implements Solver {
       `model_providers.arsi-evaluator.base_url=${JSON.stringify(endpoint)}`,
       'model_providers.arsi-evaluator.env_key="EVALUATOR_CODEX_API_KEY"',
       'model_providers.arsi-evaluator.wire_api="responses"',
+      ...(model.reasoningEffort === undefined ? [] : [`model_reasoning_effort=${JSON.stringify(model.reasoningEffort)}`]),
       ...(model.contextWindow === undefined ? [] : [`model_auto_compact_token_limit=${model.contextWindow}`]),
     ];
     const media = await loadAttachments(input, session, context);

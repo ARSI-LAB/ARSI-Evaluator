@@ -13,6 +13,12 @@ from pathlib import Path
 
 def main() -> None:
     media = json.load(sys.stdin)
+    if os.environ.get("EVALUATOR_REASONING_EFFORT"):
+        from reasoning_effort import install_openai_reasoning_effort
+
+        install_openai_reasoning_effort(
+            os.environ["EVALUATOR_REASONING_EFFORT"], os.environ["MODEL_NAME"]
+        )
     tool_policy = json.loads(os.environ.pop("EVALUATOR_JIUWENSWARM_TOOL_POLICY", "{}"))
     if tool_policy:
         with contextlib.redirect_stdout(sys.stderr):

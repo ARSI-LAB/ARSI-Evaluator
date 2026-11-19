@@ -133,6 +133,7 @@ export class AgentXReplaySolver implements Solver {
       ...(this.config.telemetry === undefined ? {} : { telemetry: this.config.telemetry }),
       ...(sampling ? { hostAscend: sampling.targets } : {}),
       model: this.binding.model.name, auth: this.binding.auth, tokenizerPath, trustRemoteCode: this.config.trustRemoteCode,
+      ...(this.binding.model.reasoningEffort === undefined ? {} : { reasoningEffort: this.binding.model.reasoningEffort }),
       artifactDir: this.runtime.environmentName === "local" ? join(session.workdir, "agentx-artifacts") : posix.join(session.workdir, "agentx-artifacts"),
       outputDir: session.agentOutputDir, ...(this.config.requestTimeoutSeconds === undefined ? {} : { requestTimeoutSeconds: this.config.requestTimeoutSeconds }) };
     const handle = await session.start({ executable: python, args: [runner], cwd: session.workdir,

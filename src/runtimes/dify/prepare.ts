@@ -28,6 +28,8 @@ export async function prepareDify(
   candidate: VerifiedBundle,
   model?: ModelConfig,
 ): Promise<PreparedSolver> {
+  if (model?.reasoningEffort !== undefined)
+    throw new AgentBundleError("CONFIG_INVALID", "Dify reasoning effort is configured in the published workflow; service reasoningEffort overrides require a separate workflow publishing design");
   const runtime = session.runtime;
   if (!runtime?.root || !runtime.identity) throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "Dify requires an environment-prepared runtime");
   const service = createHash("sha256").update(options.baseUrl).digest("hex").slice(0, 24);

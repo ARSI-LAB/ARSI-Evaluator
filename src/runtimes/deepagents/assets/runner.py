@@ -103,6 +103,10 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
     cwd = os.getcwd()
     provider = os.environ.get("AGENT_MODEL_PROVIDER", "") or "deepagents-default"
     model_name = os.environ.get("AGENT_MODEL_NAME", "")
+    if request.get("reasoningEffort") is not None:
+        from reasoning_effort import install_openai_reasoning_effort
+
+        install_openai_reasoning_effort(request["reasoningEffort"], model_name)
     emitter.emit({
         "type": "session",
         "sessionId": session_id,

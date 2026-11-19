@@ -85,7 +85,7 @@ export class ZCodeSolver implements Solver {
         env: { NODE_USE_ENV_PROXY: "1" },
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({
-          apiKey: auth.value, api: model.api, baseUrl, model: model.name, inputModalities: model.inputModalities,
+          apiKey: auth.value, api: model.api, baseUrl, model: model.name, inputModalities: model.inputModalities, reasoningEffort: model.reasoningEffort,
           prompt: input.prompt, token, media, toolPolicy: this.policy,
         }), "utf8"),
       }, signal);

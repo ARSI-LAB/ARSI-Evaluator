@@ -34,7 +34,7 @@ async function readProvenance(url: URL): Promise<string> {
   )
     throw new TypeError("Invalid builtin runtime provenance manifest");
   const root = new URL("./", url);
-  const distributed = (await readdir(root)).filter(name => name === "runtime-lock.json" || name === "runtime-package.json" || name === "model-defaults.json" || name.endsWith(".js")).sort();
+  const distributed = (await readdir(root)).filter(name => name === "runtime-lock.json" || name === "runtime-package.json" || name === "model-defaults.json" || /\.m?js$/u.test(name)).sort();
   const recorded = Object.keys(value.files).sort();
   if (recorded.length === 0 || JSON.stringify(recorded) !== JSON.stringify(distributed))
     throw new TypeError("Builtin runtime provenance inventory differs from distributed assets");

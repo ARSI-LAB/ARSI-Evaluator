@@ -9,10 +9,13 @@ export async function claudeCodeRuntimeInstallation(signal: AbortSignal): Promis
   return {
     id: `claudecode:${CLAUDE_CODE_VERSION}`,
     cacheName: `claudecode-${CLAUDE_CODE_VERSION}`,
-    files: ["package.json", "package-lock.json", "launch.mjs", "messages-relay.mjs"].map(target => ({
-      source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)),
-      target,
-    })),
+    files: [
+      ...["package.json", "package-lock.json", "launch.mjs"].map(target => ({
+        source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
+      })),
+      { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "runtimes/shared/assets/model-relay.mjs" },
+      { source: fileURLToPath(new URL("../../infrastructure/models/reasoning-effort.mjs", import.meta.url)), target: "infrastructure/models/reasoning-effort.mjs" },
+    ],
     commands: [
       { executable: "npm", args: ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"] },
       { executable: "node", args: ["node_modules/@anthropic-ai/claude-code/install.cjs"] },

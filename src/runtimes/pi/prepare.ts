@@ -46,7 +46,8 @@ export async function preparePi(
   };
   const toolConfig = Object.keys(toolAccess).length ? { toolAccess } : {};
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "pi", candidate, runtime: runtime.identity, settings, ...toolConfig } as JsonValue))
+    .update(canonicalJson({ kind: "pi", candidate, runtime: runtime.identity, settings, ...toolConfig,
+      ...(preparation.model.reasoningEffort === undefined ? {} : { reasoningEffort: preparation.model.reasoningEffort }) } as JsonValue))
     .digest("hex");
   let state = path(stateRoot, identity.slice(0, 24));
   let home = path(state, "home");

@@ -4,6 +4,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type Api } from "@earendil-works/pi-ai";
 import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
 import { streamWithProviderOutput } from "./openai-output.js";
+import { applyReasoningEffort } from "./reasoning-effort.mjs";
 
 /** Transport only. Benchmark definitions own prompts, parsing and scoring. */
 export async function completeJudge(prompt: string, config: ModelConfig, auth: RuntimeAuth, signal: AbortSignal): Promise<string> {
@@ -45,12 +46,17 @@ export async function completeJudge(prompt: string, config: ModelConfig, auth: R
   await runtime.setRuntimeApiKey(providerId, auth.value);
   const model = runtime.getModel(providerId, config.name);
   if (!model) throw new Error(`Judge model ${providerId}/${config.name} is unavailable`);
+  const effort = config.reasoningEffort;
   const result = await runtime.completeSimple(
     model,
     {
       messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
     },
-    { signal, apiKey: auth.value, maxRetries: (config.retry?.maxAttempts ?? 4) - 1, ...(config.maxTokens === undefined ? {} : { maxTokens: config.maxTokens }) },
+    { signal, apiKey: auth.value, maxRetries: (config.retry?.maxAttempts ?? 4) - 1,
+      ...(effort === undefined ? {} : {
+        onPayload: (payload: unknown) => applyReasoningEffort(payload, config.api ?? model.api, effort),
+      }),
+      ...(config.maxTokens === undefined ? {} : { maxTokens: config.maxTokens }) },
   );
   signal.throwIfAborted();
   if (result.stopReason === "error") {

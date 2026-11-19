@@ -1,4 +1,5 @@
 import { parseInputModalities } from "../core/validation/multimodal.js";
+import { parseReasoningEffort, validateReasoningEffortApi } from "../core/validation/reasoning-effort.js";
 import { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS } from "./defaults.js";
 import { expectRecord, rejectUnknown, expectNonEmptyString, expectPositiveInteger, parseSelection } from "../core/validation/input.js";
 import { type EffectiveConfig, type ModelConfig, type Selection, type VerifierSelection } from "../core/contracts/config.js";
@@ -20,7 +21,7 @@ function parseModelRetry(value: unknown): { maxAttempts: number } {
 }
 
 export function parseModel(model: Record<string, unknown>): ModelConfig {
-  rejectUnknown(model, ["name", "endpoint", "provider", "api", "apiKey", "apiKeyEnv", "maxTokens", "contextWindow", "retry", "inputModalities"], "model");
+  rejectUnknown(model, ["name", "endpoint", "provider", "api", "apiKey", "apiKeyEnv", "reasoningEffort", "maxTokens", "contextWindow", "retry", "inputModalities"], "model");
   const name = expectNonEmptyString(model.name, "model.name");
   const endpoint =
     model.endpoint === undefined || model.endpoint === null
@@ -41,6 +42,8 @@ export function parseModel(model: Record<string, unknown>): ModelConfig {
   if (api !== null && !KNOWN_APIS.has(api)) {
     throw new TypeError(`model.api is not recognized: ${api}`);
   }
+  const reasoningEffort = model.reasoningEffort === undefined ? undefined : parseReasoningEffort(model.reasoningEffort, "model.reasoningEffort");
+  if (reasoningEffort !== undefined) validateReasoningEffortApi(reasoningEffort, api, "model.reasoningEffort");
   // Preserve the old persisted shape and resume fingerprint when omitted.
   return {
     name,
@@ -48,6 +51,7 @@ export function parseModel(model: Record<string, unknown>): ModelConfig {
     endpoint,
     provider,
     api,
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     ...(model.maxTokens === undefined ? {} : { maxTokens: expectPositiveInteger(model.maxTokens, "model.maxTokens") }),
     ...(model.contextWindow === undefined ? {} : { contextWindow: expectPositiveInteger(model.contextWindow, "model.contextWindow") }),
     ...(model.retry === undefined ? {} : { retry: parseModelRetry(model.retry) }),

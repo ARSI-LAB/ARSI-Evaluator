@@ -26,6 +26,8 @@ export function deepagentsModelBinding(model: ModelConfig): DeepagentsModelBindi
     );
   }
   if (model.provider === "fake") {
+    if (model.reasoningEffort !== undefined)
+      throw new AgentBundleError("CONFIG_INVALID", "The fake DeepAgents model does not support reasoningEffort");
     if (model.endpoint !== null)
       throw new AgentBundleError("CONFIG_INVALID", "the fake provider does not accept an endpoint");
     return { selection: { AGENT_MODEL_PROVIDER: "fake" }, secretEnvName: null };

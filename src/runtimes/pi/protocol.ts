@@ -1,4 +1,5 @@
 import { parseInputModalities, parseTaskAttachments } from "../../core/validation/multimodal.js";
+import { parseReasoningEffort } from "../../core/validation/reasoning-effort.js";
 import { parseEncodedAttachments, type EncodedAttachment } from "../multimodal/wire.js";
 import { isErrorCode, type ErrorCode } from "../../core/errors/registry.js";
 import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
@@ -98,6 +99,7 @@ export function projectRunnerInput(source: RunnerInputSource): RunnerInput {
       endpoint: source.model.endpoint,
       provider: source.model.provider,
       api: source.model.api,
+      ...(source.model.reasoningEffort === undefined ? {} : { reasoningEffort: source.model.reasoningEffort }),
       ...(source.model.maxTokens === undefined ? {} : { maxTokens: source.model.maxTokens }),
       ...(source.model.contextWindow === undefined ? {} : { contextWindow: source.model.contextWindow }),
       ...(source.model.retry === undefined ? {} : { retry: source.model.retry }),
@@ -129,7 +131,7 @@ export function parseRunnerInput(value: unknown): RunnerInput {
   const input = record(root.input, "runner input.input");
   fields(input, ["id", "prompt", "skillsDirectories", "mcpServers", "attachments"], "runner input.input");
   const model = record(root.model, "runner input.model");
-  fields(model, ["name", "endpoint", "provider", "api", "maxTokens", "contextWindow", "retry", "inputModalities"], "runner input.model");
+  fields(model, ["name", "endpoint", "provider", "api", "reasoningEffort", "maxTokens", "contextWindow", "retry", "inputModalities"], "runner input.model");
   if (model.contextWindow !== undefined && (typeof model.contextWindow !== "number" || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0))
     throw new TypeError("runner input.model.contextWindow must be a positive integer");
   if (model.maxTokens !== undefined && (typeof model.maxTokens !== "number" || !Number.isSafeInteger(model.maxTokens) || model.maxTokens <= 0))
@@ -165,6 +167,7 @@ export function parseRunnerInput(value: unknown): RunnerInput {
       endpoint: nullableText(model.endpoint, "runner input.model.endpoint"),
       provider: nullableText(model.provider, "runner input.model.provider"),
       api: nullableText(model.api, "runner input.model.api"),
+      ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: parseReasoningEffort(model.reasoningEffort, "runner input.model.reasoningEffort") }),
       ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
       ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
       ...(retry === undefined ? {} : { retry }),

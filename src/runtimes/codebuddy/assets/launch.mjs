@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { startModelRelay } from "./model-relay.mjs";
+import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, maxTokens, supportsImages, prompt, token, media, toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, maxTokens, reasoningEffort, supportsImages, prompt, token, media, toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
 
 // The model loader in CodeBuddy 2.183.0 reads this file independently of --setting-sources.
 const projectModels = await lstat(join(process.cwd(), ".codebuddy", "models.json")).catch(error => {
@@ -20,7 +20,7 @@ if (projectModels) {
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
-  relay = await startModelRelay({ api, baseUrl, apiKey, token });
+  relay = await startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort });
   await writeFile(join(home, "models.json"), JSON.stringify({
     models: [{
       id: model, name: model, vendor: "openai", api, apiKey: token,
@@ -43,6 +43,7 @@ try {
   const child = spawn(process.execPath, [entry,
     "--print", "--verbose", "--output-format", "stream-json", "--input-format", "stream-json", "--model", model,
     "--setting-sources", "user", "--strict-mcp-config", "--no-session-persistence",
+    ...(reasoningEffort === undefined ? [] : ["--effort", reasoningEffort]),
     "--tools", tools.join(","), "--permission-mode", "dontAsk",
     ...(tools.length ? ["--allowedTools", ...tools] : []),
     ...(denied.length ? ["--disallowedTools", ...denied] : []),

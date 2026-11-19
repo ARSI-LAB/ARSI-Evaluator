@@ -37,7 +37,8 @@ export async function hermesRuntimeInstallation(signal: AbortSignal, network?: i
     );
   }
   const files = [...await agentBundleRuntimeFiles(),
-    { source: fileURLToPath(new URL("./assets/runner.py", import.meta.url)), target: "hermes/runner.py" }];
+    { source: fileURLToPath(new URL("./assets/runner.py", import.meta.url)), target: "hermes/runner.py" },
+    { source: fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url)), target: "hermes/reasoning_effort.py" }];
   const hash = createHash("sha256").update("hermes-runtime-sdk-1");
   for (const file of files) {
     hash.update(file.target);

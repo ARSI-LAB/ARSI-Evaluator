@@ -213,7 +213,8 @@ export async function prepareDsh(
             input: Buffer.from(JSON.stringify({ dsh, home, profile, key: context.key, patches: [...overlays, sdkOverlay],
               moduleBase: local && preparation.localDsh ? preparation.localDsh.entry : path(runtime.root, "package.json"),
               workdir: session.workdir, outputDir: session.agentOutputDir, prompt: input.prompt, media,
-              provider: preparation.model.endpoint === null ? preparation.model.provider : DSH_ENDPOINT_PROVIDER, model: preparation.model.name })), }, signal);
+              provider: preparation.model.endpoint === null ? preparation.model.provider : DSH_ENDPOINT_PROVIDER, model: preparation.model.name,
+              reasoningEffort: preparation.model.reasoningEffort })), }, signal);
         }
         return start(
           {

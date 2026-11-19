@@ -53,6 +53,10 @@ await writeFile(new URL("../dist/runtimes/pi/runtime-lock.json", import.meta.url
 
 const root = new URL("../dist/runtimes/pi/", import.meta.url);
 await cp(new URL("../src/runtimes/pi/model-defaults.json", import.meta.url), new URL("model-defaults.json", root));
+const effortAsset = "infrastructure/models/reasoning-effort.mjs";
+const effortOutput = new URL(`../dist/${effortAsset}`, import.meta.url);
+await mkdir(dirname(fileURLToPath(effortOutput)), { recursive: true });
+await cp(new URL(`../src/${effortAsset}`, import.meta.url), effortOutput);
 // The standalone Pi runner shares the coordinator's error and HTTP policies.
 // Copy only its runtime dependencies and rewrite imports before hashing the Pi bundle.
 const copiedModules = new Map();
@@ -64,7 +68,7 @@ async function copyRuntimeModule(source) {
   const name = local ? relativePath(runtimeDirectory, source) : "runtime-" + relativePath(distributionDirectory, source).replaceAll("\\", "-").replaceAll("/", "-");
   copiedModules.set(source, name);
   let contents = await readFile(source, "utf8");
-  const references = [...contents.matchAll(/(?:from\s+|import\s*\()(["'])(\.[^"']+\.js)\1/g)];
+  const references = [...contents.matchAll(/(?:from\s+|import\s*\()(["'])(\.[^"']+\.m?js)\1/g)];
   for (const match of references) {
     const target = await copyRuntimeModule(resolve(dirname(source), match[2]));
     contents = contents.replaceAll(match[1] + match[2] + match[1], match[1] + "./" + target + match[1]);
@@ -76,7 +80,7 @@ async function copyRuntimeModule(source) {
 // imports and resource URLs; only the runner's dependency closure is relocated.
 await copyRuntimeModule(fileURLToPath(new URL("runner.js", root)));
 await normalizeRuntimeText(root);
-const names = (await readdir(root)).filter(name => name === "runtime-lock.json" || name === "runtime-package.json" || name === "model-defaults.json" || name.endsWith(".js")).sort();
+const names = (await readdir(root)).filter(name => name === "runtime-lock.json" || name === "runtime-package.json" || name === "model-defaults.json" || /\.m?js$/u.test(name)).sort();
 const files = {};
 for (const name of names) {
   files[name] = `sha256:${createHash("sha256").update(await readFile(new URL(name, root))).digest("hex")}`;

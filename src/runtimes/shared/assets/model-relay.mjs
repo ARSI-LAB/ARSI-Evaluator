@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
+import { text } from "node:stream/consumers";
 import { pipeline } from "node:stream/promises";
+import { applyReasoningEffort } from "../../../infrastructure/models/reasoning-effort.mjs";
 
 const routes = {
   "openai-completions": ["/chat/completions"],
@@ -9,12 +11,12 @@ const routes = {
 const requestHeaders = ["accept", "anthropic-beta", "anthropic-version", "content-type", "user-agent"];
 const responseHeaders = ["content-type", "retry-after", "request-id"];
 
-export async function startModelRelay({ api, baseUrl, apiKey, token }) {
+export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort }) {
   const anthropic = api === "anthropic-messages";
   const base = anthropic && !baseUrl.endsWith("/v1") ? baseUrl + "/v1" : baseUrl;
   const server = createServer(async (request, response) => {
-    const authorized = anthropic ? request.headers["x-api-key"] === token
-      : request.headers.authorization === "Bearer " + token;
+    const authorized = request.headers.authorization === "Bearer " + token
+      || (anthropic && request.headers["x-api-key"] === token);
     if (!authorized) return response.writeHead(401).end();
     const url = URL.parse(request.url, "http://localhost");
     const route = routes[api]?.find(path => url?.pathname === "/v1" + path);
@@ -27,8 +29,10 @@ export async function startModelRelay({ api, baseUrl, apiKey, token }) {
         const value = request.headers[name];
         if (typeof value === "string") headers.set(name, value);
       }
+      const body = reasoningEffort === undefined || route === "/messages/count_tokens" ? request
+        : JSON.stringify(applyReasoningEffort(JSON.parse(await text(request)), api, reasoningEffort));
       const upstream = await fetch(base + route + url.search, {
-        method: "POST", headers, body: request, duplex: "half", redirect: "error", signal: controller.signal,
+        method: "POST", headers, body, duplex: "half", redirect: "error", signal: controller.signal,
       });
       for (const name of responseHeaders) {
         const value = upstream.headers.get(name);

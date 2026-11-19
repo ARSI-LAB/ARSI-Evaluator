@@ -78,10 +78,15 @@ test.each([new DOMException("cancelled", "AbortError"), new DOMException("timed 
 );
 
 async function launch(root: string, workspace: string, payload: object, entry = "missing-cli"): Promise<ProcessHandle> {
-  await Promise.all([
-    copyFile(new URL("../../src/runtimes/codebuddy/assets/launch.mjs", import.meta.url), join(root, "launch.mjs")),
-    copyFile(new URL("../../src/runtimes/shared/assets/model-relay.mjs", import.meta.url), join(root, "model-relay.mjs")),
-  ]);
+  const installation = await new CodeBuddySolver({
+    model: { name: "fixture", endpoint: "https://fixture.invalid/v1", provider: null, api: "openai-completions" },
+    auth: { value: "", reference: null },
+  }).runtimeInstallation(AbortSignal.timeout(5000));
+  for (const file of installation.files) {
+    const target = join(root, file.target);
+    await mkdir(join(target, ".."), { recursive: true });
+    await copyFile(file.source, target);
+  }
   const child = spawn(process.execPath, [join(root, "launch.mjs"), join(root, "attempt"), join(root, entry)], { cwd: workspace, windowsHide: true });
   const done = new Promise<ExitResult>((resolve, reject) => {
     child.once("error", reject);

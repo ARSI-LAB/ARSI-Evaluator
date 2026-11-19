@@ -16,6 +16,22 @@ async function file(value: unknown, filename = "experiment.yaml") {
 }
 const load = (path: string) => loadConfig(path, {}, { KEY: "secret" });
 
+test.each(["minimal", "low", "medium", "high", "xhigh", "max"])("service reasoning effort %s survives export, save and resume identity", async reasoningEffort => {
+  const loaded = await load(await file({ services: { default: { ...services.default, reasoningEffort } }, benchmark: "gsm8k" }));
+  expect(loaded.experiment.services.default?.reasoningEffort).toBe(reasoningEffort);
+  expect(exportConfig(loaded)).toHaveProperty("services.default.reasoningEffort", reasoningEffort);
+  const saved = await loadSavedConfig(await file(loaded.persisted, "saved.yaml"), { KEY: "secret" });
+  expect(saved.experiment.services.default?.reasoningEffort).toBe(reasoningEffort);
+  const defaults = await load(await file({ services, benchmark: "gsm8k", output: loaded.experiment.output }));
+  expect(defaults.experiment.services.default).not.toHaveProperty("reasoningEffort");
+  expect(fingerprintResumeConfig(loaded.persisted)).not.toBe(fingerprintResumeConfig(defaults.persisted));
+});
+
+test.each(["", "automatic", "MAX", 1, null, false])("rejects invalid service reasoning effort %j", async reasoningEffort => {
+  await expect(load(await file({ services: { default: { ...services.default, reasoningEffort } }, benchmark: "gsm8k" })))
+    .rejects.toThrow(/reasoningEffort/);
+});
+
 test("model input capabilities survive export and saved loading and change resume identity", async () => {
   const path = await file({ services: { default: { ...services.default, inputModalities: ["text", "image"] } }, benchmark: "gsm8k" });
   const loaded = await load(path);

@@ -91,6 +91,10 @@ export class TraeSolver implements Solver {
     }
     const mapping = session.modelEndpoint;
     const endpoint = mapping?.originEndpoint === model.endpoint ? apiBase(mapping.baseUrl) : this.endpoint;
+    // The locked CLI only applies its effort setting to Chat Completions.
+    const effort = model.reasoningEffort;
+    const relay = effort !== undefined && model.api !== "openai-completions"
+      ? { api: model.api, baseUrl: endpoint, reasoningEffort: effort } : undefined;
     const local = runtime.persistent;
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
@@ -106,9 +110,10 @@ export class TraeSolver implements Solver {
       'shell_environment_policy.exclude=["EVALUATOR_TRAE_API_KEY"]',
       'model_provider="arsi-evaluator"',
       'model_providers.arsi-evaluator.name="ARSI-Evaluator"',
-      `model_providers.arsi-evaluator.base_url=${JSON.stringify(endpoint)}`,
+      ...(relay ? [] : [`model_providers.arsi-evaluator.base_url=${JSON.stringify(endpoint)}`]),
       'model_providers.arsi-evaluator.env_key="EVALUATOR_TRAE_API_KEY"',
       `model_providers.arsi-evaluator.wire_api=${JSON.stringify(this.wireApi)}`,
+      ...(effort === undefined || relay ? [] : [`model_reasoning_effort=${JSON.stringify(effort)}`]),
       ...(local && process.platform === "win32" ? ['windows.sandbox="unelevated"'] : []),
     ];
     const denied = this.policy.tools === "none" ? TRAE_TOOLS : [
@@ -126,7 +131,7 @@ export class TraeSolver implements Solver {
         cwd: session.workdir,
         env: {},
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, media }), "utf8"),
+        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, media, relay }), "utf8"),
       }, signal);
       return await consumeTrae(handle, context, auth.value);
     } finally {

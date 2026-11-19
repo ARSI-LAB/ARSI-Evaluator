@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import type { ReasoningEffort } from "../../core/contracts/config.js";
+import { expectRecord } from "../../core/validation/input.js";
+import { applyReasoningEffort } from "../../infrastructure/models/reasoning-effort.mjs";
 
 import type { EnvironmentSession } from "../../core/contracts/environment.js";
 import type { AttemptContext, PreparedSolver } from "../../core/contracts/solver.js";
@@ -45,7 +48,7 @@ models:
 
 /** Merge bounded model client timeouts into the install-written jiuwenswarm
  *  config.yaml without clobbering the bundle sections or bootstrap additions. */
-export function mergeJiuwenswarmModelConfig(existing: string, images = false): string {
+export function mergeJiuwenswarmModelConfig(existing: string, images = false, reasoningEffort?: ReasoningEffort): string {
   let doc: Record<string, unknown> = {};
   if (existing.trim() !== "") {
     const parsed = parseYaml(existing);
@@ -67,6 +70,11 @@ export function mergeJiuwenswarmModelConfig(existing: string, images = false): s
     if (!entry || typeof entry !== "object" || Array.isArray(entry))
       throw new AgentBundleError("CONFIG_INVALID", "jiuwenswarm model entry must be a mapping");
     const model = entry as Record<string, unknown>;
+    const requestConfig = expectRecord(model.model_config_obj ?? {}, "jiuwenswarm model_config_obj");
+    const configured = reasoningEffort === undefined ? requestConfig
+      : applyReasoningEffort(requestConfig, "openai-completions", reasoningEffort);
+    if (reasoningEffort !== undefined && requestConfig.extra_body !== undefined)
+      configured.extra_body = applyReasoningEffort(requestConfig.extra_body, "openai-completions", reasoningEffort);
     if (images && (model.model_client_config as Record<string, unknown> | undefined)?.supports_vision === false)
       throw new AgentBundleError("CONFIG_INVALID", "JiuwenSwarm model supports_vision disables native image input");
     // Bound transport waits without replacing the installed model request
@@ -78,12 +86,14 @@ export function mergeJiuwenswarmModelConfig(existing: string, images = false): s
       timeout: clientDefaults.timeout,
       stream_first_chunk_timeout: clientDefaults.stream_first_chunk_timeout,
       stream_idle_timeout: clientDefaults.stream_idle_timeout,
-    }, model_config_obj: model.model_config_obj ?? {} };
+    }, model_config_obj: configured };
   });
   return stringifyYaml({ ...doc, ...(images ? { react: { ...react, enable_read_image_multimodal: true } } : {}), models: { ...models, defaults: merged } });
 }
 
 function imageInputEnabled(preparation: BundlePreparation): boolean {
+  if (preparation.model.reasoningEffort !== undefined && preparation.model.api !== "openai-completions")
+    throw new AgentBundleError("CONFIG_INVALID", "JiuwenSwarm reasoningEffort requires openai-completions");
   const enabled = preparation.model.inputModalities?.includes("image") === true;
   if (enabled && preparation.model.api !== "openai-completions")
     throw new AgentBundleError("BENCHMARK_UNSUPPORTED", "JiuwenSwarm images require openai-completions");
@@ -118,9 +128,10 @@ export async function prepareJiuwenswarm(
   const { tools, webSearch, webFetch } = preparation.options;
   const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "jiuwenswarm");
   const hasPolicy = Object.keys(policy).length > 0;
-  const useRunner = images || hasPolicy;
+  const useRunner = images || hasPolicy || preparation.model.reasoningEffort !== undefined;
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "jiuwenswarm", candidate, runtime: runtime.identity, images, ...(hasPolicy ? { toolPolicy: policy } : {}) }))
+    .update(canonicalJson({ kind: "jiuwenswarm", candidate, runtime: runtime.identity, images, ...(hasPolicy ? { toolPolicy: policy } : {}),
+      ...(preparation.model.reasoningEffort === undefined ? {} : { reasoningEffort: preparation.model.reasoningEffort }) }))
     .digest("hex");
   const configuredHome = preparation.options.jiuwenswarmhome;
   const customHome = configuredHome !== undefined;
@@ -183,9 +194,9 @@ export async function prepareJiuwenswarm(
     if (endpoint === null)
       throw new AgentBundleError("SOLVER_PROTOCOL_INVALID", "jiuwenswarm solver requires a model endpoint");
     const executable = useRunner ? await resolveJiuwenswarmPython(jiuwenswarm.command) : jiuwenswarm.command;
-    if (images) {
+    if (images || preparation.model.reasoningEffort !== undefined) {
       const configPath = join(state, "config", "config.yaml");
-      await writeFile(configPath, mergeJiuwenswarmModelConfig(await readFile(configPath, "utf8"), true), { mode: 0o600 });
+      await writeFile(configPath, mergeJiuwenswarmModelConfig(await readFile(configPath, "utf8"), images, preparation.model.reasoningEffort), { mode: 0o600 });
     }
     return preparedAttempt(
       release,
@@ -215,6 +226,7 @@ export async function prepareJiuwenswarm(
               PYTHONIOENCODING: "utf-8",
               JIUWENSWARM_DATA_DIR: state,
               ...(hasPolicy ? { EVALUATOR_JIUWENSWARM_TOOL_POLICY: JSON.stringify(policy) } : {}),
+              ...(preparation.model.reasoningEffort === undefined ? {} : { EVALUATOR_REASONING_EFFORT: preparation.model.reasoningEffort }),
               API_BASE: endpoint,
               API_KEY: preparation.auth.value,
               MODEL_NAME: preparation.model.name,
@@ -278,9 +290,10 @@ export async function prepareJiuwenswarmDocker(
   const { tools, webSearch, webFetch } = preparation.options;
   const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "jiuwenswarm");
   const hasPolicy = Object.keys(policy).length > 0;
-  const useRunner = images || hasPolicy;
+  const useRunner = images || hasPolicy || preparation.model.reasoningEffort !== undefined;
   const identity = createHash("sha256")
-    .update(canonicalJson({ kind: "jiuwenswarm-docker", candidate, runtime: runtime.identity, ...(hasPolicy ? { toolPolicy: policy } : {}) }))
+    .update(canonicalJson({ kind: "jiuwenswarm-docker", candidate, runtime: runtime.identity, ...(hasPolicy ? { toolPolicy: policy } : {}),
+      ...(preparation.model.reasoningEffort === undefined ? {} : { reasoningEffort: preparation.model.reasoningEffort }) }))
     .digest("hex");
   const state = posix.join(stateRoot, identity.slice(0, 24));
   const env = {
@@ -334,7 +347,7 @@ export async function prepareJiuwenswarmDocker(
       )
     ).trim(),
   );
-  const mergedConfig = mergeJiuwenswarmModelConfig(installedConfig, images);
+  const mergedConfig = mergeJiuwenswarmModelConfig(installedConfig, images, preparation.model.reasoningEffort);
   const configYaml = join(context.paths.agent, "jiuwenswarm-config.yaml");
   await mkdir(context.paths.agent, { recursive: true });
   await writeFile(configYaml, mergedConfig, { mode: 0o600 });
@@ -403,6 +416,7 @@ export async function prepareJiuwenswarmDocker(
             ...env,
             JIUWENSWARM_DATA_DIR: state,
             ...(hasPolicy ? { EVALUATOR_JIUWENSWARM_TOOL_POLICY: JSON.stringify(policy) } : {}),
+            ...(preparation.model.reasoningEffort === undefined ? {} : { EVALUATOR_REASONING_EFFORT: preparation.model.reasoningEffort }),
             API_BASE: apiBase,
             API_KEY: preparation.auth.value,
             MODEL_NAME: preparation.model.name,

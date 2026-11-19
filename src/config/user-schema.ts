@@ -3,7 +3,8 @@ import type { HardwareKind } from "../core/contracts/hardware.js";
 import { parseHardware } from "./hardware.js";
 import { parseDeployment, type Deployment } from "./deployment.js";
 import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown } from "../core/validation/input.js";
-import { type EffectiveConfig } from "../core/contracts/config.js";
+import type { EffectiveConfig, ReasoningEffort } from "../core/contracts/config.js";
+import { parseReasoningEffort } from "../core/validation/reasoning-effort.js";
 
 export type PluginSelection = { name?: string; config?: Record<string, unknown>; service?: string };
 export type EnvironmentInput = Omit<PluginSelection, "service"> & { platform?: string };
@@ -22,6 +23,7 @@ export type ServiceInput = {
   api_key?: string;
   api?: string;
   provider?: string;
+  reasoningEffort?: ReasoningEffort;
   maxTokens?: number;
   contextWindow?: number;
   retry?: { maxAttempts: number };
@@ -76,11 +78,12 @@ export function parseUserConfig(value: unknown): UserConfig {
   for (const [name, service] of Object.entries(services)) {
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/u.test(name)) throw new TypeError(`services.${name} is not a valid service name`);
     const entry = expectRecord(service, `services.${name}`);
-    rejectUnknown(entry, ["model", "base_url", "api_key", "api", "provider", "maxTokens", "contextWindow", "retry", "inputModalities"], `services.${name}`);
+    rejectUnknown(entry, ["model", "base_url", "api_key", "api", "provider", "reasoningEffort", "maxTokens", "contextWindow", "retry", "inputModalities"], `services.${name}`);
     const parsed: ServiceInput = { model: expectNonEmptyString(entry.model, `services.${name}.model`), base_url: expectNonEmptyString(entry.base_url, `services.${name}.base_url`) };
     for (const key of ["api_key", "api", "provider"] as const)
       if (entry[key] !== undefined) parsed[key] = expectNonEmptyString(entry[key], `services.${name}.${key}`);
     if (entry.inputModalities !== undefined) parsed.inputModalities = parseInputModalities(entry.inputModalities);
+    if (entry.reasoningEffort !== undefined) parsed.reasoningEffort = parseReasoningEffort(entry.reasoningEffort, `services.${name}.reasoningEffort`);
     if (entry.maxTokens !== undefined) parsed.maxTokens = expectPositiveInteger(entry.maxTokens, `services.${name}.maxTokens`);
     if (entry.contextWindow !== undefined) parsed.contextWindow = expectPositiveInteger(entry.contextWindow, `services.${name}.contextWindow`);
     if (entry.retry !== undefined) {

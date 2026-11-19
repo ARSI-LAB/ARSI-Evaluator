@@ -112,6 +112,12 @@ def run_measurement(request, telemetry):
                    "EVALUATOR_AGENTX_SOURCE": json.dumps({"path": str(Path(workload["tracePath"]).resolve()),
                                                           "dataset": workload["dataset"], "sha256": workload["sha256"]}),
                    "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    if request.get("reasoningEffort") is not None:
+        args += ["--extra-inputs", f"reasoning_effort:{request['reasoningEffort']}"]
+        environment["EVALUATOR_AGENTX_REASONING_EFFORT"] = request["reasoningEffort"]
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, [str(Path(__file__).resolve().parent), environment.get("PYTHONPATH")])
+        )
     if expected is not None:
         environment["EVALUATOR_AGENTX_FULL_REPLAY"] = "1"
     if telemetry.sources:

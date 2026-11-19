@@ -128,6 +128,30 @@ Pi/SimpleAgent and built-in judges with explicit OpenAI Chat Completions `base_u
 
 Pi local budgets prefer explicit `maxTokens`, packaged [model defaults](../../src/runtimes/pi/model-defaults.json), registered model settings, then `128000`. Defaults match model ID or `provider/model-ID`, preferring the latter, and participate in runtime digests. Server output/context limits may still truncate. Evaluator preserves actual termination reasons rather than accepting truncated output as valid scoring.
 
+### Reasoning effort
+
+Set `reasoningEffort` on the service selected by the solver.
+
+```yaml
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+    api: openai-completions
+    reasoningEffort: max
+```
+
+Accepted values are `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. The explicit value overrides the Agent or bundle's default effort on each model request. Omission preserves the existing Agent and service defaults. The selected model service must support the requested level. Unsupported values are reported by the service without silently reducing the effort. Messages does not accept `minimal`.
+
+SimpleAgent and Pi apply the value through their model request hook. DSH selects the effort and declares its exact wire mapping in the model patch. JiuwenSwarm replaces the installed model request default and enforces it in its SDK requests. Codex uses native `model_reasoning_effort`. Claude Code and CodeBuddy use native `--effort` plus their existing model relay. ZCode uses its model relay. TRAE uses native configuration for Chat Completions and a model relay for Responses and Messages.
+
+Chat Completions receives `reasoning_effort`, Responses receives `reasoning.effort`, and Messages receives `output_config.effort` with adaptive thinking. Other request fields, including output format and reasoning summary, are retained. Explicit effort is also saved in the resolved configuration, exports, and resume fingerprint. A judge uses the value from its own selected service.
+
+DeepAgents and Hermes apply Chat Completions effort to synchronous and asynchronous SDK calls for the selected model. Hermes also receives native `--reasoning`. AgentX records the value in its extra inputs and reapplies it after each worker assembles its payload, covering source traces with a different effort. Dify requires a separate workflow publishing implementation and rejects an explicit service override.
+
+When the service is a protocol-converting gateway such as LiteLLM, inspect its upstream request as well. The gateway owns conversion from the configured service protocol to the provider protocol.
+
 ### Environment Preparation Timeouts
 
 ```yaml

@@ -14,6 +14,7 @@ export function exportConfig(config: LoadedConfig): JsonValue {
       ...(model.provider === null ? {} : { provider: model.provider }),
       ...(model.api === null ? {} : { api: model.api }),
       ...(reference === undefined ? {} : { api_key: reference === "[runtime-provided]" ? "${EVALUATOR_API_KEY}" : reference }),
+      ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
       ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
       ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
       ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),

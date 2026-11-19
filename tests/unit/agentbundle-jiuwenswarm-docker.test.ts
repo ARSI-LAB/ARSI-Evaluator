@@ -86,6 +86,10 @@ function fakeDockerSession(options: SessionOptions = {}): {
         });
       }
       if (spec.executable.endsWith("/bin/python")) {
+        if (spec.args[0]?.endsWith("/multimodal-runner.py")) {
+          solve = spec;
+          return fakeHandle({});
+        }
         return fakeHandle({ stdout: `${options.probeOutput ?? JIUWENSWARM_PROCESS_CLI_MARKER}\n` });
       }
       if (spec.executable === "cat") return fakeHandle({ stdout: `preferred_language: zh\nmodels:\n  defaults:\n    - model_client_config:\n        timeout: 1800\n        custom_headers: {}\n      model_config_obj:\n        max_tokens: 32768\n        reasoning_effort: low\n        context_window: 262144\n` });
@@ -121,10 +125,10 @@ function attemptContext(paths: { root: string; agent: string }): AttemptContext 
   };
 }
 
-function dockerSolver(jiuwenswarmTimeoutSeconds?: number) {
+function dockerSolver(jiuwenswarmTimeoutSeconds?: number, reasoningEffort?: "low") {
   return new AgentBundleSolver(
     fixtureBundle,
-    { ...model },
+    { ...model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) },
     { value: "secret-key", reference: null },
     { installation: async () => ({ id: "fixture-runtime", files: [], commands: [], probes: [] }) },
     { environmentName: "docker", ...(jiuwenswarmTimeoutSeconds === undefined ? {} : { jiuwenswarmTimeoutSeconds }) },
@@ -137,6 +141,25 @@ async function agentPaths(prefix: string): Promise<{ root: string; agent: string
   await mkdir(agent, { recursive: true });
   return { root, agent };
 }
+
+it("an explicit service effort uses the JiuwenSwarm SDK runner and overrides the installed effort", async () => {
+  const digest = (await verifyBundleCandidate(fixtureBundle)).digest;
+  const { session, solveSpec, uploaded } = fakeDockerSession({ verifyDigest: digest });
+  const solver = dockerSolver(undefined, "low");
+  await solver.provenance(signal);
+  const paths = await agentPaths("jiuwenswarm-effort-");
+  try {
+    const prepared = await solver.prepare(session, attemptContext(paths));
+    await prepared.solve({ id: "test:0", prompt: "hello" }, attemptContext(paths)).catch(() => {});
+    expect(solveSpec()?.args[0]).toMatch(/multimodal-runner\.py$/);
+    expect(solveSpec()?.env).toMatchObject({ EVALUATOR_REASONING_EFFORT: "low", MODEL_NAME: model.name });
+    const installed = parseYaml(uploaded[0]!);
+    expect(installed.models.defaults[0].model_config_obj.reasoning_effort).toBe("low");
+    await prepared.dispose?.(signal);
+  } finally {
+    await rm(paths.root, { recursive: true, force: true });
+  }
+});
 
 describe("agentbundle jiuwenswarm docker preparation", () => {
   it.each([undefined, 1200])("prepares the baked bundle and launches with timeout override %s", async timeoutSeconds => {

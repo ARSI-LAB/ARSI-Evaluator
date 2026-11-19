@@ -188,6 +188,7 @@ export async function executeEngine({
       {
         model: bound.model.name,
         api: bound.model.api,
+        ...(bound.model.reasoningEffort === undefined ? {} : { reasoningEffort: bound.model.reasoningEffort }),
         provider: bound.model.provider,
         hardware: experiment.hardware ?? "npu",
         benchmark: experiment.benchmark.name,

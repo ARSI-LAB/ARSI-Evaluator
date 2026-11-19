@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { expect, test } from "vitest";
-import { startMessagesRelay } from "../../src/runtimes/claudecode/assets/messages-relay.mjs";
+import { startModelRelay } from "../../src/runtimes/shared/assets/model-relay.mjs";
 
 test("Claude Code relay scopes temporary credentials to Anthropic Messages requests", async () => {
   const received = [];
@@ -14,15 +14,17 @@ test("Claude Code relay scopes temporary credentials to Anthropic Messages reque
     response.end('event: message_stop\ndata: {}\n\n');
   });
   await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
-  const relay = await startMessagesRelay(`http://127.0.0.1:${upstream.address().port}/anthropic`, "real-fixture-key");
+  const key = "temporary-fixture-key";
+  const relay = await startModelRelay({ api: "anthropic-messages",
+    baseUrl: `http://127.0.0.1:${upstream.address().port}/anthropic/v1`, apiKey: "real-fixture-key", token: key });
   try {
-    const send = (route, key) => fetch(relay.endpoint + route, { method: "POST",
+    const send = (route, key) => fetch(new URL(relay.endpoint).origin + route, { method: "POST",
       headers: { "x-api-key": key, authorization: "Bearer do-not-forward", "anthropic-beta": "test", "content-type": "application/json" },
       body: '{"model":"fixture"}' });
-    expect(relay.key).not.toBe("real-fixture-key");
+    expect(key).not.toBe("real-fixture-key");
     expect((await send("/v1/messages", "wrong")).status).toBe(401);
-    expect((await send("/outside", relay.key)).status).toBe(404);
-    const result = await send("/v1/messages?beta=true", relay.key);
+    expect((await send("/outside", key)).status).toBe(404);
+    const result = await send("/v1/messages?beta=true", key);
     expect(result.status).toBe(200);
     expect(result.headers.get("content-type")).toBe("text/event-stream");
     expect(await result.text()).toContain("event: message_stop");

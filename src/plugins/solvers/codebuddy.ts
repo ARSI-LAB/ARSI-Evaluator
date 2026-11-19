@@ -84,7 +84,7 @@ export class CodeBuddySolver implements Solver {
         env: { NODE_USE_ENV_PROXY: "1" },
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({
-          apiKey: auth.value, api: model.api, baseUrl, model: model.name, maxTokens: model.maxTokens, toolPolicy: this.policy,
+          apiKey: auth.value, api: model.api, baseUrl, model: model.name, maxTokens: model.maxTokens, reasoningEffort: model.reasoningEffort, toolPolicy: this.policy,
           supportsImages: model.inputModalities?.includes("image") ?? false, prompt: input.prompt, token, media,
         }), "utf8"),
       }, signal);
