@@ -88,7 +88,10 @@ arsi-evaluator --help
 在目标项目目录执行以下命令，为编程 Agent 安装配套的 Skill：
 
 ```bash
+# 已有 YAML 时的配置检查、诊断、运行、续跑和报告
 npx skills add ARSI-LAB/ARSI-Evaluator --skill arsi-evaluator
+# 不想手写 YAML 时，通过分批问答生成配置、预检网络并运行
+npx skills add ARSI-LAB/ARSI-Evaluator --skill arsi-evaluator-setup
 ```
 
 如需了解其他安装方式或排查安装问题，请参阅[安装指南](docs/users/installation.zh-CN.md)。

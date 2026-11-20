@@ -18,6 +18,7 @@ Install and complete one scenario before exploring common operations. `benchmark
 | Read downloaded dataset files | [Local datasets](local-datasets.md) |
 | Call evaluations from a Node.js project | [Node.js SDK](sdk.md) |
 | Run evaluations with an agent | [ARSI-Evaluator skill (中文)](../../skills/arsi-evaluator/SKILL.md) |
+| Generate a YAML through batched questions and run it | [ARSI-Evaluator setup skill](../../skills/arsi-evaluator-setup/SKILL.md) |
 
 [Image and PDF evaluation](multimodal.md): input modes, Harness matrix, and runnable examples.
 

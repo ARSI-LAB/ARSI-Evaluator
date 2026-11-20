@@ -7,6 +7,8 @@ description: Use when an agent needs to configure, inspect, diagnose, warm up, r
 
 在 Evaluator 仓库根目录操作。通过 `npx skills add` 安装到其他项目时，示例和指南仍在 Evaluator checkout 的 `playbook/` 和 `docs/` 下，按链接中的仓库路径查找。用 `arsi-evaluator --help` 和子命令的 `--help` 确认当前版本；从源码运行时，按仓库要求用 `pnpm install --frozen-lockfile` 和 `pnpm build`，然后用 `node dist/cli.js` 替换下文的 `arsi-evaluator`。
 
+用户没有实验 YAML、希望分批问答生成配置并运行，使用配套的 `arsi-evaluator-setup` Skill。
+
 - 查命令和执行副作用时，读 [CLI 速查](references/cli.md)。
 - doctor 报错、下载慢或需要代理时，读 [网络排障](references/network.md)。
 - 加载或开发外部组件时，读 [外部插件](references/plugins.md)。

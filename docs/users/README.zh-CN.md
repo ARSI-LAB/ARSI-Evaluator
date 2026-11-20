@@ -21,6 +21,7 @@
 | 从本地目录或文件读取题库 | [本地数据集](local-datasets.zh-CN.md) |
 | 从 Node.js 业务项目调用评测 | [Node.js SDK](sdk.zh-CN.md) |
 | 使用 Agent 执行评测 | [ARSI-Evaluator skill](../../skills/arsi-evaluator/SKILL.md) |
+| 不写 YAML，通过分批问答生成配置并运行 | [ARSI-Evaluator setup skill](../../skills/arsi-evaluator-setup/SKILL.md) |
 
 ## 通用操作
 

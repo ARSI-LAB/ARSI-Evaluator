@@ -85,10 +85,13 @@ The help output confirms the CLI is installed.
 
 #### 2. Install the Agent Skill (Optional)
 
-Run the following command in your target project to install the Skill for your coding agent.
+Run the following commands in your target project to install the Skills for your coding agent.
 
 ```bash
+# Inspect, diagnose, run, resume, and report with an existing YAML
 npx skills add ARSI-LAB/ARSI-Evaluator --skill arsi-evaluator
+# Generate the YAML through batched questions, preflight the network, and run
+npx skills add ARSI-LAB/ARSI-Evaluator --skill arsi-evaluator-setup
 ```
 
 For other installation methods and troubleshooting, see the [installation guide](docs/users/installation.md).
