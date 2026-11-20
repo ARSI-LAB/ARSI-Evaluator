@@ -1,6 +1,6 @@
 # DeepSWE 1.1 运行报告
 
-`deepseek-v4.1-flash-1017`。九种 Solver 各运行 20 题，共 180 条最终计分记录，其中 122 条答对，7 条求解超时。[实验设置与三张原图](README.md)
+`deepseek-v4.1-flash-1017`。九种 Solver 各运行 20 题，共 180 条最终计分记录，其中 122 条答对，7 条求解超时。[实验设置与图表](README.md)
 
 ## 各 Solver 的最终成绩
 

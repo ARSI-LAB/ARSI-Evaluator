@@ -20,7 +20,6 @@
 
 <p align="center">
   <a href="docs/users/quick-start.md">Quick Start</a> ·
-  <a href="#officeqa-pro-v2">OfficeQA results</a> ·
   <a href="docs/users/README.md">Documentation</a> ·
   <a href="playbook/README.md">Playbooks</a> ·
   <a href="docs/development/plugins.en.md">Plugins</a>
@@ -54,6 +53,53 @@ ARSI-Evaluator covers three types of evaluation. See the [benchmark list](docs/u
 | Model and agent capabilities | GSM8K, MMLU, SWE-bench, Terminal-Bench, WorkBuddy, OfficeQA, and others | Evaluate question answering, coding, terminal, office, and web tasks. Custom Harbor tasks are also supported. |
 | Inference engine performance | AgentX, AISBench | Replay agent request traces and load-test model services to measure throughput, latency, and prefix cache metrics. [AgentX guide](docs/users/benchmarks/agentx.md) · [AISBench guide (Chinese)](plugins/aisbench/README.md) |
 | Kernel performance | kernel | Verify kernel correctness and measure execution time and speedup. [Kernel evaluation guide](docs/users/benchmarks/kernel-npu.md) |
+
+## 📊 Evaluation Results
+
+### OfficeQA Pro V2
+
+<table width="100%">
+  <thead>
+    <tr>
+      <th scope="col" width="50%">Different models with their own agents</th>
+      <th scope="col" width="50%">Same model with different solvers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center" valign="middle">
+        <a href="docs/experiment/officeqa-pro-v2/accuracy-by-model.png">
+          <img src="docs/experiment/officeqa-pro-v2/accuracy-by-model.png" alt="OfficeQA Pro V2 model accuracy. deepseek-v4.1-flash-1017 64.44%, hy4-flash 56.67%, MiniMax-M3.1-Flash 53.33%, qwen3.8-flash 51.11%, glm-5.3-flash 47.78%" width="100%">
+        </a>
+      </td>
+      <td align="center" valign="middle">
+        <a href="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.en.png">
+          <img src="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.en.png" alt="OfficeQA Pro V2 accuracy across eleven solvers, ranging from 53.33% to 64.44%" width="100%">
+        </a>
+      </td>
+    </tr>
+  </tbody>
+  <tbody>
+    <tr>
+      <th scope="col" width="50%">Reported token usage</th>
+      <th scope="col" width="50%">Solve time</th>
+    </tr>
+    <tr>
+      <td align="center" valign="middle">
+        <a href="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.en.png">
+          <img src="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.en.png" alt="Median and 90th percentile of reported tokens per question for 11 solvers, with reporting coverage" width="100%">
+        </a>
+      </td>
+      <td align="center" valign="middle">
+        <a href="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.en.png">
+          <img src="docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.en.png" alt="Median and 90th percentile solve times for 11 solvers, with the number of questions included" width="100%">
+        </a>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+See the [experiment archive](docs/experiment/README.md#officeqa-pro-v2) for full scores, run settings, and original run reports, and the [MiniMax Code per-question snapshot](docs/experiment/officeqa-pro-v2/minimax-m3.1-flash/minimax-code-snapshot.json) to reproduce its accuracy and percentiles.
 
 ## 📦 Installation
 
@@ -138,35 +184,6 @@ Tracer starts the local Collector on demand. On the machine running the Collecto
 ![Tracer waterfall showing the timing of model calls and tool events](imgs/tracer-trajectory.png)
 
 *Tracer trajectory analysis view. See the [Tracer guide](docs/users/tracer.md) for configuration and troubleshooting.*
-
-## 📊 Evaluation Results
-
-The table shows results for **DeepSeek V4.1 Flash 1017**. `tbd` marks a pending evaluation. Scores follow each benchmark’s rules.
-
-| Benchmark | Agent Harness | Result |
-| --- | --- | --- |
-| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
-| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
-| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
-| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
-| SWE-bench Verified | SimpleAgent | `tbd` |
-| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
-
-### OfficeQA Pro V2
-
-The charts below cover all 90 OfficeQA Pro V2 questions with `deepseek-v4.1-flash-1017` and nine solvers. [OfficeQA report](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) · [All benchmark results](docs/experiment/)
-
-**Accuracy.** DeepSeek Harness answered 58 of 90 questions correctly (64.44%), followed by Codex with 55 (61.11%). Timed-out questions count toward the denominator.
-
-![OfficeQA Pro V2 accuracy across nine solvers, ranging from 53.33% to 64.44%](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.png)
-
-**Solve time.** The chart measures the solve phase of each question’s final scored attempt and excludes timeouts. JiuwenSwarm’s median was 2 min 57 s and its 90th percentile was 7 min 30 s.
-
-![Median and 90th percentile solve times for each solver on OfficeQA Pro V2, with the number of questions included](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.png)
-
-**Reported token usage.** The chart shows the median and 90th percentile of tokens per question in units of 10,000. It uses the total reported by each question’s final scored attempt. Claude Code and CodeBuddy each reported usage for 89 of 90 questions. The other seven solvers reported usage for all 90.
-
-![Median and 90th percentile of reported tokens per question for nine solvers on OfficeQA Pro V2, with reporting coverage](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.png)
 
 ## 📖 Guides
 
