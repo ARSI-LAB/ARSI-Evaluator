@@ -141,32 +141,41 @@ Tracer starts the local Collector on demand. On the machine running the Collecto
 
 ## 📊 Evaluation Results
 
-The table shows results for **DeepSeek V4.1 Flash 1017**. `tbd` marks a pending evaluation. Scores follow each benchmark’s rules.
+### Same benchmark, different models
 
-| Benchmark | Agent Harness | Result |
-| --- | --- | --- |
-| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
-| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
-| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
-| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
-| SWE-bench Verified | SimpleAgent | `tbd` |
-| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
+#### OfficeQA Pro V2
 
-### OfficeQA Pro V2
+Both models ran the same 90 OfficeQA Pro V2 questions with each of the nine solvers. GLM ran with low reasoning effort.
 
-The charts below cover all 90 OfficeQA Pro V2 questions with `deepseek-v4.1-flash-1017` and nine solvers. [OfficeQA report](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) · [All benchmark results](docs/experiment/)
+| Solver | [`deepseek-v4.1-flash-1017`](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) | [`glm-5.3-flash`](docs/experiment/officeqa-pro-v2/glm-5.3-flash/report.md) |
+| --- | ---: | ---: |
+| DeepSeek Harness | 64.44% (58/90) | 42.22% (38/90) |
+| Codex | 61.11% (55/90) | 43.33% (39/90) |
+| Pi | 60.00% (54/90) | 38.89% (35/90) |
+| Claude Code | 58.89% (53/90) | 26.67% (24/90) |
+| ZCode | 58.89% (53/90) | 47.78% (43/90) |
+| TRAE | 58.89% (53/90) | 38.89% (35/90) |
+| SimpleAgent | 56.67% (51/90) | 40.00% (36/90) |
+| JiuwenSwarm | 55.56% (50/90) | 45.56% (41/90) |
+| CodeBuddy | 53.33% (48/90) | 27.78% (25/90) |
 
-**Accuracy.** DeepSeek Harness answered 58 of 90 questions correctly (64.44%), followed by Codex with 55 (61.11%). Timed-out questions count toward the denominator.
+### Same model, different solvers
+
+These charts compare nine solvers using `deepseek-v4.1-flash-1017` on OfficeQA Pro V2.
 
 ![OfficeQA Pro V2 accuracy across nine solvers, ranging from 53.33% to 64.44%](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.png)
 
-**Solve time.** The chart measures the solve phase of each question’s final scored attempt and excludes timeouts. JiuwenSwarm’s median was 2 min 57 s and its 90th percentile was 7 min 30 s.
+**Accuracy.** DeepSeek Harness led with 58 correct answers out of 90 (64.44%).
 
 ![Median and 90th percentile solve times for each solver on OfficeQA Pro V2, with the number of questions included](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.png)
 
-**Reported token usage.** The chart shows the median and 90th percentile of tokens per question in units of 10,000. It uses the total reported by each question’s final scored attempt. Claude Code and CodeBuddy each reported usage for 89 of 90 questions. The other seven solvers reported usage for all 90.
+**Solve time.** JiuwenSwarm had the lowest median solve time at 2 min 57 s.
 
 ![Median and 90th percentile of reported tokens per question for nine solvers on OfficeQA Pro V2, with reporting coverage](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.png)
+
+**Reported token usage.** JiuwenSwarm had the lowest median at 1.46 million tokens per question.
+
+[All experiment results](docs/experiment/README.md)
 
 ## 📖 Guides
 

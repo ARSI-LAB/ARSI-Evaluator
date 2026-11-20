@@ -141,32 +141,41 @@ Tracer 会按需启动本地 Collector。在运行 Collector 的机器上，通�
 
 ## 📊 评测结果
 
-表中结果使用 **DeepSeek V4.1 Flash 1017**。`tbd` 表示待测。分数按各题库自己的规则计算。
+### 同一 Benchmark，不同模型
 
-| Benchmark | Agent Harness | 结果 |
-| --- | --- | --- |
-| GSM8K | SimpleAgent | 92.34% (1,218 / 1,319) |
-| MMLU | choice-logprobs | 88.83% (12,474 / 14,042) |
-| WorkBuddy | SimpleAgent | Office 0.8502 · Code 0.9009 · Web 0.7957 |
-| Terminal-Bench 4.0 | SimpleAgent | `tbd` |
-| SWE-bench Verified | SimpleAgent | `tbd` |
-| OfficeQA Pro V2 | SimpleAgent | 56.67% (51 / 90) |
+#### OfficeQA Pro V2
 
-### OfficeQA Pro V2
+两种模型各搭配九种 Solver，评测 OfficeQA Pro V2 的同一组 90 道题。GLM 使用 `low` 推理强度。
 
-九种 Solver 分别使用 `deepseek-v4.1-flash-1017` 评测了 OfficeQA Pro V2 的全部 90 道文档问答题。[本次测评报告](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) · [全部实验结果](docs/experiment/)
+| Solver | [`deepseek-v4.1-flash-1017`](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) | [`glm-5.3-flash`](docs/experiment/officeqa-pro-v2/glm-5.3-flash/report.md) |
+| --- | ---: | ---: |
+| DeepSeek Harness | 64.44% (58/90) | 42.22% (38/90) |
+| Codex | 61.11% (55/90) | 43.33% (39/90) |
+| Pi | 60.00% (54/90) | 38.89% (35/90) |
+| Claude Code | 58.89% (53/90) | 26.67% (24/90) |
+| ZCode | 58.89% (53/90) | 47.78% (43/90) |
+| TRAE | 58.89% (53/90) | 38.89% (35/90) |
+| SimpleAgent | 56.67% (51/90) | 40.00% (36/90) |
+| JiuwenSwarm | 55.56% (50/90) | 45.56% (41/90) |
+| CodeBuddy | 53.33% (48/90) | 27.78% (25/90) |
 
-**准确率**以全部 90 题为分母，超时计为未通过。DeepSeek Harness 答对 58 题（64.44%），Codex 答对 55 题（61.11%）。
+### 同一模型，不同 Solver
+
+下图比较 `deepseek-v4.1-flash-1017` 在 OfficeQA Pro V2 上搭配九种 Solver 的表现。
 
 ![九种 Solver 在 OfficeQA Pro V2 上的准确率，范围为 53.33% 至 64.44%](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/accuracy.png)
 
-**求解耗时**只统计每题最终计分尝试的求解阶段，排除超时题。JiuwenSwarm 的中位数为 2 分 57 秒，第 90 百分位为 7 分 30 秒。
+**准确率**　DeepSeek Harness 答对 58/90 题（64.44%），在九种 Solver 中最高。
 
 ![九种 Solver 在 OfficeQA Pro V2 上的求解耗时中位数、第 90 百分位和各自纳入统计的题数](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/solve-time.png)
 
-**上报 Token 用量**取每题最终计分尝试上报的总量，图中以万 Token 为单位展示中位数和第 90 百分位。Claude Code 和 CodeBuddy 各有 89 题上报用量，其余七种 Solver 均为 90 题。
+**求解耗时**　JiuwenSwarm 的求解耗时中位数最低，为 2 分 57 秒。
 
 ![九种 Solver 在 OfficeQA Pro V2 上每题上报的 Token 用量中位数、第 90 百分位和上报题数](docs/experiment/officeqa-pro-v2/deepseek-v4.1-flash-1017/token-usage.png)
+
+**上报 Token 用量**　JiuwenSwarm 的每题上报 Token 中位数最低，为 146 万。
+
+[全部实验结果](docs/experiment/README.md)
 
 ## 📖 使用指南
 
