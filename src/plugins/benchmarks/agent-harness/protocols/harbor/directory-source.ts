@@ -29,30 +29,38 @@ export function createDirectoryBenchmarkSource(config: HarborConfig, verifier: V
   }
   async function entries(directory: string, signal: AbortSignal) {
     const root = config.tasks.root === "." ? directory : await checkedPath(directory, config.tasks.root);
-    const directories = (await readdir(root, { withFileTypes: true })).filter(item => item.isDirectory()).sort((a, b) => compareText(a.name, b.name));
     const tasks: { id: string; path: string }[] = [];
     const seen = new Set<string>();
     const excluded: { path: string; reason: string }[] = [];
     let inspected = 0;
-    for (const entry of directories) {
-      signal.throwIfAborted();
-      datasetActivity(`Scanning task directory ${++inspected}/${directories.length}; ${tasks.length} tasks identified`);
-      const taskDir = await checkedPath(root, entry.name);
-      const configPath = join(taskDir, "task.toml");
-      if (!(await lstat(configPath).catch(() => null))?.isFile()) continue;
-      if (config.tasks.requireTestScript && !(await lstat(join(taskDir, "tests/test.sh")).catch(() => null))?.isFile()) {
-        excluded.push({ path: entry.name, reason: "Missing root shell verifier (tests/test.sh); excluded by tasks.requireTestScript" });
-        continue;
+    const recordPath = (relative: string) => config.tasks.root === "." ? relative : `${config.tasks.root}/${relative}`;
+    async function scan(parent: string, base: string, remaining: number): Promise<void> {
+      const directories = (await readdir(parent, { withFileTypes: true })).filter(item => item.isDirectory()).sort((a, b) => compareText(a.name, b.name));
+      for (const entry of directories) {
+        signal.throwIfAborted();
+        datasetActivity(`Scanning task directory ${++inspected}/${directories.length}; ${tasks.length} tasks identified`);
+        const relative = base ? `${base}/${entry.name}` : entry.name;
+        const taskDir = await checkedPath(parent, entry.name);
+        const configPath = join(taskDir, "task.toml");
+        if (!(await lstat(configPath).catch(() => null))?.isFile()) {
+          if (remaining > 1) await scan(taskDir, relative, remaining - 1);
+          continue;
+        }
+        if (config.tasks.requireTestScript && !(await lstat(join(taskDir, "tests/test.sh")).catch(() => null))?.isFile()) {
+          excluded.push({ path: relative, reason: "Missing root shell verifier (tests/test.sh); excluded by tasks.requireTestScript" });
+          continue;
+        }
+        const document = await readTomlDocument(configPath);
+        const section = config.tasks.id === "metadata.task_id" ? document.metadata : document.task;
+        const field = config.tasks.id === "metadata.task_id" ? "task_id" : "name";
+        const declared = section === undefined ? undefined : expectRecord(section, "task identity")[field];
+        const id = config.tasks.id === "directory" ? entry.name : declared ?? entry.name;
+        if (typeof id !== "string" || !id.trim() || seen.has(id)) throw new Error(`Invalid or duplicate Harbor task ID: ${String(id)}`);
+        seen.add(id);
+        tasks.push({ id, path: recordPath(relative) });
       }
-      const document = await readTomlDocument(configPath);
-      const section = config.tasks.id === "metadata.task_id" ? document.metadata : document.task;
-      const field = config.tasks.id === "metadata.task_id" ? "task_id" : "name";
-      const declared = section === undefined ? undefined : expectRecord(section, "task identity")[field];
-      const id = config.tasks.id === "directory" ? entry.name : declared ?? entry.name;
-      if (typeof id !== "string" || !id.trim() || seen.has(id)) throw new Error(`Invalid or duplicate Harbor task ID: ${String(id)}`);
-      seen.add(id);
-      tasks.push({ id, path: config.tasks.root === "." ? entry.name : `${config.tasks.root}/${entry.name}` });
     }
+    await scan(root, "", config.tasks.depth);
     if (config.tasks.expectedCount !== undefined && tasks.length !== config.tasks.expectedCount)
       throw new Error(`Expected ${config.tasks.expectedCount} tasks, found ${tasks.length}`);
     return { tasks, excluded };

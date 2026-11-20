@@ -59,7 +59,7 @@ tasks: { root: ., id: metadata.task_id }
 source: { kind: local, path: ./dataset }
 ```
 
-`tasks.id` 支持 `directory`、`task.name` 和 `metadata.task_id`。`tasks.requireTestScript: true` 筛除没有 `tests/test.sh` 的目录，排除项和原因写入来源锁。描述性扩展字段可以通过 `tasks.metadataFields: [字段名]` 声明，例如 WorkBuddy Code 的 `v2_1_changes`。这不允许绕过多步骤等执行能力检查。
+`tasks.id` 支持 `directory`、`task.name` 和 `metadata.task_id`。`tasks.depth` 表示在 `tasks.root` 下搜索的目录层数（默认 `1`）：没有 `task.toml` 的目录会继续向下扫描到该层数，`tasks/<domain>/<field>/<task>/` 这类嵌套结构使用 `depth: 3`。`tasks.requireTestScript: true` 筛除没有 `tests/test.sh` 的目录，排除项和原因写入来源锁。描述性扩展字段可以通过 `tasks.metadataFields: [字段名]` 声明，例如 WorkBuddy Code 的 `v2_1_changes`。这不允许绕过多步骤等执行能力检查。
 
 GitHub 来源的 `source.exclude` 精确匹配仓库相对路径及其子目录，并参与来源身份摘要。DeepSWE Profile 用它排除上游的 `tasks/README.md` 文档链接；未排除的符号链接和子模块仍报错，普通文件仍校验 Git blob 摘要。
 

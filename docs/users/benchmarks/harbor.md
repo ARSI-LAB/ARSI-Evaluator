@@ -59,7 +59,7 @@ tasks: { root: ., id: metadata.task_id }
 source: { kind: local, path: ./dataset }
 ```
 
-`tasks.id` supports `directory`, `task.name`, and `metadata.task_id`. `tasks.requireTestScript: true` excludes directories without `tests/test.sh`, recording exclusions/reasons in the source lock. Declare descriptive extensions with `tasks.metadataFields: [field-name]`, such as WorkBuddy Code `v2_1_changes`. This does not bypass execution checks such as multi-step support.
+`tasks.id` supports `directory`, `task.name`, and `metadata.task_id`. `tasks.depth` is the number of directory levels searched below `tasks.root` (default `1`): directories without `task.toml` are descended into until the limit, so nested layouts such as `tasks/<domain>/<field>/<task>/` use `depth: 3`. `tasks.requireTestScript: true` excludes directories without `tests/test.sh`, recording exclusions/reasons in the source lock. Declare descriptive extensions with `tasks.metadataFields: [field-name]`, such as WorkBuddy Code `v2_1_changes`. This does not bypass execution checks such as multi-step support.
 
 GitHub `source.exclude` matches exact repository-relative paths and their descendants and participates in source identity digests. DeepSWE excludes upstream `tasks/README.md` documentation links. Non-excluded symlinks/submodules remain errors; regular files still undergo Git blob verification.
 
