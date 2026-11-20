@@ -1,13 +1,13 @@
 # 实验结果
 
-按题库和模型查找实验。每组由九种 Solver 完成同一份题单。打开实验说明可以看三张原图，打开运行报告可以查每种 Solver 的成绩、样本数和补测来源。
+按题库和模型查找实验。每组由九种 Solver 完成同一份题单。打开实验说明可以看三张原图，运行报告列出每种 Solver 的成绩、统计样本数和本次使用的题单。
 
-| Benchmark | 模型 | 每种 Solver 的题量 | 实验说明与图表 | 运行报告 |
-| --- | --- | ---: | --- | --- |
-| DeepSWE 1.1 | `deepseek-v4.1-flash-1017` | 20 | [代码修复与测试](deepswe-1.1/deepseek-v4.1-flash-1017/README.md) | [报告](deepswe-1.1/deepseek-v4.1-flash-1017/report.md) |
-| MMLU-Pro | `deepseek-v4.1-flash-1017` | 210 | [禁用工具的选择题测评](mmlu-pro/deepseek-v4.1-flash-1017/README.md) | [报告](mmlu-pro/deepseek-v4.1-flash-1017/report.md) |
-| OfficeQA Pro V2 | `deepseek-v4.1-flash-1017` | 90 | [财政文档问答](officeqa-pro-v2/deepseek-v4.1-flash-1017/README.md) | [报告](officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) |
-| OfficeQA Pro V2 | `glm-5.3-flash`（`low`） | 90 | [财政文档问答，低推理强度](officeqa-pro-v2/glm-5.3-flash/README.md) | [报告](officeqa-pro-v2/glm-5.3-flash/report.md) |
+| Benchmark | 模型 | 每种 Solver 的题量 | 实验说明与图表 | 运行报告 | 原始报告 |
+| --- | --- | ---: | --- | --- | --- |
+| DeepSWE 1.1 | `deepseek-v4.1-flash-1017` | 20 | [代码修复与测试](deepswe-1.1/deepseek-v4.1-flash-1017/README.md) | [报告](deepswe-1.1/deepseek-v4.1-flash-1017/report.md) | [下载](deepswe-1.1/deepseek-v4.1-flash-1017/run-reports.zip) |
+| MMLU-Pro | `deepseek-v4.1-flash-1017` | 210 | [禁用工具的选择题测评](mmlu-pro/deepseek-v4.1-flash-1017/README.md) | [报告](mmlu-pro/deepseek-v4.1-flash-1017/report.md) | [下载](mmlu-pro/deepseek-v4.1-flash-1017/run-reports.zip) |
+| OfficeQA Pro V2 | `deepseek-v4.1-flash-1017` | 90 | [财政文档问答](officeqa-pro-v2/deepseek-v4.1-flash-1017/README.md) | [报告](officeqa-pro-v2/deepseek-v4.1-flash-1017/report.md) | [下载](officeqa-pro-v2/deepseek-v4.1-flash-1017/run-reports.zip) |
+| OfficeQA Pro V2 | `glm-5.3-flash`（`low`） | 90 | [财政文档问答，低推理强度](officeqa-pro-v2/glm-5.3-flash/README.md) | [报告](officeqa-pro-v2/glm-5.3-flash/report.md) | [下载](officeqa-pro-v2/glm-5.3-flash/run-reports.zip) |
 
 准确率按每种 Solver 的全部题目计算。耗时和 Token 只统计最终计分尝试。DeepSWE 和 OfficeQA 的用量图以万 Token 为单位，MMLU-Pro 用量图右侧直接列出 Token 个数。每组报告都列出统计分母，便于对照超时和用量缺失。
 

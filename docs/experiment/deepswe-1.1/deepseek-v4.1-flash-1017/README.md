@@ -1,6 +1,6 @@
 # DeepSWE 1.1 · deepseek-v4.1-flash-1017
 
-九种 Solver 修复同一组 20 个代码任务。DeepSeek Harness、Codex、Pi、Claude Code 和 TRAE 各通过 15 题（75%）。在这组题上，多通过一道就相差 5 个百分点。[运行报告与各批次题号](report.md) · [全部实验](../../README.md)
+九种 Solver 修复同一组 20 个代码任务。DeepSeek Harness、Codex、Pi、Claude Code 和 TRAE 各通过 15 题（75%）。在这组题上，多通过一道就相差 5 个百分点。[运行报告与题单](report.md) · [全部实验](../../README.md)
 
 ## 任务和评分
 

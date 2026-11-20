@@ -1,6 +1,6 @@
 # OfficeQA Pro V2 · deepseek-v4.1-flash-1017
 
-九种 Solver 各回答全部 90 道财政文档问答题。DeepSeek Harness 答对 58 题（64.44%），Codex 答对 55 题（61.11%）。JiuwenSwarm 的求解耗时中位数最短，为 2 分 57 秒，答对 50 题。[运行报告与各批次题号](report.md) · [相同题库的 GLM 实验](../glm-5.3-flash/README.md) · [全部实验](../../README.md)
+九种 Solver 各回答全部 90 道财政文档问答题。DeepSeek Harness 答对 58 题（64.44%），Codex 答对 55 题（61.11%）。JiuwenSwarm 的求解耗时中位数最短，为 2 分 57 秒，答对 50 题。[运行报告与题单](report.md) · [相同题库的 GLM 实验](../glm-5.3-flash/README.md) · [全部实验](../../README.md)
 
 ## 文档、评分与补测
 

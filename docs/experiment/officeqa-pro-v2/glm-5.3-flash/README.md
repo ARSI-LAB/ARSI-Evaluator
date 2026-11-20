@@ -1,6 +1,6 @@
 # OfficeQA Pro V2 · glm-5.3-flash
 
-本批将 `reasoningEffort` 设为 `low`。九种 Solver 各回答全部 90 道题，ZCode 答对 43 题（47.78%），JiuwenSwarm 答对 41 题（45.56%），Codex 答对 39 题（43.33%）。[运行报告与各批次题号](report.md) · [相同题库的 DeepSeek 实验](../deepseek-v4.1-flash-1017/README.md) · [全部实验](../../README.md)
+本批将 `reasoningEffort` 设为 `low`。九种 Solver 各回答全部 90 道题，ZCode 答对 43 题（47.78%），JiuwenSwarm 答对 41 题（45.56%），Codex 答对 39 题（43.33%）。[运行报告与题单](report.md) · [相同题库的 DeepSeek 实验](../deepseek-v4.1-flash-1017/README.md) · [全部实验](../../README.md)
 
 ## 文档、评分与补测
 
