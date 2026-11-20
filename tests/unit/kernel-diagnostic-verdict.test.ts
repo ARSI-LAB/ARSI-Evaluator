@@ -59,6 +59,27 @@ test("unavailable capture retains a diagnostic verdict without a candidate score
   expect(kernelProfileVerdict(f.value, f.candidate, "pytorch", f.expected)).not.toHaveProperty("score");
 });
 
+test("Benchmark accepts the AscendC scope only with its matching selection receipt", () => {
+  const f = fixture();
+  f.metadata.diagnosticProtocol.scope = "declared-ascendc-entry-kernel";
+  const metadata = { ...f.metadata, kernelSelection: {
+    policy: "unique-launchspec-matching-device-declaration/v1", language: "ascendc",
+    sourcePath: "kernel.py", kernelName: "device_kernel",
+  } };
+  const value = { profiling: { ...f.value.profiling, metadata } };
+  expect(kernelProfileVerdict(value, f.candidate, "pytorch", f.expected)).toMatchObject({
+    passed: null, details: { status: "completed", diagnosticProtocol: { scope: "declared-ascendc-entry-kernel" } },
+  });
+  metadata.kernelSelection.policy = "entry-first-then-declared-python/v1";
+  expect(() => kernelProfileVerdict(value, f.candidate, "pytorch", f.expected)).toThrow(/protocol/);
+  metadata.kernelSelection.policy = "unique-launchspec-matching-device-declaration/v1";
+  metadata.kernelSelection.language = "triton-or-file-stem";
+  expect(() => kernelProfileVerdict(value, f.candidate, "pytorch", f.expected)).toThrow(/protocol/);
+  metadata.kernelSelection.language = "ascendc";
+  metadata.diagnosticProtocol.scope = "original-first-triton-kernel-or-file-stem";
+  expect(() => kernelProfileVerdict(value, f.candidate, "pytorch", f.expected)).toThrow(/protocol/);
+});
+
 test("diagnostics require exact full-tree profiling evidence", () => {
   const f = fixture();
   const candidateFiles = [{ path: "kernels/kernel.py", sha256: f.candidate }, { path: "kernels/tiling.py", sha256: "c".repeat(64) }];

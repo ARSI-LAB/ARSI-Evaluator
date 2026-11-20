@@ -22,10 +22,11 @@ async function fixture(
     inputUnmodified?: boolean;
     candidateTree?: boolean;
     helperKernel?: boolean;
+    entrySource?: string;
     nestedReference?: boolean;
   } = {},
 ) {
-  const { attempts, outputBytes = 0, exitCode = 0, inputUnmodified, candidateTree, helperKernel, nestedReference, ...limits } = processOptions;
+  const { attempts, outputBytes = 0, exitCode = 0, inputUnmodified, candidateTree, helperKernel, entrySource, nestedReference, ...limits } = processOptions;
   const dir = await mkdtemp(join(tmpdir(), "kernel-profile-sdk-"));
   const manifest = join(dir, "manifest.json");
   await writeFile(join(dir, "problem.py"), "class Model: pass\n");
@@ -38,6 +39,7 @@ async function fixture(
     await writeFile(join(dir, "candidate/kernels/tiling.py"), "def run(x): return x\n");
     if (helperKernel) await writeFile(join(dir, "candidate/kernels/tiling.py"), "import triton\n@triton.jit\ndef vector_add_impl(x): pass\ndef run(x): return x\n");
   }
+  if (entrySource !== undefined) await writeFile(join(dir, "candidate", candidateTree ? "kernels/problem.py" : "kernel.py"), entrySource);
   if (nestedReference) {
     await mkdir(join(dir, "refs/pkg"), { recursive: true });
     await writeFile(join(dir, "refs/__init__.py"), "");
@@ -537,5 +539,44 @@ test("profile reference dependency context invalidates cache, checks cache-hit b
     expect((await kernelProfile({ ...args, problem: movedProblem, out: join(f.dir, "ref-moved.json") }, options,
       { ...execution, sourceContext: { dataRoot: moved, hashes: movedHashes } })).error).toBe("");
     expect(f.commands).toHaveLength(2);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+
+const ascendcSource = `from runtime import AscendCOp, LaunchSpec
+_SRC = 'extern "C" __global__ __aicore__ void transpose_device() {}'
+_SPEC = LaunchSpec(name="transpose_device")
+_OP = AscendCOp("transpose", _SRC, _SPEC)
+`;
+
+test.each(["Default", "PipeTimeline,Default"] as const)("AscendC profiling uses the device symbol and validates its %s receipt", async collection => {
+  const f = await fixture("complete", 0, "profile", collection, { entrySource: ascendcSource });
+  try {
+    const verdict = await f.benchmark.verify(f.task, f.solve, f.session, f.signal);
+    expect(verdict).toMatchObject({ details: { status: "completed",
+      diagnosticProtocol: { scope: "declared-ascendc-entry-kernel" } } });
+    expect(f.commands[0]?.args).toContain("--kernel-name=transpose_device");
+    expect(f.commands[0]?.args).not.toContain("--kernel-name=kernel");
+    const raw = JSON.parse(await readFile(join(f.session.verifierOutputDir, "kernel-profile.raw.json"), "utf8"));
+    expect(raw.metadata.kernelSelection).toMatchObject({
+      policy: "unique-launchspec-matching-device-declaration/v1", kernelName: "transpose_device", language: "ascendc",
+    });
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test.each([
+  { label: "entry Triton", entrySource: ascendcSource + "\n@triton.jit\ndef entry_impl(x): pass\n", candidateTree: false, helperKernel: false, kernelName: "entry_impl" },
+  { label: "helper Triton", entrySource: ascendcSource, candidateTree: true, helperKernel: true, kernelName: "vector_add_impl" },
+  { label: "ambiguous AscendC", entrySource: ascendcSource + "\n_OTHER = LaunchSpec(name='other_device')\n", candidateTree: false, helperKernel: false, kernelName: "kernel" },
+  { label: "mismatched AscendC", entrySource: ascendcSource.replace('name="transpose_device"', 'name="missing_device"'), candidateTree: false, helperKernel: false, kernelName: "kernel" },
+])("profile preserves the existing selection and scope for $label", async ({ label: _label, kernelName, ...options }) => {
+  const f = await fixture("complete", 0, "profile", "Default", options);
+  try {
+    const verdict = await f.benchmark.verify(f.task, f.solve, f.session, f.signal);
+    expect(verdict).toMatchObject({ details: { status: "completed",
+      diagnosticProtocol: { scope: "original-first-triton-kernel-or-file-stem" } } });
+    expect(f.commands[0]?.args).toContain(`--kernel-name=${kernelName}`);
+    const raw = JSON.parse(await readFile(join(f.session.verifierOutputDir, "kernel-profile.raw.json"), "utf8"));
+    expect(raw.metadata.kernelSelection.policy).toBe("entry-first-then-declared-python/v1");
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });

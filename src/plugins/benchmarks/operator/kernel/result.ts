@@ -150,8 +150,12 @@ export function kernelProfileVerdict(value: unknown, candidateSha256: string, re
 }): VerifyResult {
   const profiling = parseKernelProfiling(expectRecord(value, "kernel result").profiling, expected.candidateFiles);
   const metadata = expectRecord(profiling.metadata, "profile metadata");
+  const selection = expectRecord(metadata.kernelSelection ?? {}, "profile kernel selection");
+  const profileScope = selection.language === "ascendc"
+    && selection.policy === "unique-launchspec-matching-device-declaration/v1"
+    ? "declared-ascendc-entry-kernel" : "original-first-triton-kernel-or-file-stem";
   const protocol = { caseId: expected.caseId, seeds: [expected.seed], warmup: expected.warmup, inputUnmodified: expected.inputUnmodified,
-    collection: expected.collection, scope: "original-first-triton-kernel-or-file-stem",
+    collection: expected.collection, scope: profileScope,
     capture: "after-warmup-mstx-range", selectionPolicy: "last" };
   if (profiling.status === "completed") {
     const actual = expectRecord(metadata.diagnosticProtocol, "diagnosticProtocol");

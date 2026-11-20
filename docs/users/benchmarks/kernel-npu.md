@@ -181,6 +181,8 @@ Timeouts and cleanup waits must fit the Node timer range of 2147483647 milliseco
 
 Replay uses the unchanged `problem.get_inputs()` and the first configured seed. Warmup completes before one call inside an MSTX range (`rsi_operator_profile`). SDK sessions own all profiler children. Cancellation propagates to those child processes; unconfirmed cleanup is an infrastructure failure.
 
+The profiler selects a Triton JIT kernel from the entry, then from declared Python helpers. If none is found, it recognizes an inline AscendC entry using `AscendCOp(...)` when all `LaunchSpec(...)` calls start with the same literal name (positional or `name=`) and that name matches a `__global__` device function declaration in the entry. The selected device symbol becomes `msprof --kernel-name`, with scope `declared-ascendc-entry-kernel`. Dynamic or ambiguous specs, reordered keyword arguments and declarations in separate files are not inferred; the existing entry filename fallback remains. Inspect `profiling.metadata.kernelSelection` for the selected name, source and policy. This selection is a static source heuristic, not a general Python/C++ parser or a multi-kernel execution analysis.
+
 Two explicit collection protocols are supported:
 
 - `PipeTimeline,Default` (default) requires PipeUtilization, L2Cache, ResourceConflictRatio CSVs and usable trace evidence.
