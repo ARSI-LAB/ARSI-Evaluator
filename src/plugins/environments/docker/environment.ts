@@ -968,6 +968,7 @@ export class DockerEnvironment implements Environment {
       const modelEndpoint = this.modelEndpointMapping(spec, isolatedGateway, modelPolicy, gateway);
       signal.throwIfAborted();
       const metadata: DockerMetadata = {
+        ...(spec.network === undefined ? {} : { solveNetwork: spec.network }),
         ...(spec.executionUsers === undefined ? {} : { executionUsers: spec.executionUsers }),
         kind: "docker",
         phase,

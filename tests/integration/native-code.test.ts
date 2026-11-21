@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import { expect, test } from "vitest";
 import { nativeCodeInstallation, nativeCodeVersions, type NativeCodeName } from "../../src/runtimes/shared/native-code-runtime.js";
 import { nativeCodeModel } from "../fixtures/native-code-model.js";
@@ -9,7 +10,7 @@ import { nativeCodeModel } from "../fixtures/native-code-model.js";
 const names = ["qwencode", "kimicode", "minimaxcode", "opencode"] as const;
 const enabled = process.env.EVALUATOR_NATIVE_CODE_TEST === "local";
 
-async function run(name: NativeCodeName, api: string, toolPolicy: object, mode: "answer" | "read" | "loop" | "discover-fetch" = "answer", maxTurns = 4) {
+async function run(name: NativeCodeName, api: string, toolPolicy: object, mode: "answer" | "read" | "loop" | "discover-fetch" = "answer", maxTurns = 4, pdf = false, contextWindow?: number) {
   const root = resolve(process.env.EVALUATOR_NATIVE_CODE_ROOT ?? ".scratch/new-code-runtimes", name);
   const installation = await nativeCodeInstallation(name, new AbortController().signal);
   for (const file of installation.files.filter(file => !file.target.startsWith("package"))) {
@@ -17,14 +18,17 @@ async function run(name: NativeCodeName, api: string, toolPolicy: object, mode: 
     await mkdir(dirname(target), { recursive: true });
     await copyFile(file.source, target);
   }
+  if (name === "minimaxcode") await promisify(execFile)(process.execPath, ["apply-capability-patch.mjs"], { cwd: root });
   const workspace = await mkdtemp(join(tmpdir(), "native-code-smoke-"));
   const mock = await nativeCodeModel(mode, "127.0.0.1", join(workspace, "input.txt"));
   try {
-    await writeFile(join(workspace, "input.txt"), "TOOL_EVIDENCE");
+    await writeFile(join(workspace, "input.txt"), contextWindow ? "TOOL_EVIDENCE\n".repeat(3000) : "TOOL_EVIDENCE");
+    const filename = pdf ? "document.pdf" : "figure.png";
+    const data = (await readFile(new URL("../fixtures/multimodal/" + filename, import.meta.url))).toString("base64");
     const input = { apiKey: "fixture-upstream-secret", token: "fixture-relay-token", baseUrl: mock.endpoint, model: "fixture-model", api,
-      reasoningEffort: "low", maxTokens: 70000, maxTurns, supportsImages: true, toolPolicy,
+      reasoningEffort: "low", maxTokens: contextWindow ? 2345 : 70000, maxTurns, contextWindow, supportsImages: !pdf, supportsPdf: pdf, toolPolicy,
       prompt: mode === "answer" ? "Describe the image." : "Read input.txt then answer.",
-      media: [{ mediaType: "image/png", data: (await readFile(new URL("../fixtures/multimodal/figure.png", import.meta.url))).toString("base64") }] };
+      media: [{ name: filename, mediaType: pdf ? "application/pdf" : "image/png", data }] };
     const child = spawn(process.execPath, [join(root, "launch.mjs"), join(workspace, "state")], { cwd: workspace, windowsHide: true });
     let stdout = "";
     let stderr = "";
@@ -46,6 +50,19 @@ async function run(name: NativeCodeName, api: string, toolPolicy: object, mode: 
     await mock.close();
     await rm(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
+}
+
+for (const name of ["qwencode", "opencode"] as const) {
+  test.skipIf(!enabled)(`${name} transmits native PDF bytes using the selected model protocol`, async () => {
+    const pdf = (await readFile(new URL("../fixtures/multimodal/document.pdf", import.meta.url))).toString("base64");
+    for (const api of ["openai-completions", "anthropic-messages", ...(name === "opencode" ? ["openai-responses"] : [])]) {
+      const result = await run(name, api, { webSearch: "disabled", mcp: "disabled" }, "answer", 4, true);
+      expect(result.code, result.diagnostic).toBe(0);
+      const messages = JSON.stringify(result.requests.map(request => request.messages ?? request.input));
+      expect(messages).toContain(pdf);
+      expect(messages).toContain(api === "anthropic-messages" ? '"type":"document"' : api === "openai-responses" ? '"type":"input_file"' : '"type":"file"');
+    }
+  }, 190000);
 }
 
 for (const name of names) {
@@ -78,12 +95,14 @@ for (const name of names) {
     expect(tools.filter(tool => /web[_]?(?:fetch|search)|FetchURL|WebSearch/iu.test(tool))).toEqual([]);
   }, 70000);
 
-  test.skipIf(!enabled)(`${name} applies the native model-step limit`, async () => {
-    const result = await run(name, "openai-completions", { webSearch: "disabled", webFetch: "disabled" }, "loop", 1);
-    const modelRequests = result.requests.filter(request => request.tools?.length);
-    expect(modelRequests.length, result.diagnostic).toBeGreaterThan(0);
-    expect(modelRequests.length, result.diagnostic).toBeLessThanOrEqual(2);
-  }, 70000);
+  test.skipIf(!enabled)(`${name} counts main-model requests at native step limits 1 and 2`, async () => {
+    for (const maxTurns of [1, 2]) {
+      const result = await run(name, "openai-completions", { webSearch: "disabled", webFetch: "disabled" }, "loop", maxTurns);
+      const modelRequests = result.requests.filter(request => request.tools?.length);
+      expect(modelRequests.length, result.diagnostic).toBe(maxTurns);
+      if (name === "minimaxcode") expect(result.diagnostic).toContain("limit_exceeded");
+    }
+  }, 90000);
 
   test.skipIf(!enabled)(`${name} enables native fetch independently of search`, async () => {
     const result = await run(name, "openai-completions", { webSearch: "disabled", webFetch: "enabled" }, "discover-fetch");
@@ -94,6 +113,26 @@ for (const name of names) {
     expect(tools.filter(tool => /^(?:web_search|websearch|WebSearch)$/u.test(tool))).toEqual([]);
   }, 70000);
 }
+
+test.skipIf(!enabled)("MiniMax checkpoints do not consume main turns in a small window", async () => {
+  for (const maxTurns of [1, 2]) {
+    const result = await run("minimaxcode", "openai-completions", { webSearch: "disabled" }, "loop", maxTurns, false, 24000);
+    const checkpoints = result.requests.filter(request => !request.tools?.length &&
+      JSON.stringify(request.messages?.[0]).includes("loss-aware checkpoint"));
+    expect(checkpoints.length, result.diagnostic).toBeGreaterThan(0);
+    expect(result.requests.filter(request => request.tools?.length)).toHaveLength(maxTurns);
+    expect(result.diagnostic).toContain("limit_exceeded");
+  }
+}, 90000);
+
+test.skipIf(!enabled)("MiniMax returns the final answer on the last allowed turn", async () => {
+  for (const [mode, maxTurns] of [["answer", 1], ["read", 2]] as const) {
+    const result = await run("minimaxcode", "openai-completions", { webSearch: "disabled" }, mode, maxTurns);
+    expect(result.code, result.diagnostic).toBe(0);
+    expect(result.result.finalText).toBe("The answer is 42.");
+    expect(result.requests.filter(request => request.tools?.length)).toHaveLength(maxTurns);
+  }
+}, 90000);
 
 test.skipIf(!enabled)("OpenCode enables Exa search on custom model services while fetch remains disabled", async () => {
   const result = await run("opencode", "openai-completions", { webSearch: "enabled", webFetch: "disabled" });

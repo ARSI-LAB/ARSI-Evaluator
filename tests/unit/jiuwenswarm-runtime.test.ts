@@ -1,11 +1,12 @@
 import { expect, test } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   JIUWENSWARM_VERSION,
   jiuwenswarmRuntimeInstallation,
   resolveJiuwenswarmCommand,
+  resolveJiuwenswarmPython,
 } from "../../src/runtimes/jiuwenswarm/runtime.js";
 
 test("pins the semver form of the companion runtime within the declared range", () => {
@@ -33,6 +34,22 @@ test("resolves the host jiuwenswarm process without probing", async () => {
       command: bin,
       source: "JIUWENSWARM_CHECKOUT",
     });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")("uses the venv interpreter behind a symlinked process CLI", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jw-cli-link-"));
+  try {
+    const bin = join(root, "venv", "bin");
+    await mkdir(bin, { recursive: true });
+    const command = join(bin, "jiuwenswarm-process");
+    await writeFile(command, "", { mode: 0o755 });
+    await writeFile(join(bin, "python"), "", { mode: 0o755 });
+    const link = join(root, "jiuwenswarm-process");
+    await symlink(command, link);
+    expect(await resolveJiuwenswarmPython(link)).toBe(join(await realpath(bin), "python"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

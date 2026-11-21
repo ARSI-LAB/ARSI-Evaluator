@@ -26,7 +26,7 @@ function sse<T extends { type: string }>(response: ServerResponse, events: T[]) 
 }
 
 async function fixture(api: Api, docker: boolean, bash: boolean) {
-  const requests: Array<{ model: unknown; authenticated: boolean; input: string; tools: string[] }> = [];
+  const requests: Array<{ model: unknown; maxTokens: unknown; authenticated: boolean; input: string; tools: string[] }> = [];
   const path = api === "openai-completions" ? "/v1/chat/completions" : api === "openai-responses" ? "/v1/responses" : "/v1/messages";
   const server = createServer(async (req, res) => {
     if (req.method !== "POST" || req.url?.split("?")[0] !== path) return res.writeHead(404).end();
@@ -37,6 +37,7 @@ async function fixture(api: Api, docker: boolean, bash: boolean) {
       const tool = bash && requests.length === 0;
       requests.push({
         model: body.model,
+        maxTokens: body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens,
         authenticated: api === "anthropic-messages" ? req.headers["x-api-key"] === secret
           : req.headers.authorization === "Bearer " + secret,
         input: JSON.stringify(body.messages ?? body.input),
@@ -137,7 +138,7 @@ test.skipIf(!enabled("local"))("ZCode binds three model protocols and uses Bash 
       const agent = join(root, api, "agent");
       const paths = { root: join(root, api), agent, verifier: join(root, api, "verifier"), artifacts: join(root, api, "artifacts") };
       const key = { runId: "local", taskId: api, attemptId: "first" };
-      const solver = new ZCodeSolver({ model: { name: model, provider: null, endpoint: mock.endpoint, api },
+      const solver = new ZCodeSolver({ model: { name: model, provider: null, endpoint: mock.endpoint, api, maxTokens: 777, contextWindow: 160000 },
         auth: { value: secret, reference: null } });
       try {
         const session = await environment.prepare({ image: null, workdir: ".", runtime: solver.requirements(),
@@ -151,7 +152,7 @@ test.skipIf(!enabled("local"))("ZCode binds three model protocols and uses Bash 
             : api === "anthropic-messages" ? { inputTokens: 20, outputTokens: 7, totalTokens: 27 }
               : { inputTokens: 15, outputTokens: 7, totalTokens: 22 } });
           expect(mock.requests).toHaveLength(bash ? 2 : 1);
-          for (const request of mock.requests) expect(request).toMatchObject({ model, authenticated: true });
+          for (const request of mock.requests) expect(request).toMatchObject({ model, maxTokens: 777, authenticated: true });
           expect(mock.requests[0]?.input).toContain("中文文本测试");
           if (bash) {
             expect(mock.requests[0]?.tools).toContain("Bash");

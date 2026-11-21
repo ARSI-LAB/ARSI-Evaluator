@@ -1,17 +1,4 @@
-"""Controlled composition entry for the evaluator deepagents bundle fixture.
-
-Mirrors the production DeepAgents bundle format with zero third-party
-dependencies: ``build_agent(extra_middleware=())`` returns a deterministic
-graph that records assembled system prompts through the caller's middleware
-(same ``wrap_model_call`` request shape deepagents uses), performs one write
-tool round-trip against the task workspace, and finishes with a final answer
-carrying ``usage_metadata``. The runner protocol maps these onto the evaluator
-harness event stream.
-
-Expose:
-- ``agent`` — the composed graph (import: ``from agent import agent``)
-- ``AGENT_NAME`` / ``SYSTEM_PROMPT`` / ``build_agent(extra_middleware=())``
-"""
+"""Deterministic run factory for evaluator protocol tests."""
 
 from __future__ import annotations
 
@@ -44,7 +31,8 @@ class Request:
 
 
 class FakeGraph:
-    def __init__(self, middleware) -> None:
+    def __init__(self, middleware, write_enabled) -> None:
+        self.write_enabled = write_enabled
         self.middleware = list(middleware)
 
     def invoke(self, state) -> dict:
@@ -55,6 +43,8 @@ class FakeGraph:
                 task = str(content)
         for middleware in self.middleware:
             middleware.wrap_model_call(Request(Message("system", SYSTEM_PROMPT)), lambda request: request)
+        if not self.write_enabled:
+            return {"messages": [Message("ai", f"Answer: {task}")]}
         # Deterministic one-round script: one write tool call, then the final
         # answer — mirrors the real office bundle's keyless fake-model script.
         call = {"name": TOOL_NAME, "args": {"file_path": "marker.txt", "content": task}, "id": "call_fixture_0"}
@@ -73,8 +63,5 @@ class FakeGraph:
         ]}
 
 
-def build_agent(extra_middleware=(), checkpointer=None):
-    return FakeGraph(extra_middleware)
-
-
-agent = build_agent()
+def build_agent_for_run(*, policy, mcp_servers, skills_directories, tools, middleware):
+    return FakeGraph(middleware, write_enabled=policy.get("tools") != "none")

@@ -1,3 +1,4 @@
+import { parseAgentOptions, type AgentLimits } from "./agent-limits.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -7,13 +8,13 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { parseSolverToolPolicy, toolPolicyProvenance, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { sessionToolPolicy, toolPolicyProvenance, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { consumeClaudeCode } from "../../runtimes/claudecode/protocol.js";
 import { CLAUDE_CODE_ENTRY, CLAUDE_CODE_VERSION, claudeCodeRuntimeInstallation } from "../../runtimes/claudecode/runtime.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
-export function parseClaudeCodeConfig(value: unknown): SolverToolPolicy {
-  return parseSolverToolPolicy(value, "claudecode config");
+export function parseClaudeCodeConfig(value: unknown): SolverToolPolicy & AgentLimits {
+  return parseAgentOptions(value, "claudecode");
 }
 
 function messagesEndpoint(endpoint: string | null): string {
@@ -30,7 +31,7 @@ export class ClaudeCodeSolver implements Solver {
   readonly inputModalities = ["text", "image", "pdf"] as const;
   private readonly endpoint: string;
 
-  constructor(private readonly binding: ServiceBinding, private readonly policy: SolverToolPolicy = {}) {
+  constructor(private readonly binding: ServiceBinding, private readonly policy: SolverToolPolicy & Pick<AgentLimits, "maxTurns"> = {}) {
     const { model } = binding;
     if (model.api !== "anthropic-messages") throw new TypeError("claudecode requires api: anthropic-messages on its selected service");
     this.endpoint = messagesEndpoint(model.endpoint);
@@ -48,18 +49,18 @@ export class ClaudeCodeSolver implements Solver {
 
   async provenance(signal: AbortSignal): Promise<SolverProvenance> {
     signal.throwIfAborted();
-    return { ...toolPolicyProvenance(this.policy, "claudecode-native"), claudeCodeVersion: CLAUDE_CODE_VERSION };
+    const { maxTurns, ...tools } = this.policy;
+    return { ...toolPolicyProvenance(tools, "claudecode-native"), claudeCodeVersion: CLAUDE_CODE_VERSION,
+      ...(maxTurns === undefined ? {} : { maxTurns: String(maxTurns) }) };
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
+    const { maxTurns, ...policy } = sessionToolPolicy("claudecode", this.policy, session);
     const { signal } = context;
     signal.throwIfAborted();
     const { model, auth } = this.binding;
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "claudecode requires a non-empty, single-line API key on its selected service");
-    }
-    if (input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "claudecode does not support task skills or MCP servers");
     }
     requireInputModalities(input, model.inputModalities ?? ["text"]);
     const runtime = session.runtime;
@@ -72,29 +73,33 @@ export class ClaudeCodeSolver implements Solver {
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
     const requiredWebTools = [
-      ...(this.policy.webSearch === "enabled" ? ["WebSearch"] : []),
-      ...(this.policy.webFetch === "enabled" ? ["WebFetch"] : []),
+      ...(policy.webSearch === "enabled" ? ["WebSearch"] : []),
+      ...(policy.webFetch === "enabled" ? ["WebFetch"] : []),
     ];
-    const tools = this.policy.tools === "none" ? [] : ["Read", "Edit", "Write", "Bash", ...requiredWebTools];
-    const denied = ["mcp__*"];
-    if (this.policy.webSearch === "disabled") denied.push("WebSearch");
-    if (this.policy.webFetch === "disabled") denied.push("WebFetch");
+    const none = policy.tools === "none";
+    const denied = [
+      ...(policy.subagent === "disabled" ? ["Agent", "Task", "Workflow"] : []),
+      ...(policy.webSearch === "disabled" ? ["WebSearch"] : []),
+      ...(policy.webFetch === "disabled" ? ["WebFetch"] : []),
+    ];
     const gitBash = local && process.platform === "win32" ? process.env.CLAUDE_CODE_GIT_BASH_PATH : undefined;
     const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
         args: [path(runtime.root, "launch.mjs"), home, path(runtime.root, CLAUDE_CODE_ENTRY),
-          // The locked CLI omits the native web tools in bare mode even when named in --tools.
-          ...(requiredWebTools.length ? [] : ["--bare"]),
-          "--restricted", "--print", "--verbose", "--output-format", "stream-json", "--no-session-persistence",
-          "--permission-mode", "dontAsk", "--tools", tools.join(","),
-          ...(tools.length ? ["--allowedTools", tools.join(",")] : []),
-          "--strict-mcp-config", "--disallowedTools", ...denied, "--model", model.name],
+          "--print", "--verbose", "--output-format", "stream-json", "--no-session-persistence",
+          ...(maxTurns === undefined ? [] : ["--max-turns", String(maxTurns)]),
+          "--permission-mode", "bypassPermissions",
+          ...(none ? ["--tools", ""] : []),
+          ...(policy.skills === "disabled" ? ["--disable-slash-commands"] : []),
+          ...(policy.mcp === "disabled" ? ["--strict-mcp-config"] : []),
+          ...(denied.length ? ["--disallowedTools", ...denied] : []), "--model", model.name],
         cwd: session.workdir,
         env: gitBash === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: gitBash },
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, baseUrl, model: model.name,
+        input: Buffer.from(JSON.stringify({ toolPolicy: policy, outputDir: session.agentOutputDir, skillsDirectories: input.skillsDirectories, mcpServers: input.mcpServers,
+          apiKey: auth.value, prompt: input.prompt, api: model.api, baseUrl, model: model.name,
           maxTokens: model.maxTokens, contextWindow: model.contextWindow, reasoningEffort: model.reasoningEffort, media }), "utf8"),
       }, signal);
       return await consumeClaudeCode(handle, context, auth.value, requiredWebTools);

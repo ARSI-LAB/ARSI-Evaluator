@@ -1,0 +1,33 @@
+{
+  "package": "@moonshot-ai/kimi-code",
+  "version": "2.7.0",
+  "files": [
+    {
+      "path": "dist/main.mjs",
+      "beforeSha256": "6a02fe7a6d5dd26929c05de05b7d3108f4ab4b09524a656e9975188cd25a8bcd",
+      "afterSha256": "9a48d8740c863f5728cc122b763a93f3dadaf76a0c950b38983bcb09c1e3dbb0",
+      "replacements": [
+        {
+          "before": "loadSource(source, fireChange = false) {",
+          "after": "loadSource(source, fireChange = false) {if(process.env.EVALUATOR_DISABLE_SKILLS===\"1\")return Promise.resolve();"
+        },
+        {
+          "before": "async function listWorkspaceSkillsForRoots(core, workDir, additionalDirs) {",
+          "after": "async function listWorkspaceSkillsForRoots(core, workDir, additionalDirs) {if(process.env.EVALUATOR_DISABLE_SKILLS===\"1\")return [];"
+        },
+        {
+          "before": "const dirs = manifest?.skills ?? [];",
+          "after": "const dirs = process.env.EVALUATOR_DISABLE_SKILLS === \"1\" ? [] : manifest?.skills ?? [];"
+        },
+        {
+          "before": "async function loadMcpServersDetailed(input) {",
+          "after": "async function loadMcpServersDetailed(input) {if(process.env.EVALUATOR_DISABLE_MCP===\"1\")return {servers:{},origins:{}};"
+        },
+        {
+          "before": "async function readMcpServers(pluginRoot, raw, diagnostics) {",
+          "after": "async function readMcpServers(pluginRoot, raw, diagnostics) {if(process.env.EVALUATOR_DISABLE_MCP===\"1\")return;"
+        }
+      ]
+    }
+  ]
+}

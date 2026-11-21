@@ -1,3 +1,5 @@
+import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import type { PublicTask } from "../../core/contracts/task.js";
 import { resolveModelInput } from "../multimodal/model.js";
 import { loadAttachments, requireInputModalities } from "../multimodal/input.js";
 import { createHash } from "node:crypto";
@@ -37,6 +39,8 @@ export async function prepareDeepagentsDocker(
 ): Promise<PreparedSolver> {
   preparation = { ...preparation, model: await resolveModelInput(preparation.model) };
   assertOptions(preparation.options);
+  const factoryModule = candidate.factoryModule;
+  if (!factoryModule) throw new AgentBundleError("CONFIG_INVALID", "DeepAgents bundle has no verified run factory");
   const runtime = session.runtime!;
   if (runtime.persistent)
     throw new AgentBundleError("ENV_RUNTIME_INSTALL_FAILED", "deepagents docker preparation requires the docker environment");
@@ -135,7 +139,7 @@ export async function prepareDeepagentsDocker(
       start(
         {
           executable: python,
-          args: [runner, "--bundle-dir", bundle, "--json"],
+          args: [runner, "--bundle-dir", bundle, "--factory-module", factoryModule, "--json"],
           cwd: session.workdir,
           env: {
             PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -143,10 +147,11 @@ export async function prepareDeepagentsDocker(
             HOME: "/tmp",
             ...(certifi === undefined || certifi === "" ? {} : { SSL_CERT_FILE: certifi }),
             ...selection,
+            EVALUATOR_MEDIA_OUTPUT: session.agentOutputDir,
             ...(binding.secretEnvName === null ? {} : { [binding.secretEnvName]: preparation.auth.value }),
           },
           inheritEnv: false,
-          input: Buffer.from(JSON.stringify({ prompt: input.prompt, reasoningEffort: preparation.model.reasoningEffort, imageTools: preparation.model.inputModalities?.includes("image") === true, media: await deepagentsAttachments(input, session, { ...context, signal }, preparation.model) })),
+          input: await deepagentsInput(preparation, input, session, { ...context, signal }),
         },
         signal,
       ),
@@ -164,6 +169,8 @@ export async function prepareDeepagentsLocal(
 ): Promise<PreparedSolver> {
   preparation = { ...preparation, model: await resolveModelInput(preparation.model) };
   assertOptions(preparation.options);
+  const factoryModule = candidate.factoryModule;
+  if (!factoryModule) throw new AgentBundleError("CONFIG_INVALID", "DeepAgents bundle has no verified run factory");
   const runtime = session.runtime!;
   // venv creation, editable installs and the POSIX venv layout are only
   // provided for managed local runtimes in this release.
@@ -296,7 +303,7 @@ export async function prepareDeepagentsLocal(
         start(
           {
             executable: python,
-            args: [runner, "--bundle-dir", bundle, "--json"],
+            args: [runner, "--bundle-dir", bundle, "--factory-module", factoryModule, "--json"],
             cwd: session.workdir,
             env: {
               ...env,
@@ -305,7 +312,7 @@ export async function prepareDeepagentsLocal(
               ...(binding.secretEnvName === null ? {} : { [binding.secretEnvName]: preparation.auth.value }),
             },
             inheritEnv: false,
-            input: Buffer.from(JSON.stringify({ prompt: input.prompt, reasoningEffort: preparation.model.reasoningEffort, imageTools: preparation.model.inputModalities?.includes("image") === true, media: await deepagentsAttachments(input, session, { ...context, signal }, preparation.model) })),
+            input: await deepagentsInput(preparation, input, session, { ...context, signal }),
           },
           signal,
         ),
@@ -319,9 +326,17 @@ export async function prepareDeepagentsLocal(
   }
 }
 
-async function deepagentsAttachments(input: import("../../core/contracts/task.js").PublicTask, session: EnvironmentSession, context: AttemptContext, model: import("../../core/contracts/config.js").ModelConfig) {
+async function deepagentsInput(preparation: BundlePreparation, input: PublicTask, session: EnvironmentSession, context: AttemptContext) {
+  const { model, options } = preparation;
   requireInputModalities(input, model.inputModalities ?? ["text"]);
   const media = await loadAttachments(input, session, context);
   context.signal.throwIfAborted();
-  return media;
+  return Buffer.from(JSON.stringify({
+    prompt: input.prompt, media, reasoningEffort: model.reasoningEffort,
+    toolPolicy: pickSolverToolPolicy(options),
+    mcpServers: options.mcp === "disabled" ? [] : input.mcpServers ?? [],
+    skillsDirectories: options.skills === "disabled" ? [] : input.skillsDirectories ?? [],
+    imageTools: options.tools !== "none" && model.inputModalities?.includes("image") === true,
+    webSearch: options.tools !== "none" && options.webSearch !== "disabled" && model.endpoint !== null,
+  }));
 }

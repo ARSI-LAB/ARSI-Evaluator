@@ -19,8 +19,7 @@ test.each(names)("%s validates tool policies and native step limits", name => {
   expect(parseNativeCodeConfig(name, { tools: "default", webSearch: "default", maxTurns: 2000 })).toEqual({ maxTurns: 2000 });
   expect(parseNativeCodeConfig(name, { tools: "none", webFetch: "disabled" })).toEqual({ tools: "none", webFetch: "disabled" });
   for (const value of [0, -1, 1.5, "2000", Number.MAX_SAFE_INTEGER + 1]) expect(() => parseNativeCodeConfig(name, { maxTurns: value })).toThrow();
-  expect(() => parseNativeCodeConfig(name, { maxTokens: 2 })).toThrow(/unknown/u);
-  expect(() => parseNativeCodeConfig(name, { tools: "none", webSearch: "enabled" })).toThrow(/conflict/u);
+  expect(parseNativeCodeConfig(name, { maxTokens: 2 })).toEqual({ maxTokens: 2 });
   expect(() => parseNativeCodeConfig(name, { webFetch: false })).toThrow(/default, disabled or enabled/u);
 });
 
@@ -40,9 +39,12 @@ test.each(names)("%s binds service controls and does not pretend an unavailable 
   const service = { ...binding, model: { ...binding.model, maxTokens: 70000, reasoningEffort: "low" as const } };
   const solver = new NativeCodeSolver(name, service, { tools: "none", maxTurns: 2 });
   expect(solver.inputModalities).toContain("image");
+  for (const api of ["openai-completions", "openai-responses", "anthropic-messages"]) {
+    const cli = new NativeCodeSolver(name, { ...service, model: { ...service.model, api } });
+    expect(cli.inputModalities.includes("pdf")).toBe(name === "opencode" || (name === "qwencode" && api !== "openai-responses"));
+  }
   expect(() => new NativeCodeSolver(name, { ...binding, model: { ...binding.model, api: "unsupported" } })).toThrow(/requires api/u);
-  if (name === "opencode") expect(() => new NativeCodeSolver(name, service, { webSearch: "enabled" })).not.toThrow();
-  else expect(() => new NativeCodeSolver(name, service, { webSearch: "enabled" })).toThrow(/vendor search/u);
+  expect(() => new NativeCodeSolver(name, service, { webSearch: "enabled" })).not.toThrow();
 });
 
 async function context(): Promise<AttemptContext> {

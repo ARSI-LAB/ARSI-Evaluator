@@ -53,11 +53,15 @@ The native example requires `DEEPAGENTS_BUNDLE_PATH` and a target service accept
 | Claude Code 2.1.322 | Messages `image` blocks | Messages `document` blocks | Claude Code `Read` |
 | ZCode 0.17.1 | CLI `--attach` | CLI `--attach` | ZCode `Read` |
 | TRAE CLI 0.214.1 | CLI `--image` | Use `pages` mode | CLI tools |
-| CodeBuddy Code 2.183.0 | `stream-json` image blocks | Use `pages` mode | CodeBuddy file tools |
+| Qwen Code | ACP image input | Embedded PDF on Chat Completions and Messages | CLI tools |
+| OpenCode | ACP image input | Embedded PDF on all three APIs | CLI tools |
+| Kimi Code | ACP image input | Use `pages` mode | CLI tools |
+| MiniMax Code | `exec --file` | Use `pages` mode | CLI tools |
+| CodeBuddy Code 2.183.0 | `stream-json` image blocks | `stream-json` document blocks | CodeBuddy file tools |
 
 External Solvers default to text and must implement and declare their modalities before receiving attachments.
 
-- For Codex, Claude Code, ZCode, TRAE, and CodeBuddy, set the selected service's `inputModalities`. Declare `image` for images and PDF pages and `pdf` for native PDFs. Codex, TRAE, and CodeBuddy require PDF tasks to use `pages` mode.
+- For Codex, Claude Code, ZCode, TRAE, and CodeBuddy, set the selected service's `inputModalities`. Declare `image` for images and PDF pages and `pdf` for native PDFs. Codex and TRAE require PDF tasks to use `pages` mode.
 - ZCode sends native PDFs as Chat Completions `file.file_data`, Responses `input_file`, or Messages `document`. The endpoint must accept the corresponding format.
 - Pi rejects image tasks when `images.blockImages` is enabled.
 - Local DSH must resolve `@deepseek-ai/dsh-sdk-client` at the same pinned version. The Docker runtime includes it. The adapter preserves the candidate Profile and replaces its text ingress with SDK ingress.

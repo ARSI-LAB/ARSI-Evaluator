@@ -1,3 +1,4 @@
+import { bundleSearchFiles } from "../shared/task-resource-files.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -108,6 +109,7 @@ export async function deepagentsRuntimeInstallation(signal: AbortSignal): Promis
   }
   const files = [
     ...agentBundleFiles,
+    ...bundleSearchFiles(),
     { source: deepagentsRunner, target: "deepagents/runner.py" },
     { source: fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url)), target: "deepagents/reasoning_effort.py" },
     { source: deepagentsConstraints, target: "deepagents/constraints.txt" },
@@ -231,12 +233,12 @@ export async function deepagentsDockerRuntimeInstallation(
   const uvEnv = {
     UV_PYTHON_INSTALL_DIR: uvPythonDir,
     UV_CACHE_DIR: uvCacheDir,
-    // The build container may sit behind a slow egress (no proxy is forwarded
-    // into image builds); large wheels exceed uv's 30s default.
+    // Large wheels can exceed uv's default timeout even with a build proxy.
     UV_HTTP_TIMEOUT: "300",
   };
   const files = [
     ...agentBundleFiles,
+    ...bundleSearchFiles(),
     { source: deepagentsRunner, target: "deepagents/runner.py" },
     { source: fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url)), target: "deepagents/reasoning_effort.py" },
     { source: deepagentsConstraints, target: "deepagents/constraints.txt" },

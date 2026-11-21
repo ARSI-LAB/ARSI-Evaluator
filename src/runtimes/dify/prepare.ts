@@ -79,6 +79,9 @@ export async function prepareDify(
     const local = runtime.persistent;
     const path = local ? join : posix.join;
     return preparedAttempt(async () => {}, async (input, solveSignal) => {
+      if (input.mcpServers?.length || input.skillsDirectories?.length) {
+        throw new EvaluatorError("CONFIG_INVALID", "Dify task-local skill directories and MCP servers cannot be installed into the remote workflow");
+      }
       requireInputModalities(input, model?.inputModalities ?? ["text"]);
       requireInputModalities(input, ["text", "image", "pdf"]);
       if (input.attachments?.length && !options.filesInput) throw new EvaluatorError("CONFIG_INVALID", "Dify attachments require agentbundle.dify.filesInput");

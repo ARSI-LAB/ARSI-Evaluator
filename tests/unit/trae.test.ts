@@ -98,7 +98,7 @@ test("TRAE validates the service and allows preparation without credentials", as
   expect(() => parseTraeConfig({ executable: "traecli" })).toThrow(/unknown field executable/u);
   expect(() => new TraeSolver({ ...binding, model: { ...binding.model, api: "google-generative-ai" } })).toThrow(/requires api/u);
   expect(() => new TraeSolver({ ...binding, model: { ...binding.model, endpoint: "https://service.test/v1?key=value" } })).toThrow(/base_url/u);
-  for (const fields of [{ maxTokens: 50 }, { contextWindow: 200 }, { retry: { maxAttempts: 2 } }]) {
+  for (const fields of [{ maxTokens: 50 }, { retry: { maxAttempts: 2 } }]) {
     expect(() => new TraeSolver({ ...binding, model: { ...binding.model, ...fields } })).toThrow(/does not support/u);
   }
   await expect(new TraeSolver(binding).runtimeInstallation(AbortSignal.timeout(5000))).resolves.toMatchObject({ id: "trae:0.214.1" });

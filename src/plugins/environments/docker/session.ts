@@ -22,6 +22,7 @@ import { assertLinkFree, containerTarget, containerFileTarget } from "./paths.js
 const PROCESS_STOP_GRACE_MS = 500;
 export type DockerMetadata = {
   executionUsers?: NonNullable<EnvironmentSpec["executionUsers"]>;
+  solveNetwork?: NonNullable<EnvironmentSpec["network"]>;
   kind: "docker";
   phase: "solve" | "verify";
   platform: ContainerPlatform;
@@ -127,6 +128,7 @@ export class DockerSession implements EnvironmentSession {
     }
     if (gateway) this.gateway = gateway;
   }
+  get solveNetwork() { return this.metadata.solveNetwork; }
   private active(): void {
     if (this.disposed) throw new DockerEnvironmentError("ENV_SESSION_CLOSED", `Docker session ${this.id} is disposed`);
   }
@@ -375,6 +377,8 @@ export class DockerSession implements EnvironmentSession {
     }
     await this.transitionToVerification(network, signal);
     if (users) this.metadata.executionUsers = users;
+    if (network === undefined) delete this.metadata.solveNetwork;
+    else this.metadata.solveNetwork = network;
     this.metadata.phase = "solve";
   }
   async quiesce(signal: AbortSignal): Promise<void> {

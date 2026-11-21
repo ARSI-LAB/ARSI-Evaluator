@@ -1,1 +1,0 @@
-throw new Error("ISOLATION_BREACH_EXTENSION_LOADED");

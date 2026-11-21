@@ -7,6 +7,7 @@ import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { consumeCliJsonl, record, tokenCount, type CliEvent } from "../shared/cli-jsonl.js";
 
 export function consumeZCode(handle: ProcessHandle, context: AttemptContext, secrets: readonly string[]): Promise<SolveResult> {
+  let rootSession: string | undefined;
   let terminal: "success" | "failed" | undefined;
   let diagnostic = "";
   let result: CliEvent | undefined;
@@ -20,7 +21,12 @@ export function consumeZCode(handle: ProcessHandle, context: AttemptContext, sec
         return;
       }
       if (/^(?:turn|model|tool)\./u.test(event.type)) context.activity?.({});
+      if (event.type === "turn.started" && rootSession === undefined && typeof event.sessionId === "string") {
+        rootSession = event.sessionId;
+      }
       if (event.type === "turn.completed" || event.type === "turn.failed") {
+        // The CLI multiplexes child sessions onto the root turn's JSONL stream.
+        if (rootSession !== undefined && event.sessionId !== rootSession) return;
         if (terminal !== undefined) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "ZCode emitted multiple terminal turn events");
         const payload = record(event.payload);
         terminal = event.type === "turn.completed" && payload?.resultType === "success" ? "success" : "failed";

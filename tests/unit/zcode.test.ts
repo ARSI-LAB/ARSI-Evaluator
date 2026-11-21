@@ -32,6 +32,19 @@ const complete = { type: "turn.completed", payload: { resultType: "success" } };
 const result = { type: "result", response: "答案 " + secrets.join(" "),
   usage: { inputTokens: 15, cacheReadTokens: 5, cacheWriteTokens: 2, outputTokens: 8, totalTokens: 23 } };
 
+test("ZCode requires the parent session to complete after delegation", async () => {
+  const events = [
+    { type: "turn.started", sessionId: "parent" },
+    { type: "turn.started", sessionId: "child" },
+    { ...complete, sessionId: "child" },
+  ];
+  const parentDone = { ...complete, sessionId: "parent" };
+  const solved = await consumeZCode(processWith(jsonl(...events, parentDone, result)), await context(), secrets);
+  expect(solved.usage.totalTokens).toBe(23);
+  await expect(consumeZCode(processWith(jsonl(...events, result)), await context(), secrets))
+    .rejects.toMatchObject({ code: "SOLVER_RESULT_INCOMPLETE" });
+});
+
 test("ZCode reads the final response and redacts both credentials without adding cache counts twice", async () => {
   const attempt = await context();
   await expect(consumeZCode(processWith(jsonl(complete, result)), attempt, secrets)).resolves.toEqual({
@@ -84,6 +97,6 @@ test("ZCode validates service settings without requiring credentials during prep
   expect(parseZCodeConfig({})).toEqual({});
   expect(() => parseZCodeConfig({ mode: "plan" })).toThrow(/unknown field/u);
   expect(() => new ZCodeSolver({ ...binding, model: { ...binding.model, api: "google-generative-ai" } })).toThrow(/requires api/u);
-  expect(() => new ZCodeSolver({ ...binding, model: { ...binding.model, contextWindow: 10 } })).toThrow(/contextWindow/u);
+  expect(() => new ZCodeSolver({ ...binding, model: { ...binding.model, contextWindow: 10 } })).not.toThrow();
   expect(await new ZCodeSolver(binding).runtimeInstallation(new AbortController().signal)).toMatchObject({ cacheName: "zcode-0.17.1" });
 });

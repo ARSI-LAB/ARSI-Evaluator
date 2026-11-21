@@ -1,3 +1,4 @@
+import { nativeMcpConfig, stageSkills, taskServers } from "./runtimes/shared/assets/task-resources.mjs";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -6,12 +7,17 @@ import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 import { stageAttachments } from "./stage-attachments.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, inputModalities, reasoningEffort, prompt, token, media = [], toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
+const input = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, inputModalities, maxTokens, contextWindow, reasoningEffort, prompt, token, media = [], toolPolicy = {} } = input;
 const settings = join(home, ".zcode", "cli");
 await mkdir(home, { mode: 0o700 });
 let relay;
+let resources;
 try {
-  relay = await startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort });
+  const none = toolPolicy.tools === "none";
+  resources = await taskServers(input);
+  if (toolPolicy.skills !== "disabled") await stageSkills(input.skillsDirectories, join(home, ".agents", "skills"));
+  relay = await startModelRelay({ completeSearch: resources.completeSearch, api, baseUrl, apiKey, token, reasoningEffort, disableHostedSearch: toolPolicy.webSearch === "disabled", disableMcp: toolPolicy.mcp === "disabled", disableBuiltinTools: none });
   await mkdir(settings, { recursive: true, mode: 0o700 });
   const providerFile = join(home, "provider_config.json");
   const providerId = "arsi-evaluator";
@@ -27,11 +33,17 @@ try {
         },
       }] },
       modelConfigRules: {
-        providerModelRules: inputModalities === undefined ? [] : [{
-          providerId, modelId: model, config: { properties: { inputFormat: {
-            supportsImage: inputModalities.includes("image"),
-            supportsPdf: inputModalities.includes("pdf"),
-          } } },
+        providerModelRules: inputModalities === undefined && maxTokens === undefined && contextWindow === undefined ? [] : [{
+          providerId, modelId: model, config: {
+            ...(maxTokens === undefined ? {} : { optionSpecs: { maxOutputTokens: { max: maxTokens } } }),
+            properties: {
+              ...(contextWindow === undefined ? {} : { contextWindow }),
+              ...(inputModalities === undefined ? {} : { inputFormat: {
+                supportsImage: inputModalities.includes("image"),
+                supportsPdf: inputModalities.includes("pdf"),
+              } }),
+            },
+          },
         }],
         manualProviderModelRules: [],
       },
@@ -39,11 +51,13 @@ try {
     },
   }), { mode: 0o600 });
   await writeFile(join(settings, "config.json"), JSON.stringify({
-    features: { mcp: false, subagent: false, memory: false, skill: false },
-    memory: { use: false },
-    plugins: { enabled: false },
-    skills: { enabled: false },
-    hooks: { enabled: false },
+    ...(resources.servers.length ? { mcp: { servers: nativeMcpConfig(resources.servers).mcpServers } } : {}),
+    features: {
+      ...(toolPolicy.mcp === "disabled" ? { mcp: false } : {}),
+      ...(none || toolPolicy.subagent === "disabled" ? { subagent: false } : {}),
+      ...(toolPolicy.skills === "disabled" ? { skill: false } : {}),
+    },
+    ...(toolPolicy.skills === "disabled" ? { skills: { enabled: false } } : {}),
   }), { mode: 0o600 });
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:ZCODE_|OTEL_)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
@@ -54,13 +68,14 @@ try {
     "NotebookEdit", "Agent", "Task", "Skill", "LSP", "ToolSearch", "ListSessions", "ReadSession",
     "CreateSession", "ForkSession", "SendToSession", "WaitSessions", "InterruptSession", "RenameSession", "ListModels",
   ] : [
+    ...(toolPolicy.subagent === "disabled" ? ["Agent", "Task", "CreateSession", "ForkSession", "SendToSession"] : []),
     ...(toolPolicy.webSearch === "disabled" ? ["WebSearch"] : []),
     ...(toolPolicy.webFetch === "disabled" ? ["WebFetch"] : []),
   ];
   const attachmentPaths = await stageAttachments(home, media);
   const child = spawn(process.execPath, [
     join(import.meta.dirname, "cli.mjs"), entry,
-    "--cwd", process.cwd(), "--mode", "yolo", "--workflow-mode", "disabled", "--output-format", "stream-json", "--no-color",
+    "--cwd", process.cwd(), "--mode", "yolo", "--output-format", "stream-json", "--no-color",
     ...(denied.length ? ["--disallowed-tools", denied.join(",")] : []),
   ], {
     env: {
@@ -86,6 +101,7 @@ try {
     process.removeListener("SIGTERM", terminate);
   }
 } finally {
+  resources?.close?.();
   relay?.close();
   await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

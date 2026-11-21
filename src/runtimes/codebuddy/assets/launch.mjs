@@ -1,3 +1,4 @@
+import { nativeMcpConfig, stageSkills, taskServers } from "./runtimes/shared/assets/task-resources.mjs";
 import { spawn } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
@@ -5,7 +6,8 @@ import { join } from "node:path";
 import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, entry] = process.argv.slice(2);
-const { apiKey, api, baseUrl, model, maxTokens, contextWindow, reasoningEffort, maxTurns, supportsImages, prompt, token, media, toolPolicy = {} } = JSON.parse(readFileSync(0, "utf8"));
+const input = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, api, baseUrl, model, maxTokens, contextWindow, reasoningEffort, maxTurns, supportsImages, prompt, token, media, toolPolicy = {} } = input;
 
 // The model loader in CodeBuddy 2.183.0 reads this file independently of --setting-sources.
 const projectModels = await lstat(join(process.cwd(), ".codebuddy", "models.json")).catch(error => {
@@ -18,14 +20,19 @@ if (projectModels) {
 }
 
 await mkdir(home, { mode: 0o700 });
+let resources;
 let relay;
 try {
-  relay = await startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort });
+  resources = await taskServers(input);
+  if (toolPolicy.skills !== "disabled") await stageSkills(input.skillsDirectories, join(home, "skills"));
+  relay = await startModelRelay({ completeSearch: resources.completeSearch, api, baseUrl, apiKey, token, reasoningEffort, disableHostedSearch: toolPolicy.webSearch === "disabled", disableMcp: toolPolicy.mcp === "disabled", disableBuiltinTools: toolPolicy.tools === "none" });
   await writeFile(join(home, "models.json"), JSON.stringify({
     models: [{
       id: model, name: model, vendor: "openai", api, apiKey: token,
       url: api === "openai-completions" ? relay.endpoint + "/chat/completions" : relay.endpoint,
-      supportsToolCall: true, supportsImages,
+        supportsToolCall: true,
+        // The Chat adapter uses this flag for both image and document blocks.
+        supportsImages: supportsImages || media.some(item => item.mediaType === "application/pdf"),
       ...(contextWindow === undefined ? {} : { maxInputTokens: contextWindow }),
       ...(maxTokens === undefined ? {} : { maxOutputTokens: maxTokens }),
     }],
@@ -33,28 +40,30 @@ try {
   }), { mode: 0o600 });
 
   const windows = process.platform === "win32";
-  const tools = toolPolicy.tools === "none" ? [] : ["Read", "Edit", "Write", "Glob", "Grep", windows ? "PowerShell" : "Bash"];
-  if (toolPolicy.webSearch === "enabled") tools.push("WebSearch");
-  if (toolPolicy.webFetch === "enabled") tools.push("WebFetch");
-  const denied = [];
+  const none = toolPolicy.tools === "none";
+  const denied = toolPolicy.subagent === "disabled" ? ["Agent", "Task", "Workflow"] : [];
+  if (toolPolicy.skills === "disabled") denied.push("Skill");
   if (toolPolicy.webSearch === "disabled") denied.push("WebSearch");
   if (toolPolicy.webFetch === "disabled") denied.push("WebFetch");
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:CODEBUDDY_|WORKBUDDY_|CLAUDE_|ANTHROPIC_|OTEL_)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
   const child = spawn(process.execPath, [entry,
     "--print", "--verbose", "--output-format", "stream-json", "--input-format", "stream-json", "--model", model,
-    "--setting-sources", "user", "--strict-mcp-config", "--no-session-persistence",
+    "--setting-sources", "user,project,local",
+    ...(toolPolicy.mcp === "disabled" ? ["--strict-mcp-config"] : []),
+    ...(resources.servers.length ? ["--mcp-config", JSON.stringify(nativeMcpConfig(resources.servers))] : []), "--no-session-persistence",
     ...(reasoningEffort === undefined ? [] : ["--effort", reasoningEffort]),
     ...(maxTurns === undefined ? [] : ["--max-turns", String(maxTurns)]),
-    "--tools", tools.join(","), "--permission-mode", "dontAsk",
-    ...(tools.length ? ["--allowedTools", ...tools] : []),
+    "--permission-mode", "bypassPermissions", "--subagent-permission-mode", "bypassPermissions",
+    ...(none ? ["--tools", ""] : []),
     ...(denied.length ? ["--disallowedTools", ...denied] : []),
   ], {
     env: {
-      ...env, HOME: home, USERPROFILE: home, CODEBUDDY_CONFIG_DIR: home, CODEBUDDY_PROJECT_CONFIG_DIR: join(home, "project"),
+      ...env, ...(none ? { CODEBUDDY_DEFER_TOOL_LOADING: "false" } : {}), ...(input.container ? { CODEBUDDY_IS_SANDBOX: "1" } : {}), HOME: home, USERPROFILE: home, CODEBUDDY_CONFIG_DIR: home,
       ...(windows ? { TEMP: home, TMP: home, CODEBUDDY_SKIP_GIT_BASH_CHECK: "1" } : {}),
+      EVALUATOR_DISABLE_SKILLS: toolPolicy.skills === "disabled" ? "1" : "0",
       CODEBUDDY_CODE_SHELL: windows ? "powershell" : "bash", DISABLE_AUTOUPDATER: "1", DISABLE_TELEMETRY: "1",
-      CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS: "1", CODEBUDDY_CODE_DISABLE_SESSION_TITLE_REFRESH: "1",
+      CODEBUDDY_CODE_DISABLE_SESSION_TITLE_REFRESH: "1",
       CODEBUDDY_DISABLE_AUTO_MEMORY: "1", CODEBUDDY_DISABLE_BUILTIN_MODELS: "1",
       NO_PROXY: noProxy, no_proxy: noProxy,
     },
@@ -71,7 +80,8 @@ try {
   process.once("SIGTERM", terminate);
   try {
     const content = [{ type: "text", text: prompt }, ...media.map(({ mediaType, data }) => ({
-      type: "image", source: { type: "base64", media_type: mediaType, data },
+      type: mediaType === "application/pdf" ? "document" : "image",
+      source: { type: "base64", media_type: mediaType, data },
     }))];
     child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n", "utf8");
     process.exitCode = await exited;
@@ -79,6 +89,7 @@ try {
     process.removeListener("SIGTERM", terminate);
   }
 } finally {
+  resources?.close?.();
   relay?.close();
   await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

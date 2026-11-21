@@ -15,8 +15,7 @@ benchmark:
     name: minimaxcode
     config:
       tools: none
-      webSearch: disabled
-      webFetch: disabled
+      mcp: disabled
       maxTurns: 2000
 environment:
   name: docker

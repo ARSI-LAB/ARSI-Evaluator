@@ -166,6 +166,7 @@ export type TransferArtifact = {
 };
 
 export interface EnvironmentSession {
+  readonly solveNetwork?: EnvironmentSpec["network"];
   id: string;
   workdir: string;
   agentOutputDir: string;

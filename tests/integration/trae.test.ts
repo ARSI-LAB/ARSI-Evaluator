@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -15,15 +16,13 @@ const model = "fixture-trae";
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const powerShellQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
-async function responsesFixture(docker: boolean, outside: string | undefined) {
+async function responsesFixture(docker: boolean, outside: string, marker: string) {
   const windows = process.platform === "win32" && !docker;
   const commands = [windows
     ? "if (Test-Path Env:EVALUATOR_TRAE_API_KEY) { throw 'key present' }; Set-Content -LiteralPath result.txt -Value answer -ErrorAction Stop; Write-Output ((Get-Content -LiteralPath result.txt) + ' KEY_ABSENT')"
     : "test -z \"${EVALUATOR_TRAE_API_KEY:-}\" && printf answer > result.txt && cat result.txt && printf ' KEY_ABSENT'"];
-  if (outside !== undefined) {
-    commands.push(windows ? `Set-Content -LiteralPath ${powerShellQuote(outside)} -Value outside -ErrorAction Stop`
-      : `printf outside > ${shellQuote(outside)}`);
-  }
+  commands.push(windows ? `Set-Content -LiteralPath ${powerShellQuote(outside)} -Value ${marker} -ErrorAction Stop`
+      : `printf %s ${marker} > ${shellQuote(outside)}`);
   const requests: Array<{ model: unknown; authenticated: boolean; input: string }> = [];
   const server = createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/v1/responses") {
@@ -72,18 +71,17 @@ for (const environment of ["local", "docker"] as const) {
 async function smoke(environment: "local" | "docker"): Promise<void> {
   const docker = environment === "docker";
   const root = await mkdtemp(join(tmpdir(), "arsi-evaluator-trae-test-"));
-  // Vitest's mock home is in the temporary directory, where workspace-write permits writes.
   const { homedir } = await vi.importActual<typeof import("node:os")>("node:os");
-  const outside = docker ? undefined : await mkdtemp(join(homedir(), ".arsi-evaluator-trae-sandbox-test-"));
-  const outsideFile = outside === undefined ? undefined : join(outside, "outside.txt");
-  const fixture = await responsesFixture(docker, outsideFile);
+  const marker = randomUUID();
+  const outsideFile = docker ? "/tmp/trae-" + marker : join(root, "outside-" + marker);
+  const fixture = await responsesFixture(docker, outsideFile, marker);
   try {
     const configPath = join(root, "experiment.yaml");
     await writeFixture(root, {
       "gpqa.csv": "Question,Correct Answer,Incorrect Answer 1,Incorrect Answer 2,Incorrect Answer 3\n计算 6 × 7,42,36,40,49\n",
       "dataset/tasks/trae/task.toml": `artifacts = []\n[environment]\ndocker_image = "${PINNED_NODE_IMAGE}"\nworkdir = "/workspace"\n[agent]\nnetwork_mode = "no-network"\n[verifier]\nenvironment_mode = "shared"\n`,
       "dataset/tasks/trae/instruction.md": "Write answer to /workspace/result.txt.",
-      "dataset/tasks/trae/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
+      "dataset/tasks/trae/tests/test.sh": "set -eu\ntest \"$(cat /workspace/result.txt)\" = answer\ntest \"$(cat " + outsideFile + ")\" = " + marker + "\nprintf '{\"reward\":1}' > /logs/verifier/reward.json\n",
     });
     await writeFile(configPath, JSON.stringify({
       services: { selected: { model, base_url: fixture.endpoint, api: "openai-responses", api_key: "${TRAE_FIXTURE_KEY}" } },
@@ -105,17 +103,17 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
     expect(attempt, JSON.stringify(attempt.errors)).toMatchObject({
       executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1 }, collection: { trajectory: "complete" },
       solve: { finalText: expect.stringContaining(docker ? "文件已写入" : "答案已算出"),
-        usage: docker ? { inputTokens: 30, outputTokens: 14, totalTokens: 44 } : { inputTokens: 45, outputTokens: 21, totalTokens: 66 } },
+        usage: { inputTokens: 45, outputTokens: 21, totalTokens: 66 } },
     });
     expect(result.snapshot.run.solverProvenance).toMatchObject({ traeVersion: TRAE_VERSION });
-    expect(fixture.requests).toHaveLength(docker ? 2 : 3);
+    expect(fixture.requests).toHaveLength(3);
     for (const request of fixture.requests) expect(request).toMatchObject({ model, authenticated: true });
     const commandOutput = JSON.parse(fixture.requests[1]?.input ?? "[]").find((item: { type: string }) => item.type === "function_call_output");
     expect(commandOutput?.output).toContain("answer KEY_ABSENT");
-    if (outsideFile !== undefined) {
+    if (!docker) {
       expect(fixture.requests[0]?.input).toContain("计算");
       expect(fixture.requests[0]?.input).not.toMatch(/\.agents[/\\]+skills/u);
-      await expect(stat(outsideFile)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await readFile(outsideFile, "utf8")).trim()).toBe(marker);
     }
     const agent = join(result.runDirectory, "tasks", safeTaskKey(attempt.key.taskId), "attempts", attempt.key.attemptId, "agent");
     for (const filename of ["session.jsonl", "trajectory.jsonl", "stderr.log"]) {
@@ -124,6 +122,5 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
   } finally {
     await fixture.close();
     await rm(root, { recursive: true, force: true });
-    if (outside !== undefined) await rm(outside, { recursive: true, force: true });
   }
 }

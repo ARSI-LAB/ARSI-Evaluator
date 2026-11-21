@@ -77,6 +77,7 @@ export type BundlePreparation = {
   model: ModelConfig;
   auth: RuntimeAuth;
   options: {
+    limits?: { maxTurns?: number };
     environmentName?: string; dshhome?: string; dshprofile?: string; hermeshome?: string;
     jiuwenswarmhome?: string; jiuwenswarmTimeoutSeconds?: number;
     pi?: { settings?: Record<string, JsonValue> } & WebToolNames;

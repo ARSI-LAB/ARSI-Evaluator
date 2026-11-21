@@ -11,14 +11,73 @@ const routes = {
 };
 const requestHeaders = ["accept", "anthropic-beta", "anthropic-version", "content-type", "user-agent"];
 const responseHeaders = ["content-type", "retry-after", "request-id"];
-const hasToolCall = event => event.choices?.some(choice => choice.delta?.tool_calls?.length || choice.message?.tool_calls?.length || choice.delta?.function_call || choice.message?.function_call)
-  || ["tool_use", "server_tool_use"].includes(event.content_block?.type)
-  || ["function_call", "custom_tool_call"].includes(event.item?.type)
-  || event.output?.some(item => ["function_call", "custom_tool_call"].includes(item.type))
-  || event.response?.output?.some(item => ["function_call", "custom_tool_call"].includes(item.type))
-  || event.content?.some(item => ["tool_use", "server_tool_use"].includes(item.type));
+function restrictBuiltinTools(payload, isMcpTool) {
+  const allowed = new Set();
+  const tools = (payload.tools ?? []).filter(tool => {
+    const name = tool.function?.name ?? tool.name;
+    if (typeof name !== "string" || !isMcpTool(name)) return false;
+    if (tool.type === "namespace") {
+      tool.tools = (tool.tools ?? []).filter(member => member.type === "function" && typeof member.name === "string");
+      if (!tool.tools.length) return false;
+      for (const member of tool.tools) allowed.add(name + "." + member.name);
+    } else {
+      if (tool.type !== undefined && tool.type !== "function" && tool.type !== "custom") return false;
+      allowed.add(name);
+      // MCP tools must be directly callable even when the CLI normally defers
+      // them behind a built-in tool discovery function.
+      delete tool.defer_loading;
+    }
+    return true;
+  });
+  if (tools.length) payload.tools = tools;
+  else {
+    delete payload.tools;
+    delete payload.parallel_tool_calls;
+  }
+  delete payload.tool_choice;
+  delete payload.functions;
+  delete payload.function_call;
+  return allowed;
+}
 
-export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort, maxTokens, noTools = false, captureUsage = false, maxModelCalls }) {
+// Chat Completions can split function names across SSE chunks. Hold tool events
+// until the entire name has been checked against this request's declarations.
+function toolResponseGuard(allowed) {
+  const fragments = new Map();
+  let seen = false;
+  function check(name) {
+    seen = true;
+    if (!allowed.has(name)) throw Error("Model returned a tool that was not offered");
+  }
+  function inspectItem(item) {
+    if (!item) return;
+    if (item.type === "function_call" || item.type === "tool_use") {
+      check(item.namespace ? item.namespace + "." + item.name : item.name);
+    } else if (item.type === "server_tool_use" || item.type?.endsWith("_call")) {
+      check(undefined);
+    }
+  }
+  return {
+    inspect(event) {
+      for (const choice of event.choices ?? []) {
+        if (choice.delta?.function_call || choice.message?.function_call) check(undefined);
+        for (const call of choice.message?.tool_calls ?? []) check(call.function?.name);
+        for (const call of choice.delta?.tool_calls ?? []) {
+          seen = true;
+          const key = (choice.index ?? 0) + ":" + (call.index ?? 0);
+          fragments.set(key, (fragments.get(key) ?? "") + (call.function?.name ?? ""));
+        }
+      }
+      inspectItem(event.content_block);
+      inspectItem(event.item);
+      for (const item of event.output ?? event.response?.output ?? event.content ?? []) inspectItem(item);
+      return seen;
+    },
+    finish() { for (const name of fragments.values()) check(name); },
+  };
+}
+
+export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEffort, maxTokens, disableBuiltinTools = false, disableMcp = false, isMcpTool = name => name.startsWith("mcp__"), disableHostedSearch = false, disableWebFetch = false, completeSearch, captureUsage = false, maxModelCalls }) {
   const anthropic = api === "anthropic-messages";
   const base = anthropic && !baseUrl.endsWith("/v1") ? baseUrl + "/v1" : baseUrl;
   const totals = { inputTokens: 0, outputTokens: 0, reported: false };
@@ -45,7 +104,8 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEf
         if (typeof value === "string") headers.set(name, value);
       }
       let body = request;
-      if (noTools || (route !== "/messages/count_tokens" && (reasoningEffort !== undefined || maxTokens !== undefined))) {
+      let guard;
+      if (disableBuiltinTools || disableHostedSearch || disableWebFetch || completeSearch || (route !== "/messages/count_tokens" && (reasoningEffort !== undefined || maxTokens !== undefined))) {
         let payload = JSON.parse(await text(request));
         if (reasoningEffort !== undefined && route !== "/messages/count_tokens") payload = applyReasoningEffort(payload, api, reasoningEffort);
         if (maxTokens !== undefined && route !== "/messages/count_tokens") {
@@ -55,7 +115,26 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEf
           delete payload.max_output_tokens;
           payload[key] = maxTokens;
         }
-        if (noTools) { delete payload.tools; delete payload.tool_choice; delete payload.parallel_tool_calls; }
+        if (disableBuiltinTools || disableHostedSearch) {
+          delete payload.web_search_options;
+          if (payload.extra_body) delete payload.extra_body.web_search_options;
+        }
+        if (disableBuiltinTools) {
+          guard = toolResponseGuard(restrictBuiltinTools(payload, name => !disableMcp && isMcpTool(name)));
+        } else if (disableHostedSearch || disableWebFetch) {
+          const blocked = tool => {
+            const name = tool?.function?.name ?? tool?.name;
+            return (disableHostedSearch && /^web_search(?:$|_)/u.test(tool?.type))
+              || (disableWebFetch && /^(?:web_fetch|webfetch|fetchurl)$/iu.test(name));
+          };
+          if (Array.isArray(payload.tools)) payload.tools = payload.tools.filter(tool => !blocked(tool));
+          if (Array.isArray(payload.functions)) payload.functions = payload.functions.filter(tool => !blocked(tool));
+          if (blocked(payload.tool_choice)) delete payload.tool_choice;
+          if (blocked(payload.function_call)) delete payload.function_call;
+        }
+        if (completeSearch && !disableBuiltinTools && !disableHostedSearch && route !== "/messages/count_tokens") {
+          await completeSearch(payload, controller.signal);
+        }
         body = JSON.stringify(payload);
       }
       if (counted) modelCalls++;
@@ -74,10 +153,11 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEf
         if (value !== null) response.setHeader(name, value);
       }
       response.writeHead(upstream.status);
-      if (upstream.body && (noTools || captureUsage) && upstream.headers.get("content-type")?.includes("text/event-stream")) {
+      if (upstream.body && (guard || captureUsage) && upstream.headers.get("content-type")?.includes("text/event-stream")) {
         let pending = "";
         const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
         let usage;
+        let held;
         const commitUsage = () => {
           if (!captureUsage || !usage) return;
           const input = usage.prompt_tokens ?? usage.input_tokens;
@@ -88,13 +168,12 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEf
             totals.outputTokens += output;
           }
         };
-        const inspect = line => {
-          if (!line.startsWith("data:")) return;
+        const inspect = frame => {
+          const data = frame.split(/\r?\n/u).filter(line => line.startsWith("data:")).map(line => line.slice(5)).join("\n").trim();
+          if (!data || data === "[DONE]") return;
           let event;
-          try { event = JSON.parse(line.slice(5)); } catch { return; }
-          if (noTools && hasToolCall(event)) {
-            throw Error("Tool calls are disabled for this attempt");
-          }
+          try { event = JSON.parse(data); } catch (error) { if (guard) throw error; return; }
+          if (guard?.inspect(event)) held ??= [];
           const current = event.usage ?? event.message?.usage ?? event.response?.usage;
           if (current) usage = { ...usage, ...current };
         };
@@ -102,26 +181,31 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, reasoningEf
           transform(chunk, _encoding, callback) {
             try {
               pending += decoder.decode(chunk, { stream: true });
-              let newline;
-              while ((newline = pending.indexOf("\n")) >= 0) {
-                const line = pending.slice(0, newline + 1);
-                pending = pending.slice(newline + 1);
-                inspect(line);
-                this.push(line);
+              let boundary;
+              while ((boundary = /\r?\n\r?\n/u.exec(pending))) {
+                const end = boundary.index + boundary[0].length;
+                const frame = pending.slice(0, end);
+                pending = pending.slice(end);
+                inspect(frame);
+                if (held) held.push(frame);
+                else this.push(frame);
               }
               callback();
             } catch (error) { callback(error); }
           },
           flush(callback) {
-            try { pending += decoder.decode(); inspect(pending); this.push(pending); commitUsage(); callback(); }
+            try { pending += decoder.decode(); inspect(pending); guard?.finish();
+              if (held) for (const line of held) this.push(line);
+              this.push(pending); commitUsage(); callback(); }
             catch (error) { callback(error); }
           },
         });
         await pipeline(upstream.body, inspector, response, { signal: controller.signal });
       }
-      else if (upstream.body && noTools && upstream.headers.get("content-type")?.includes("application/json")) {
+      else if (upstream.body && guard && upstream.headers.get("content-type")?.includes("application/json")) {
         const payload = await upstream.text();
-        if (hasToolCall(JSON.parse(payload))) throw Error("Tool calls are disabled for this attempt");
+        guard.inspect(JSON.parse(payload));
+        guard.finish();
         response.end(payload);
       }
       else if (upstream.body) await pipeline(upstream.body, response, { signal: controller.signal });

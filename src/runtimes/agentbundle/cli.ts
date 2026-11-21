@@ -14,6 +14,7 @@ export class AgentBundleError extends Error {
 }
 
 export type VerifiedBundle = {
+  factoryModule?: string;
   digest: string;
   harness: { name: string; versionRange: string; actualVersion?: string };
 };

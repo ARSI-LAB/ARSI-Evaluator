@@ -1,3 +1,5 @@
+import { taskResourceFiles } from "../shared/task-resource-files.js";
+import { lockedCliPatch } from "../shared/locked-cli-patch.js";
 import { fileURLToPath } from "node:url";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
 
@@ -6,17 +8,20 @@ export const CODEBUDDY_ENTRY = "node_modules/@tencent-ai/codebuddy-code/bin/code
 
 export async function codeBuddyRuntimeInstallation(signal: AbortSignal): Promise<RuntimeInstallation> {
   signal.throwIfAborted();
+  const patch = await lockedCliPatch("codebuddy");
   return {
-    id: `codebuddy:${CODEBUDDY_VERSION}`,
+    id: `codebuddy:${CODEBUDDY_VERSION}:${patch.digest}`,
     cacheName: `codebuddy-${CODEBUDDY_VERSION}`,
     files: [
+      ...taskResourceFiles(),
+      ...patch.files,
       ...["package.json", "package-lock.json", "launch.mjs"].map(target => ({
         source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
       })),
       { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "runtimes/shared/assets/model-relay.mjs" },
       { source: fileURLToPath(new URL("../../infrastructure/models/reasoning-effort.mjs", import.meta.url)), target: "infrastructure/models/reasoning-effort.mjs" },
     ],
-    commands: [{ executable: "npm", args: ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"] }],
+    commands: [{ executable: "npm", args: ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"] }, patch.command],
     probes: [{
       executable: "node",
       args: ["--eval", [

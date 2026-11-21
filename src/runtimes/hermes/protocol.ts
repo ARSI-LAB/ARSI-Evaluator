@@ -114,6 +114,7 @@ export async function consumeHermes(
   usageFilePath: string,
   limits: HermesProtocolLimits = DEFAULT_LIMITS,
   startData?: JsonValue,
+  collectUsage?: () => Promise<void>,
 ): Promise<SolveResult> {
   context.activity?.({ message: "Hermes is running; this executor does not provide live tool details", activity: false });
   limits = validatedLimits(limits);
@@ -145,6 +146,7 @@ export async function consumeHermes(
     const [exit, stderrText, stdoutText] = await Promise.all([handle.done, stderr, stdout]);
     await writeFile(stderrPath, stderrEvidence(stderrText, secret, limits.maxStderrBytes), { encoding: "utf8", mode: 0o600 });
     if (context.signal.aborted) throw context.signal.reason ?? new DOMException("cancelled", "AbortError");
+    if (collectUsage && (exit.code === 0 || exit.code === 2)) await collectUsage();
     const { usage, truncatedFinalText } = await readUsageFile(usageFilePath);
     // Pinned Hermes uses exit 2 for typed partial turns. Only the Evaluator
     // runner's confirmed provider-length result permits that exit to be scored.

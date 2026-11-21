@@ -1,3 +1,4 @@
+import { parseAgentOptions, type AgentLimits } from "./agent-limits.js";
 import { loadAttachments } from "../../runtimes/multimodal/input.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { join, posix } from "node:path";
@@ -18,7 +19,7 @@ import { projectRunnerInput } from "../../runtimes/pi/protocol.js";
 import { consumePiRunner, PiRunnerError } from "../../runtimes/pi/process.js";
 import { parseShellToolPolicy, type ShellToolPolicy } from "../../runtimes/pi/tool-policy.js";
 import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/validation/input.js";
-import { parseSolverToolPolicy, parseWebToolNames, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
+import { sessionToolPolicy, parseWebToolNames, toolPolicyProvenance, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 
 export class SimpleAgentError extends Error {
   constructor(
@@ -31,7 +32,7 @@ export class SimpleAgentError extends Error {
   }
 }
 
-export type SimpleAgentConfig = SolverToolPolicy & { bundle?: PiBundleOptions & WebToolNames; toolPolicy?: ShellToolPolicy };
+export type SimpleAgentConfig = SolverToolPolicy & AgentLimits & { bundle?: PiBundleOptions & WebToolNames; toolPolicy?: ShellToolPolicy };
 
 /**
  * Parse the simpleagent solver config. `bundle` is optional; without it the
@@ -40,21 +41,16 @@ export type SimpleAgentConfig = SolverToolPolicy & { bundle?: PiBundleOptions & 
  */
 export function parseSimpleAgentConfig(value: unknown): SimpleAgentConfig {
   const config = expectRecord(value, "simpleagent");
-  const policy = parseSolverToolPolicy(config, "simpleagent", ["bundle", "toolPolicy"]);
+  const policy = parseAgentOptions(config, "simpleagent", ["bundle", "toolPolicy"]);
   const options = config.toolPolicy === undefined ? policy : {
     ...policy, toolPolicy: parseShellToolPolicy(config.toolPolicy, "simpleagent.toolPolicy"),
   };
-  if (config.bundle === undefined) {
-    if (policy.webSearch === "enabled" || policy.webFetch === "enabled") {
-      unsupportedToolPolicy("simpleagent", "web tools require a Bundle with declared tool names");
-    }
-    return options;
-  }
+  if (config.bundle === undefined) return options;
   const bundle = expectRecord(config.bundle, "simpleagent.bundle");
   rejectUnknown(bundle, ["path", "settings", "webSearchTools", "webFetchTools"], "simpleagent.bundle");
   const parsed: PiBundleOptions & WebToolNames = {
     path: expectNonEmptyString(bundle.path, "simpleagent.bundle.path"),
-    ...parseWebToolNames(bundle, "simpleagent.bundle"),
+    ...parseWebToolNames(bundle, "simpleagent.bundle", policy),
   };
   if (bundle.settings !== undefined) {
     const settings = expectRecord(bundle.settings, "simpleagent.bundle.settings");
@@ -174,6 +170,13 @@ export class SimpleAgentSolver implements Solver {
     runner: string,
     context: AttemptContext,
   ): Promise<SolveResult> {
+    if (this.bundle === undefined) {
+      const inactive = (["webFetch", "subagent"] as const).filter(key => this.policy[key] === "disabled");
+      if (inactive.length) context.warning?.({
+        code: "CONFIG_INVALID",
+        message: `simpleagent (Pi without Bundle): ${inactive.map(key => key + ": disabled").join(", ")} has no built-in capability to turn off. The policy still applies to workspace extensions.`,
+      });
+    }
     const extensions = await this.extensions(session, context.signal);
     const runnerInput = projectRunnerInput({
       ...(input.attachments?.length ? { media: await loadAttachments(input, session, context) } : {}),
@@ -184,7 +187,7 @@ export class SimpleAgentSolver implements Solver {
       workdir: session.workdir,
       outputDir: session.agentOutputDir,
       ...(this.toolPolicy === undefined ? {} : { toolPolicy: this.toolPolicy }),
-      ...(Object.keys(this.policy).length === 0 ? {} : { toolAccess: this.policy }),
+      toolAccess: sessionToolPolicy("simpleagent", this.policy, session),
       ...(extensions === undefined ? {} : { extensions }),
     });
     const handle = await session.start(

@@ -1,9 +1,11 @@
+import { modelWithLimits, type AgentLimits } from "./agent-limits.js";
+import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { SimpleAgentSolver, parseSimpleAgentConfig } from "./simpleagent.js";
 import { ChoiceLogprobsSolver, parseChoiceLogprobsConfig } from "./choice-logprobs.js";
-import { AgentBundleSolver, agentBundleModel, parseAgentBundleConfig } from "./agentbundle.js";
+import { AgentBundleSolver, parseAgentBundleConfig } from "./agentbundle.js";
 import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
-import { bindSolverService } from "../../core/contracts/plugin.js";
+import { bindSolverService, type PluginFactoryContext } from "../../core/contracts/plugin.js";
 import { AgentXReplaySolver, parseAgentXReplayConfig } from "./agentx-replay.js";
 import { KernelReplaySolver } from "./kernel-replay.js";
 import { CodexSolver, parseCodexConfig } from "./codex.js";
@@ -13,16 +15,22 @@ import { TraeSolver, parseTraeConfig } from "./trae.js";
 import { CodeBuddySolver, parseCodeBuddyConfig } from "./codebuddy.js";
 import { NativeCodeSolver, parseNativeCodeConfig } from "./native-code.js";
 
+function solverArgs<T extends AgentLimits>(runtime: PluginFactoryContext, config: T) {
+  const bound = bindSolverService(runtime);
+  const { maxTokens, contextWindow, ...options } = config;
+  return [{ ...bound, model: modelWithLimits(bound.model, config) }, options] as const;
+}
+
 export function apply(ctx: Context): void {
   for (const name of ["qwencode", "kimicode", "minimaxcode", "opencode"] as const) {
     ctx.evaluator.register("solver", name, value => parseNativeCodeConfig(name, value),
-      (config, runtime) => new NativeCodeSolver(name, bindSolverService(runtime), config));
+      (config, runtime) => new NativeCodeSolver(name, ...solverArgs(runtime, config)));
   }
-  ctx.evaluator.register("solver", "claudecode", parseClaudeCodeConfig, (config, runtime) => new ClaudeCodeSolver(bindSolverService(runtime), config));
-  ctx.evaluator.register("solver", "codex", parseCodexConfig, (config, runtime) => new CodexSolver(bindSolverService(runtime), config));
-  ctx.evaluator.register("solver", "zcode", parseZCodeConfig, (config, runtime) => new ZCodeSolver(bindSolverService(runtime), config));
-  ctx.evaluator.register("solver", "trae", parseTraeConfig, (config, runtime) => new TraeSolver(bindSolverService(runtime), config));
-  ctx.evaluator.register("solver", "codebuddy", parseCodeBuddyConfig, (config, runtime) => new CodeBuddySolver(bindSolverService(runtime), config));
+  ctx.evaluator.register("solver", "claudecode", parseClaudeCodeConfig, (config, runtime) => new ClaudeCodeSolver(...solverArgs(runtime, config)));
+  ctx.evaluator.register("solver", "codex", parseCodexConfig, (config, runtime) => new CodexSolver(...solverArgs(runtime, config)));
+  ctx.evaluator.register("solver", "zcode", parseZCodeConfig, (config, runtime) => new ZCodeSolver(...solverArgs(runtime, config)));
+  ctx.evaluator.register("solver", "trae", parseTraeConfig, (config, runtime) => new TraeSolver(...solverArgs(runtime, config)));
+  ctx.evaluator.register("solver", "codebuddy", parseCodeBuddyConfig, (config, runtime) => new CodeBuddySolver(...solverArgs(runtime, config)));
   ctx.evaluator.register("solver", "choice-logprobs", parseChoiceLogprobsConfig, (config, runtime) => {
     const { model, auth } = bindSolverService(runtime);
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);
@@ -39,12 +47,14 @@ export function apply(ctx: Context): void {
     parseAgentBundleConfig,
     (config, runtime) => {
       const bound = bindSolverService(runtime);
-      const model = agentBundleModel(bound.model, config.maxTokens, runtime.solverService);
-      const solver = new AgentBundleSolver(runtime.resolvePath(config.path), model, bound.auth, undefined, {
+      const solver = new AgentBundleSolver(runtime.resolvePath(config.path), bound.model, bound.auth, undefined, {
+        limits: {
+          ...(config.maxTokens === undefined ? {} : { maxTokens: config.maxTokens }),
+          ...(config.maxTurns === undefined ? {} : { maxTurns: config.maxTurns }),
+          ...(config.contextWindow === undefined ? {} : { contextWindow: config.contextWindow }),
+        },
         environmentName: runtime.environmentName ?? "local",
-        ...(config.tools === undefined ? {} : { tools: config.tools }),
-        ...(config.webSearch === undefined ? {} : { webSearch: config.webSearch }),
-        ...(config.webFetch === undefined ? {} : { webFetch: config.webFetch }),
+        ...pickSolverToolPolicy(config),
         ...(config.dshhome === undefined ? {} : { dshhome: runtime.resolvePath(config.dshhome) }),
         ...(config.dshprofile === undefined ? {} : { dshprofile: config.dshprofile }),
         ...(config.hermeshome === undefined ? {} : { hermeshome: runtime.resolvePath(config.hermeshome) }),
@@ -66,7 +76,7 @@ export function apply(ctx: Context): void {
     (config, runtime) => {
       const bound = bindSolverService(runtime);
       const solver = new SimpleAgentSolver(
-        bound.model,
+        modelWithLimits(bound.model, config),
         bound.auth,
         config.bundle === undefined
           ? undefined
@@ -76,9 +86,7 @@ export function apply(ctx: Context): void {
             },
         config.toolPolicy,
         {
-          ...(config.tools === undefined ? {} : { tools: config.tools }),
-          ...(config.webSearch === undefined ? {} : { webSearch: config.webSearch }),
-          ...(config.webFetch === undefined ? {} : { webFetch: config.webFetch }),
+          ...pickSolverToolPolicy(config),
           ...(config.bundle?.webSearchTools === undefined ? {} : { webSearchTools: config.bundle.webSearchTools }),
           ...(config.bundle?.webFetchTools === undefined ? {} : { webFetchTools: config.bundle.webFetchTools }),
         },

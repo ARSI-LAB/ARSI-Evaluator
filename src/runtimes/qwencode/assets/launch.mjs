@@ -1,13 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { launchCodeCli, acpRun } from "./runtimes/shared/assets/native-code-launch.mjs";
 
 await launchCodeCli({
   entry: "node_modules/@qwen-code/qwen-code/cli-entry.js",
   enforceMaxTurns: true,
-  async configure({ home, endpoint, env, api, model, token, supportsImages, maxTokens, contextWindow, reasoningEffort, maxTurns, toolPolicy }) {
+  async configure({ home, endpoint, env, api, model, token, supportsImages, supportsPdf, maxTokens, contextWindow, reasoningEffort, maxTurns, toolPolicy, servers }) {
     const protocol = api === "anthropic-messages" ? "anthropic" : "openai";
-    const generationConfig = { modalities: { image: supportsImages },
+    const generationConfig = { modalities: { image: supportsImages, ...(supportsPdf ? { pdf: true } : {}) },
       ...(contextWindow === undefined ? {} : { contextWindowSize: contextWindow }),
       ...(maxTokens === undefined ? {} : { samplingParams: { max_tokens: maxTokens } }),
       ...(reasoningEffort === undefined ? {} : { reasoning: { effort: reasoningEffort } }) };
@@ -15,7 +16,9 @@ await launchCodeCli({
       ...(maxTurns === undefined ? {} : { maxSessionTurns: maxTurns }) },
       modelProviders: { [protocol]: [{ id: model, baseUrl: api === "anthropic-messages" ? endpoint.replace(/\/v1$/u, "") : endpoint, envKey: "EVALUATOR_MODEL_TOKEN",
         ...(api === "openai-responses" ? { wireApi: "responses" } : {}), generationConfig }] },
-      tools: { ...(toolPolicy.tools === "none" ? { toolSearch: { enabled: false } } : {}),
+      ...(toolPolicy.mcp === "disabled" ? { mcp: { allowed: [] } } : {}),
+      ...(toolPolicy.skills === "disabled" ? { skills: { disabledLevels: ["project", "user", "extension", "bundled"] } } : {}),
+      tools: { sandbox: false, ...(toolPolicy.tools === "none" ? { toolSearch: { enabled: false } } : {}),
         ...(toolPolicy.tools === "none" || toolPolicy.webSearch === "disabled" ? { webSearch: { enabled: false } } : {}) },
       telemetry: { enabled: false }, privacy: { usageStatisticsEnabled: false } };
     env.QWEN_HOME = join(home, "qwen");
@@ -40,10 +43,24 @@ await launchCodeCli({
       "omni_clip_image", "omni_clip_audio", "omni_caption_image", "omni_caption_audio", "omni_ocr_image", "omni_understand_video_segments", "omni_recall_media_memory",
     );
     else {
+      if (toolPolicy.subagent === "disabled") deny.push("agent", "create_sub_session", "team_create", "advisor");
       if (toolPolicy.webSearch === "disabled") deny.push("web_search");
       if (toolPolicy.webFetch === "disabled") deny.push("web_fetch");
     }
-    return { args: ["--safe-mode", "--auth-type", protocol, "--model", model, "--approval-mode", "yolo",
+    return { skillsDir: join(env.QWEN_HOME, "skills"), async beforePrompt(send, sessionId) {
+      if (toolPolicy.tools !== "none" || toolPolicy.mcp === "disabled") return;
+      // Qwen returns session/new before it has finished registering MCP tools.
+      for (;;) {
+        const { mcp } = await send("qwen/status/session/resources", { sessionId }, false);
+        if (!mcp.initialized) throw Error("Qwen could not read the session MCP discovery status");
+        if (mcp.discoveryState === "completed" || !mcp.servers.some(server => !server.disabled)) {
+          const missing = (servers ?? []).filter(server => !mcp.servers.some(entry => entry.name === server.name && entry.mcpStatus === "connected"));
+          if (missing.length) throw Error("Qwen could not connect to MCP: " + missing.map(server => server.name).join(", "));
+          return;
+        }
+        await delay(100);
+      }
+    }, args: ["--auth-type", protocol, "--model", model, "--approval-mode", "yolo",
       "--acp",
       ...(maxTurns === undefined ? [] : ["--max-session-turns", String(maxTurns)]),
       ...(deny.length ? ["--exclude-tools", ...deny] : [])] };

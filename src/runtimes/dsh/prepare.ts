@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join, posix } from "node:path";
 import { parse, stringify } from "yaml";
-import { parseSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { expectRecord } from "../../core/validation/input.js";
 
 import type { EnvironmentSession } from "../../core/contracts/environment.js";
@@ -15,7 +15,7 @@ import { canonicalJson } from "../../core/results/run-manifest.js";
 import { AgentBundleError, cliJson, cliOutput, parseInstalledBundle, parseVerifiedBundle, type VerifiedBundle } from "../agentbundle/cli.js";
 import { DSH_VERSION } from "./runtime.js";
 
-import { DSH_AUTH_ENV, DSH_ENDPOINT_PROVIDER, type DshPermissionMode, dshModelPatch, dshPermissionPatch, dshSdkPatch } from "./model.js";
+import { DSH_AUTH_ENV, DSH_ENDPOINT_PROVIDER, dshModelPatch, dshPermissionPatch, dshSdkPatch } from "./model.js";
 import { consumeDsh } from "./protocol.js";
 
 import { acquireRuntimeLock } from "../../infrastructure/runtime-installation/lock.js";
@@ -41,15 +41,10 @@ export async function prepareDsh(
   const path = local ? join : posix.join;
   const node = local ? process.execPath : "node";
   const profile = preparation.options.dshprofile ?? "evaluator";
-  const { tools, webSearch, webFetch } = preparation.options;
-  const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "DSH");
+  const policy = pickSolverToolPolicy(preparation.options);
+  const { tools, webSearch, webFetch } = policy;
   const restricted = Object.keys(policy).length > 0;
-  // A Docker task container is disposable and verified in an independent
-  // session, so the container is the isolation boundary. DSH's host sandbox
-  // backends (bwrap, Landlock) are missing from many container kernels, such
-  // as Docker Desktop's, where workspace-write would reject every command.
-  const permissionMode: DshPermissionMode = local ? "workspace-write" : "danger-full-access";
-  const permissionPatch = dshPermissionPatch(permissionMode);
+  const permissionPatch = dshPermissionPatch();
   // Isolated environments expose the model API at a mapped loopback endpoint;
   // the original configured endpoint stays authoritative in run records.
   const mapping = session.modelEndpoint;
@@ -91,7 +86,7 @@ export async function prepareDsh(
     USERPROFILE: home,
     DSH_BIN: dsh,
     DSH_HOME: home,
-    DSH_PERMISSION_MODE: permissionMode,
+    DSH_PERMISSION_MODE: "danger-full-access",
     DSH_TELEMETRY_DISABLED: "1",
     AGENT_BUNDLE_REGISTRY: path(state, "registry.json"),
   };
@@ -152,30 +147,40 @@ export async function prepareDsh(
       await session.upload(permissions, patch, context.signal);
     }
     const overlays = [modelOverlay, patch];
-    if (restricted) {
+    const fallback = candidate.harness.actualVersion === DSH_VERSION && tools !== "none" && webSearch !== "disabled";
+    if (restricted || fallback) {
       const policyPatch = path(state, "tools.patch.yaml");
-      const rows: Record<string, unknown>[] = [
+      const rows: Record<string, unknown>[] = restricted ? [
         { insert: [{ id: "evaluator-tool-policy", name: path(runtime.root, "dsh-tool-policy.mjs"), config: policy }] },
-      ];
-      if (tools === "none") {
-        rows.unshift({ id: "tool-executor-native", disabled: false }, { id: "tool-executor-ptc", disabled: true });
-      } else {
+      ] : [];
+      if (fallback) {
+        rows.push({ insert: [{ id: "evaluator-search", name: path(runtime.root, "runtimes", "dsh", "assets", "search.mjs"),
+          config: { api: preparation.model.api, baseUrl: mapping?.baseUrl ?? preparation.model.endpoint, model: preparation.model.name } }] });
+      }
+      if (tools === "none") rows.unshift({ id: "tool-executor-native", disabled: false }, { id: "tool-executor-ptc", disabled: true });
+      if (restricted) {
         const dump = await cliOutput(start, {
           executable: node, args: [dsh, "--profile", profile, "--dump-config"], cwd: session.workdir,
           env, inheritEnv: false, input: null,
         }, context.signal);
         const tree: unknown = parse(dump);
         if (!Array.isArray(tree)) throw new AgentBundleError("SOLVER_PROTOCOL_INVALID", "DSH composed Profile is not a patch list");
-        const web = tree.find((item: unknown) => typeof item === "object" && item !== null && "id" in item && item.id === "tool-web");
-        const config = web === undefined || web.config === undefined ? {} : expectRecord(web.config, "DSH tool-web config");
-        if (web !== undefined) {
-          rows.unshift({ id: "tool-web",
-            ...(webSearch === "enabled" || webFetch === "enabled" ? { disabled: false } : {}),
-            config: { ...config,
-              ...(webSearch === undefined ? {} : { search: webSearch === "enabled" }),
-              ...(webFetch === undefined ? {} : { fetch: webFetch === "enabled" }),
-            },
-          });
+        for (const item of tree) {
+          if (typeof item?.name !== "string" || typeof item.id !== "string") continue;
+          const module = item.name.replace(/^@deepseek-ai\/dsh-/u, "");
+          if ((policy.mcp === "disabled" && ["mcp-client", "mcp-resources"].includes(module)) ||
+              (policy.skills === "disabled" && /^(skill($|-)|tool-skill$)/u.test(module)) ||
+              (policy.subagent === "disabled" && /^(tool-)?subagent($|-)/u.test(module))) {
+            rows.unshift({ id: item.id, disabled: true });
+          }
+          if (module === "tool-web" && (webSearch || webFetch)) {
+            rows.unshift({ id: item.id,
+              ...(webSearch === "enabled" || webFetch === "enabled" ? { disabled: false } : {}),
+              config: { ...expectRecord(item.config ?? {}, "DSH tool-web config"),
+                ...(webSearch === undefined ? {} : { search: webSearch === "enabled" }),
+                ...(webFetch === undefined ? {} : { fetch: webFetch === "enabled" }) },
+            });
+          }
         }
       }
       const content = stringify(rows);
@@ -196,6 +201,28 @@ export async function prepareDsh(
     return preparedAttempt(
       release,
       async (input, signal) => {
+        const attemptOverlays = [...overlays];
+        const resources: Record<string, unknown>[] = [];
+        if (policy.mcp !== "disabled") {
+          for (const [index, server] of (input.mcpServers ?? []).entries()) {
+            if (server.transport !== "http") throw new AgentBundleError("CONFIG_INVALID", "DSH task MCP requires streamable HTTP");
+            resources.push({ id: "evaluator-task-mcp-" + index, name: "@deepseek-ai/dsh-mcp-client",
+              config: { transport: "streamable-http", serverName: server.name, url: server.url, failOnStartupError: true } });
+          }
+        }
+        if (policy.skills !== "disabled" && input.skillsDirectories?.length) {
+          resources.push({ id: "evaluator-task-skills", name: "@deepseek-ai/dsh-skill-filesystem",
+            config: { providerName: "evaluator-task", includeDefaultRoots: false, customSkillDirs: input.skillsDirectories } });
+        }
+        if (resources.length) {
+          const file = join(context.paths.agent, "task-resources.patch.yaml");
+          const overlay = path(state, "task-resources.patch.yaml");
+          const content = stringify([{ insert: resources }]);
+          await writeFile(file, content, { mode: 0o600 });
+          if (customHome) await writeHomeConfig(overlay, content);
+          else await session.upload(file, overlay, signal);
+          attemptOverlays.push(overlay);
+        }
         if (input.attachments?.length) {
           if (candidate.harness.actualVersion !== undefined && candidate.harness.actualVersion !== DSH_VERSION) {
             throw new AgentBundleError("BENCHMARK_UNSUPPORTED", `DSH multimodal input requires validated version ${DSH_VERSION}`);
@@ -203,14 +230,14 @@ export async function prepareDsh(
           requireInputModalities(input, (preparation.model.inputModalities ?? ["text"]).filter(kind => kind !== "pdf"));
           const media = await loadAttachments(input, session, { ...context, signal });
           const sdkPatch = join(context.paths.agent, "sdk.patch.yaml");
-          await writeFile(sdkPatch, dshSdkPatch(profile, session.workdir, permissionMode));
+          await writeFile(sdkPatch, dshSdkPatch(profile, session.workdir));
           const sdkOverlay = path(state, "sdk.patch.yaml");
           if (customHome) await writeHomeConfig(sdkOverlay, await readFile(sdkPatch, "utf8"));
           else await session.upload(sdkPatch, sdkOverlay, signal);
           signal.throwIfAborted();
           return start({ executable: node, args: [path(runtime.root, "dsh-multimodal-runner.mjs")], cwd: session.workdir,
             env: { ...env, [DSH_AUTH_ENV]: preparation.auth.value }, inheritEnv: false,
-            input: Buffer.from(JSON.stringify({ dsh, home, profile, key: context.key, patches: [...overlays, sdkOverlay],
+            input: Buffer.from(JSON.stringify({ dsh, home, profile, key: context.key, patches: [...attemptOverlays, sdkOverlay],
               moduleBase: local && preparation.localDsh ? preparation.localDsh.entry : path(runtime.root, "package.json"),
               workdir: session.workdir, outputDir: session.agentOutputDir, prompt: input.prompt, media,
               provider: preparation.model.endpoint === null ? preparation.model.provider : DSH_ENDPOINT_PROVIDER, model: preparation.model.name,
@@ -220,7 +247,7 @@ export async function prepareDsh(
           {
             executable: node,
             args: [...(local && preparation.localDsh ? [] : ["--import", outputHook]), dsh, "--profile", profile,
-              ...overlays.flatMap(overlay => ["--patch", overlay]), "--json"],
+              ...attemptOverlays.flatMap(overlay => ["--patch", overlay]), "--json"],
             cwd: session.workdir,
             env: { ...env, [DSH_AUTH_ENV]: preparation.auth.value, EVALUATOR_DSH_OUTPUT_DIR: session.agentOutputDir },
             inheritEnv: false,

@@ -38,7 +38,7 @@ function fakeLocalSession(options: {
   verifyDigest?: string;
   runtimeRoot: string;
   stateRoot: string;
-  jiuwenswarm: string;
+  python: string;
 }): {
   session: EnvironmentSession;
   started: CommandSpec[];
@@ -80,7 +80,7 @@ function fakeLocalSession(options: {
           });
         throw new Error(`unexpected CLI command: ${spec.args.join(" ")}`);
       }
-      if (spec.executable === options.jiuwenswarm) {
+      if (spec.executable === options.python) {
         solve = spec;
         return fakeHandle({});
       }
@@ -138,6 +138,9 @@ describe("agentbundle jiuwenswarm local preparation", () => {
     const jiuwenswarm = join(paths.root, "jiuwenswarm-process.exe");
     await writeFile(jiuwenswarm, "");
     await chmod(jiuwenswarm, 0o755);
+    const python = join(paths.root, process.platform === "win32" ? "python.exe" : "python");
+    await writeFile(python, "");
+    await chmod(python, 0o755);
     const previous = process.env["JIUWENSWARM_BIN"];
     process.env["JIUWENSWARM_BIN"] = jiuwenswarm;
     try {
@@ -145,7 +148,7 @@ describe("agentbundle jiuwenswarm local preparation", () => {
         verifyDigest: digest,
         runtimeRoot: paths.runtimeRoot,
         stateRoot: paths.stateRoot,
-        jiuwenswarm,
+        python,
       });
       const solver = localSolver(timeoutSeconds);
       await solver.provenance(signal);
@@ -167,8 +170,8 @@ describe("agentbundle jiuwenswarm local preparation", () => {
       expect(state.startsWith(paths.stateRoot)).toBe(true);
 
       const solve = solveSpec();
-      expect(solve?.executable).toBe(jiuwenswarm);
-      expect(solve?.args).toEqual(["hello", "--output", "json", "--cwd", "/workspace", "--timeout", String(timeoutSeconds ?? 600)]);
+      expect(solve?.executable).toBe(python);
+      expect(solve?.args).toEqual([join(paths.runtimeRoot, "jiuwenswarm", "multimodal-runner.py"), "hello", "--output", "json", "--cwd", "/workspace", "--timeout", String(timeoutSeconds ?? 600)]);
       expect(solve?.cwd).toBe("/workspace");
       expect(solve?.env).toMatchObject({
         PYTHONIOENCODING: "utf-8",

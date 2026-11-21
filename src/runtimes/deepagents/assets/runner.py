@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """arsi-evaluator deepagents runner: run one bundle task headlessly.
 
-Launched by the evaluator as ``<venv>/bin/python runner.py --bundle-dir <bundle>``
+Launched by the evaluator as ``<venv>/bin/python runner.py --bundle-dir <bundle> --factory-module <module>``
 with the task prompt on stdin and cwd set to the task workspace. Emits the
 evaluator harness event stream (same wire shape as the DSH 0.1.6-alpha.2
 ``--json`` protocol) on stdout, so the evaluator consumes both harnesses with
@@ -14,15 +14,18 @@ one stream consumer:
 
 Stdout fd 1 is redirected to stderr before the bundle import: anything the
 composition, plugins or tools print goes to stderr evidence, never into the
-protocol stream. The composition entry (``agent.py``) resolves the model from
-AGENT_MODEL_* environment variables at import time.
+protocol stream. The declared factory receives the run policy and resources before graph construction.
 """
 
 import argparse
+import asyncio
+import importlib.util
+import inspect
 import base64
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -92,7 +95,7 @@ def _message_role(msg) -> str:
     return str(getattr(msg, "type", type(msg).__name__.lower()))
 
 
-def _run(bundle_dir: Path, emitter: Emitter) -> int:
+async def _run(bundle_dir: Path, factory_module: str, emitter: Emitter) -> int:
     request = json.loads(sys.stdin.read())
     task = request["prompt"]
     media = request.get("media", [])
@@ -118,7 +121,16 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
 
     if str(bundle_dir) not in sys.path:
         sys.path.insert(0, str(bundle_dir))
-    import agent as composition  # noqa: E402  (bundle dir must be on sys.path first)
+    module_path = (bundle_dir / factory_module).resolve()
+    if not module_path.is_relative_to(bundle_dir) or module_path.suffix != ".py":
+        raise ValueError("DeepAgents factory module must be a Python file inside the bundle")
+    module_name = ".".join(module_path.relative_to(bundle_dir).with_suffix("").parts)
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load DeepAgents factory at {module_path}")
+    composition = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = composition
+    spec.loader.exec_module(composition)
 
     try:
         from langchain.agents.middleware import AgentMiddleware
@@ -139,7 +151,11 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
                 self.system_prompts.append(system_message.content)
             return handler(request)
 
+        async def awrap_model_call(self, request, handler):
+            return await self.wrap_model_call(request, handler)
+
     recorder = RecorderMiddleware()
+    tools = []
     if request.get("imageTools"):
         from langchain.tools import tool, ToolRuntime
         from langchain_core.messages import HumanMessage, ToolMessage
@@ -167,8 +183,33 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
                 HumanMessage(content=[{"type": "image_url", "image_url": {"url": uri}}]),
             ]})
 
-        recorder.tools = [view_image]
-    graph = composition.build_agent((recorder,))
+        tools.append(view_image)
+    if request.get("webSearch"):
+        from langchain.tools import tool
+
+        @tool
+        def evaluator_web_search(query: str) -> str:
+            """Search public sources when native search is unavailable or returns no sources."""
+            script = Path(__file__).resolve().parents[1] / "runtimes/shared/assets/search-stdio.mjs"
+            result = subprocess.run(
+                ["node", str(script), "--query", "openai-completions", os.environ["OPENAI_BASE_URL"],
+                 model_name, "OPENAI_API_KEY"],
+                input=query, capture_output=True, text=True, timeout=130, check=False,
+            )
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or "Supplementary web search failed")
+            return result.stdout
+
+        tools.append(evaluator_web_search)
+    graph = composition.build_agent_for_run(
+        policy=request.get("toolPolicy", {}),
+        mcp_servers=request.get("mcpServers", []),
+        skills_directories=request.get("skillsDirectories", []),
+        tools=tools,
+        middleware=(recorder,),
+    )
+    if inspect.isawaitable(graph):
+        graph = await graph
     content = [{"type": "text", "text": task}]
     for item in media:
         uri = f"data:{item['mediaType']};base64,{item['data']}"
@@ -176,7 +217,8 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
             content.append({"type": "file", "file": {"filename": item["name"], "file_data": uri}})
         else:
             content.append({"type": "image_url", "image_url": {"url": uri}})
-    result = graph.invoke({"messages": [("user", content if media else task)]})
+    state = {"messages": [("user", content if media else task)]}
+    result = await graph.ainvoke(state) if hasattr(graph, "ainvoke") else graph.invoke(state)
 
     for system_prompt in recorder.system_prompts:
         emitter.emit({"type": "system_prompt", "text": _serialize_content(system_prompt)})
@@ -263,12 +305,13 @@ def _run(bundle_dir: Path, emitter: Emitter) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle-dir", required=True, help="installed bundle directory containing the composition entry")
+    parser.add_argument("--factory-module", required=True)
     parser.add_argument("--json", action="store_true", help="accepted for CLI symmetry; output is always the event stream")
     args = parser.parse_args()
 
     emitter = Emitter()
     try:
-        return _run(Path(args.bundle_dir).resolve(), emitter)
+        return asyncio.run(_run(Path(args.bundle_dir).resolve(), args.factory_module, emitter))
     except BaseException as error:  # noqa: BLE001 - the protocol owns failure reporting
         emitter.emit({"type": "error", "message": f"{type(error).__name__}: {error}"})
         emitter.flush()

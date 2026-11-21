@@ -1,3 +1,4 @@
+import { stageSkills, taskServers } from "./task-resources.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -44,8 +45,14 @@ export async function launchCodeCli({ entry, native = false, enforceMaxTurns = f
   const input = JSON.parse(readFileSync(0, "utf8"));
   await mkdir(home, { recursive: true, mode: 0o700 });
   let relay;
+  let resources;
+  let options;
   try {
-    relay = await startModelRelay({ ...input, noTools: input.toolPolicy.tools === "none", captureUsage: true,
+    resources = await taskServers(input, entry.includes("opencode-ai"));
+    relay = await startModelRelay({ ...input, completeSearch: resources.completeSearch, disableBuiltinTools: input.toolPolicy.tools === "none", disableMcp: input.toolPolicy.mcp === "disabled",
+      isMcpTool: name => options?.isMcpTool ? options.isMcpTool(name) : name.startsWith("mcp__"),
+      disableHostedSearch: input.toolPolicy.webSearch === "disabled",
+      disableWebFetch: input.toolPolicy.webFetch === "disabled", captureUsage: true,
       maxModelCalls: enforceMaxTurns ? input.maxTurns : undefined });
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !/^(?:QWEN_|OPENAI_|ANTHROPIC_|KIMI_|MINIMAX_|MAVIS_|OPENCODE_|OTEL_|DASHSCOPE_|ENABLE_WEB_)/iu.test(name)));
@@ -61,7 +68,13 @@ export async function launchCodeCli({ entry, native = false, enforceMaxTurns = f
       await writeFile(target, Buffer.from(media.data, "base64"), { mode: 0o600 });
       files.push(target);
     }
-    const options = await configure({ ...input, home, endpoint: relay.endpoint, env, files });
+    options = await configure({ ...input, executable, servers: resources.servers, home, endpoint: relay.endpoint, env, files });
+    if (input.toolPolicy.skills !== "disabled") {
+      await stageSkills(input.skillsDirectories, options.skillsDir ?? join(home, ".agents", "skills"));
+    }
+    if (run === acpRun) {
+      options.mcpServers = resources.servers;
+    }
     const child = spawn(executable, [...prefix, ...options.args], {
       cwd: process.cwd(), env, stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
     });
@@ -86,6 +99,7 @@ export async function launchCodeCli({ entry, native = false, enforceMaxTurns = f
     emit({ type: "evaluator.error", message: String(error.message ?? error) });
     process.exitCode = 1;
   } finally {
+    resources?.close?.();
     relay?.close();
     await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
@@ -108,23 +122,24 @@ export async function acpRun({ child, exited, input, options }) {
   let sequence = 0;
   let finalText = "";
   const pending = new Map();
-  const send = (method, params) => new Promise((resolveRequest, reject) => {
+  const send = (method, params, recordResponse = true) => new Promise((resolveRequest, reject) => {
     const id = ++sequence;
-    pending.set(id, { resolve: resolveRequest, reject });
+    pending.set(id, { resolve: resolveRequest, reject, recordResponse });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
   const failPending = error => { for (const p of pending.values()) p.reject(error); pending.clear(); };
   const reader = (async () => {
     try {
       for await (const message of nativeMessages(child.stdout)) {
-        emit({ type: "acp.message", message });
+        // Status queries can include project MCP configuration and credentials.
+        if (message.method || pending.get(message.id)?.recordResponse !== false) emit({ type: "acp.message", message });
         if (message.method === "session/update") {
           const update = message.params?.update;
           if (update?.sessionUpdate === "tool_call") finalText = "";
           if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") finalText += update.content.text;
         } else if (message.method && message.id !== undefined) {
-          const option = message.params?.options?.find(item => item.kind === "allow_once");
-          const result = { outcome: input.toolPolicy.tools === "none" || !option ? { outcome: "cancelled" }
+          const option = message.params?.options?.find(item => item.kind === "allow_once" || item.kind === "allow_always");
+          const result = { outcome: !option ? { outcome: "cancelled" }
             : { outcome: "selected", optionId: option.optionId } };
           child.stdin.write(JSON.stringify(message.method === "session/request_permission"
             ? { jsonrpc: "2.0", id: message.id, result }
@@ -146,11 +161,33 @@ export async function acpRun({ child, exited, input, options }) {
   reader.catch(() => {});
   try {
     const initialized = await send("initialize", { protocolVersion: 1, clientCapabilities: {} });
-    if (input.media?.length && !initialized.agentCapabilities?.promptCapabilities?.image) throw Error("Native ACP did not advertise image input");
-    const { sessionId } = await send("session/new", { cwd: process.cwd(), mcpServers: [] });
+    const capabilities = initialized.agentCapabilities?.promptCapabilities;
+    const attachments = (input.media ?? []).map(media => {
+      if (media.mediaType === "application/pdf") {
+        if (!capabilities?.embeddedContext) throw Error("Native ACP did not advertise embedded resource input for PDFs");
+        return { type: "resource", resource: {
+          uri: "file:///attachments/" + encodeURIComponent(media.name), mimeType: media.mediaType, blob: media.data,
+        } };
+      }
+      if (!capabilities?.image) throw Error("Native ACP did not advertise image input");
+      return { type: "image", mimeType: media.mediaType, data: media.data };
+    });
+    const transports = initialized.agentCapabilities?.mcpCapabilities ?? {};
+    const mcpServers = [];
+    for (const { name, transport, url } of options.mcpServers ?? []) {
+      if (transports[transport]) mcpServers.push({ type: transport, name, url, headers: [] });
+      else if (transport === "http" && !input.mcpServers?.some(server => server.name === name)) {
+        // ACP requires stdio transport even when HTTP servers are optional.
+        mcpServers.push({ name, command: process.execPath, args: [join(import.meta.dirname, "search-stdio.mjs"), url], env: [] });
+      } else if ((input.mcpServers ?? []).some(server => server.name === name) || input.toolPolicy.webSearch === "enabled" && !options.nativeSearchUsesExa) {
+        throw Error(`Native ACP does not support ${transport} MCP for ${name}`);
+      }
+    }
+    const { sessionId } = await send("session/new", { cwd: process.cwd(), mcpServers });
     if (options.modeId) await send("session/set_mode", { sessionId, modeId: options.modeId });
+    await options.beforePrompt?.(send, sessionId);
     const result = await send("session/prompt", { sessionId, prompt: [
-      { type: "text", text: input.prompt }, ...(input.media ?? []).map(media => ({ type: "image", mimeType: media.mediaType, data: media.data })),
+      { type: "text", text: input.prompt }, ...attachments,
     ] });
     if (result.stopReason !== "end_turn") throw Error(`Native ACP stopped: ${result.stopReason}`);
     if (!finalText.trim()) throw Error("Native ACP completed without a final answer");

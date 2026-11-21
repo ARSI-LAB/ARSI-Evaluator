@@ -1,0 +1,29 @@
+{
+  "package": "@minimax-ai/code",
+  "version": "0.7.8",
+  "files": [
+    {
+      "path": "chunks/chunk-CUW4IHOK.js",
+      "beforeSha256": "bfdaf8f9bf1f4d921222d37341b1503ddd58c2132694799c2347ffbc9bc38c54",
+      "afterSha256": "918d4055190d28713f5ecd50a39b670d9041eb69baa08af23f5b51c6028b9ba2",
+      "replacements": [
+        {
+          "before": "async resolve(t){if(!t?.workspaceRoot||!t.sessionId)return{};let n=await qUs(t.workspaceRoot)",
+          "after": "async resolve(t){if(process.env.EVALUATOR_DISABLE_MCP===\"1\"||!t?.workspaceRoot||!t.sessionId)return{};let n=await qUs(t.workspaceRoot)"
+        },
+        {
+          "before": "try{_=await this.options.runtime.runTurn(",
+          "after": "let evaluatorTurnsLeft=t.session.parentSessionId?0:Number(process.env.MINIMAX_EVALUATOR_MAX_TURNS);try{_=await this.options.runtime.runTurn("
+        },
+        {
+          "before": "llm:{...n.llm,...dis(this.options.outputTokenCap,t),",
+          "after": "llm:{...n.llm,...(evaluatorTurnsLeft>0?{consumeEvaluatorTurn(){if(evaluatorTurnsLeft===0)throw new Error(\"MiniMax Code result: limit_exceeded (maxTurns)\");evaluatorTurnsLeft--}}:{}),...dis(this.options.outputTokenCap,t),"
+        },
+        {
+          "before": "return delete d.resendPhase,I??(u++===0?\"initial\":\"iteration\")",
+          "after": "return delete d.resendPhase,I??(n.consumeEvaluatorTurn?.(),u++===0?\"initial\":\"iteration\")"
+        }
+      ]
+    }
+  ]
+}

@@ -12,26 +12,43 @@ from pathlib import Path
 
 
 def main() -> None:
-    media = json.load(sys.stdin)
+    incoming = json.load(sys.stdin)
+    # Older image-only callers send a media array.
+    media = incoming if isinstance(incoming, list) else incoming.get("media", [])
+    resources = {} if isinstance(incoming, list) else incoming
     if os.environ.get("EVALUATOR_REASONING_EFFORT"):
         from reasoning_effort import install_openai_reasoning_effort
 
         install_openai_reasoning_effort(
             os.environ["EVALUATOR_REASONING_EFFORT"], os.environ["MODEL_NAME"]
         )
+    policy_errors = []
     tool_policy = json.loads(os.environ.pop("EVALUATOR_JIUWENSWARM_TOOL_POLICY", "{}"))
-    if tool_policy:
-        with contextlib.redirect_stdout(sys.stderr):
+    with contextlib.redirect_stdout(sys.stderr):
+        if tool_policy:
             from tool_policy import install_tool_policy
 
-            install_tool_policy(tool_policy)
+            install_tool_policy(tool_policy, policy_errors.append)
+        from tool_policy import install_task_resources
+
+        install_task_resources(tool_policy, resources)
     # Keep the original CLI's renderer, cancellation, permissions and Runtime close.
     # Only its text-only request builder needs an attachment bridge.
     with contextlib.redirect_stdout(sys.stderr):
         from jiuwenswarm.channels.process_cli import app
         from jiuwenswarm.channels.process_cli.main import main as cli_main
+    def run_cli():
+        try:
+            cli_main()
+        finally:
+            # The SDK can finish a turn normally after a rail stops it. Keep the
+            # diagnostic out of scored answers and let the host classify it.
+            if policy_errors:
+                print("\n" + json.dumps({"evaluatorConfigurationError": policy_errors[0]}), flush=True)
+                raise SystemExit(78)
+
     if not media:
-        cli_main()
+        run_cli()
         return
     with contextlib.redirect_stdout(sys.stderr):
         from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenSwarmDeepAdapter
@@ -101,7 +118,7 @@ def main() -> None:
             return request
 
         app._build_request = build_request
-        cli_main()
+        run_cli()
 
 
 if __name__ == "__main__":

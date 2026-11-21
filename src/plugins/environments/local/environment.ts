@@ -222,6 +222,7 @@ class LocalSession implements EnvironmentSession {
     runtimes: { name: string; version: string; executable: string }[],
     runtime?: RuntimeLocation,
     private readonly defaultEnv: Record<string, string> = {},
+    readonly solveNetwork?: EnvironmentSpec["network"],
   ) {
     if (runtime) this.runtime = runtime;
     this.metadata = {
@@ -476,7 +477,7 @@ export class LocalEnvironment implements Environment {
       await mkdir(workdir, { recursive: true });
       await access(workdir, constants.R_OK | constants.W_OK);
       aborted(signal);
-      return new LocalSession(workspace, workdir, paths.agent, paths.verifier, phase, runtimes, runtime, spec.env);
+      return new LocalSession(workspace, workdir, paths.agent, paths.verifier, phase, runtimes, runtime, spec.env, spec.network);
     } catch (error) {
       await rm(createdWorkspace, { recursive: true, force: true });
       throw error;

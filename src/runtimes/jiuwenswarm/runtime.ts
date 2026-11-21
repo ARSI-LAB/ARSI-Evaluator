@@ -1,6 +1,7 @@
+import { bundleSearchFiles } from "../shared/task-resource-files.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { createHash } from "node:crypto";
-import { access, constants, readFile } from "node:fs/promises";
+import { access, constants, readFile, realpath } from "node:fs/promises";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
@@ -27,9 +28,9 @@ const jiuwenswarmToolPolicy = {
 
 /** Use the installed entry point's environment, never an unrelated system Python. */
 export async function resolveJiuwenswarmPython(command: string): Promise<string> {
-  const python = join(dirname(command), process.platform === "win32" ? "python.exe" : "python");
+  const python = join(dirname(await realpath(command)), process.platform === "win32" ? "python.exe" : "python");
   if (!(await isExecutable(python)))
-    throw new JiuwenswarmRuntimeError("ENV_RUNTIME_INSTALL_FAILED", "JiuwenSwarm image input requires the Python interpreter beside its process CLI entry point");
+    throw new JiuwenswarmRuntimeError("ENV_RUNTIME_INSTALL_FAILED", "JiuwenSwarm requires the Python interpreter beside its process CLI entry point");
   return python;
 }
 /** Default headless task deadline; agentbundle.jiuwenswarmTimeoutSeconds can override it. */
@@ -164,7 +165,7 @@ export async function resolveJiuwenswarmCommand(
  */
 export async function jiuwenswarmRuntimeInstallation(signal: AbortSignal): Promise<RuntimeInstallation> {
   signal.throwIfAborted();
-  const files = [...await agentBundleRuntimeFiles(),
+  const files = [...await agentBundleRuntimeFiles(), ...bundleSearchFiles(),
     { source: jiuwenswarmMultimodalRunner, target: "jiuwenswarm/multimodal-runner.py" }, jiuwenswarmToolPolicy,
     { source: fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url)), target: "jiuwenswarm/reasoning_effort.py" }];
   const hash = createHash("sha256").update("jiuwenswarm-runtime-sdk-1");
@@ -249,6 +250,7 @@ export async function jiuwenswarmDockerRuntimeInstallation(
   };
   const files = [
     ...agentBundleFiles,
+    ...bundleSearchFiles(),
     { source: jiuwenswarmMultimodalRunner, target: "jiuwenswarm/multimodal-runner.py" },
     { source: fileURLToPath(new URL("../shared/assets/reasoning_effort.py", import.meta.url)), target: "jiuwenswarm/reasoning_effort.py" },
     jiuwenswarmToolPolicy,

@@ -1,10 +1,11 @@
+import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { searchWeb } from "../../infrastructure/network/web-search.mjs";
 import { requireInputModalities } from "../multimodal/input.js";
 import { externalizeMedia } from "../multimodal/evidence.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
 import {
   createAgentSession,
   createBashToolDefinition,
-  createExtensionRuntime,
   createLocalBashOperations,
   createPowerShellToolDefinition,
   DefaultResourceLoader,
@@ -20,7 +21,7 @@ import { InMemoryCredentialStore, type Api, type AssistantMessage, type Provider
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -101,37 +102,22 @@ function redact(value: JsonValue, secret: string): JsonValue {
   return value;
 }
 
-function explicitResources(systemPrompt: string): ResourceLoader {
-  const extensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
-  return {
-    getExtensions: () => extensions,
-    getSkills: () => ({ skills: [], diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => systemPrompt,
-    getSystemPromptSource: () => undefined,
-    getAppendSystemPrompt: () => [],
-    getAppendSystemPromptSources: () => [],
-    extendResources: () => {},
-    reload: async () => {},
-  };
-}
-
-/**
- * Build the session resource loader. Without extensions the loader is a fixed
- * baseline (no discovery at all). With extensions the SDK's own loader is used
- * so a bundle behaves exactly as under native Pi, while discovery of project
- * and personal resources stays off: the run differs from the baseline by the
- * extensions alone.
- */
 async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsManager, systemPrompt: string): Promise<ResourceLoader> {
-  const noTools = input.toolAccess?.tools === "none";
-  const skillPaths = noTools ? [] : input.input.skillsDirectories ?? [];
-  const factories = [...(!noTools && input.input.mcpServers?.length ? [taskMcpExtension(input.input.mcpServers, join(input.outputDir, "mcp.log"))] : [])];
+  const noSkills = input.toolAccess?.skills === "disabled";
+  const skillPaths = new Set(noSkills ? [] : input.input.skillsDirectories);
+  if (!noSkills) {
+    for (const folder of [".pi", ".agents"]) {
+      const path = join(input.workdir, folder, "skills");
+      const directory = await stat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      if (directory?.isDirectory()) skillPaths.add(path);
+    }
+  }
+  const factories = [...(input.toolAccess?.mcp !== "disabled" && input.input.mcpServers?.length ? [taskMcpExtension(input.input.mcpServers, join(input.outputDir, "mcp.log"))] : [])];
   if (input.piConfigDir !== undefined) {
     const settings = await installedPiSettings(input.piConfigDir);
-    const extensions = noTools ? [] : stringPaths(settings.extensions, "installed Pi settings.extensions");
+    const extensions = stringPaths(settings.extensions, "installed Pi settings.extensions");
     const instructions = join(input.piConfigDir, "AGENTS.md");
     const instructionText = await readFile(instructions, "utf8");
     const loader = new DefaultResourceLoader({
@@ -139,9 +125,8 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
       agentDir: input.piConfigDir,
       settingsManager,
       additionalExtensionPaths: extensions,
-      additionalSkillPaths: noTools ? [] : [join(input.piConfigDir, "skills"), ...skillPaths],
+      additionalSkillPaths: noSkills ? [] : [join(input.piConfigDir, "skills"), ...skillPaths],
       extensionFactories: factories,
-      noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
@@ -155,10 +140,11 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
       throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED",
         `extension load failed: ${loaded.errors.map(error => `${error.path}: ${error.error}`).join("; ")}`);
     }
-    if (!noTools && loaded.extensions.length === 0) throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED", "no extension was loaded");
+    if (loaded.extensions.length === 0) throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED", "no extension was loaded");
+    if (noSkills) loader.getSkills = () => ({ skills: [], diagnostics: [] });
     return loader;
   }
-  const extensionPaths = noTools ? [] : input.extensions ?? [];
+  const extensionPaths = input.extensions ?? [];
   // An empty temporary agent directory keeps the host's personal pi
   // configuration out of the evaluation.
   const agentDir = await mkdtemp(join(tmpdir(), "evaluator-pi-agent-"));
@@ -167,13 +153,11 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
     agentDir,
     settingsManager,
     additionalExtensionPaths: extensionPaths,
-    additionalSkillPaths: skillPaths,
+    additionalSkillPaths: [...skillPaths],
     extensionFactories: factories,
-    noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    noContextFiles: true,
     systemPrompt,
   });
   await loader.reload();
@@ -183,6 +167,7 @@ async function resourceLoaderFor(input: RunnerInput, settingsManager: SettingsMa
       `extension load failed: ${loaded.errors.map(error => `${error.path}: ${error.error}`).join("; ")}`);
   }
   if (loaded.extensions.length === 0 && extensionPaths.length > 0) throw new RunnerFailure("ENV_RUNTIME_INSTALL_FAILED", "no extension was loaded");
+  if (noSkills) loader.getSkills = () => ({ skills: [], diagnostics: [] });
   return loader;
 }
 
@@ -222,17 +207,8 @@ async function inputFromStdin(): Promise<RunnerInput> {
   }
 }
 
-/** Reserve headroom the summarizer needs to write a compaction summary. */
-export const COMPACTION_RESERVE_TOKENS = 16_384;
-
-/**
- * The context budget controls when the session compacts older history instead of failing on
- * provider-side truncation. The registered window adds the summarizer reserve
- * so compaction triggers exactly at the configured threshold.
- */
-export function contextWindowFor(contextBudget: number | undefined): number {
-  return (contextBudget ?? 128_000) + COMPACTION_RESERVE_TOKENS;
-}
+// Preserve the existing fallback for custom models without catalog metadata.
+const DEFAULT_CONTEXT_WINDOW = 128_000 + 16_384;
 
 function serviceStream(model: RunnerInput["model"], api: string): ProviderStreams["streamSimple"] | undefined {
   const useProviderBudget = api === "openai-completions" && model.maxTokens === undefined;
@@ -277,7 +253,7 @@ export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
           }),
           input: (input.model.inputModalities ?? registered?.input ?? ["text"]).filter((kind): kind is "text" | "image" => kind !== "pdf"),
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: contextWindowFor(input.model.contextWindow ?? input.model.maxTokens),
+          contextWindow: input.model.contextWindow ?? registered?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
           maxTokens,
         },
       ],
@@ -290,10 +266,11 @@ export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
   await runtime.setRuntimeApiKey(providerId, input.auth.value);
   const model = runtime.getModel(providerId, input.model.name);
   if (!model) throw new RunnerFailure("MODEL_REQUEST_INVALID", `model ${providerId}/${input.model.name} is not available`);
-  if (input.model.maxTokens === undefined) return { ...model, ...(input.model.inputModalities === undefined ? {} : { input: input.model.inputModalities.filter((kind): kind is "text" | "image" => kind !== "pdf") }),
-    ...(input.model.contextWindow === undefined ? {} : { contextWindow: contextWindowFor(input.model.contextWindow) }),
-    maxTokens: outputLimitFor(defaults, input.model.name, input.model.provider, undefined, model.maxTokens) };
-  return { ...model, ...(input.model.inputModalities === undefined ? {} : { input: input.model.inputModalities.filter((kind): kind is "text" | "image" => kind !== "pdf") }), maxTokens: input.model.maxTokens, contextWindow: contextWindowFor(input.model.contextWindow ?? input.model.maxTokens) };
+  return {
+    ...model, maxTokens,
+    ...(input.model.inputModalities === undefined ? {} : { input: input.model.inputModalities.filter((kind): kind is "text" | "image" => kind !== "pdf") }),
+    ...(input.model.contextWindow === undefined ? {} : { contextWindow: input.model.contextWindow }),
+  };
 }
 
 function assistantMessages(messages: unknown[]): AssistantMessage[] {
@@ -374,20 +351,21 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   const noTools = access.tools === "none";
   const shellPath = noTools ? undefined : shell === "bash" ? await findBash() : await findPowerShell();
   const tools = noTools ? [] : [shell, "read", "write", "edit"];
-  const excluded: string[] = [];
-  const required: string[] = [];
+  const useSearch = !noTools && access.webSearch !== "disabled" && !access.webSearchTools?.length;
+  if (useSearch) tools.push("web_search");
+  const excluded: string[] = noTools ? ["web_search", "web_fetch", ...(access.webSearchTools ?? []), ...(access.webFetchTools ?? [])] : [];
+  const required: { option: string; tool: string }[] = [];
   if (!noTools) {
-    const hasExternalTools = input.piConfigDir !== undefined || Boolean(input.extensions?.length || input.input.mcpServers?.length);
     for (const [key, names] of [["webSearch", access.webSearchTools], ["webFetch", access.webFetchTools]] as const) {
       const mode = access[key];
       if (mode === undefined || mode === "default") continue;
-      if (!names && (hasExternalTools || mode === "enabled")) {
-        throw new RunnerFailure("CONFIG_INVALID", `Pi ${key}: ${mode} requires explicit ${key}Tools names for external tools`);
-      }
-      (mode === "enabled" ? required : excluded).push(...(names ?? []));
+      if (key === "webSearch" && useSearch) continue;
+      const toolNames = names ?? [key === "webSearch" ? "web_search" : "web_fetch"];
+      if (mode === "enabled") required.push(...toolNames.map(tool => ({ option: key, tool })));
+      else excluded.push(...toolNames);
     }
   }
-  const systemPrompt = `${SYSTEM_PROMPT} The command tool is ${shell}; use ${shell === "powershell" ? "PowerShell" : "Bash"} syntax for commands.`;
+  const systemPrompt = noTools ? SYSTEM_PROMPT : `${SYSTEM_PROMPT} The command tool is ${shell}; use ${shell === "powershell" ? "PowerShell" : "Bash"} syntax for commands.`;
   await mkdir(input.outputDir, { recursive: true });
   const trajectory = (options.createTrajectoryWriter ?? ((path, key) => new TrajectoryWriter(path, key)))(
     join(input.outputDir, "trajectory.jsonl"),
@@ -414,7 +392,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   const runtimeSettings = {
       // Long-horizon solves outgrow small context windows; compaction
       // summarizes older history once the context passes the configured
-      // maxTokens threshold instead of failing on provider truncation.
+      // context window instead of failing on provider truncation.
       // reserveTokens/keepRecentTokens keep the SDK defaults (16k/20k).
       compaction: { enabled: true },
       // Transient provider failures (stream drops, connection errors, 429/5xx)
@@ -427,7 +405,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   };
   let settingsManager: SettingsManager;
   if (input.piConfigDir === undefined) {
-    settingsManager = SettingsManager.inMemory(runtimeSettings, { projectTrusted: false });
+    settingsManager = SettingsManager.inMemory(runtimeSettings, { projectTrusted: true });
   } else {
     const installedSettings = await installedPiSettings(input.piConfigDir);
     const protectedResources = {
@@ -440,8 +418,11 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
       `${JSON.stringify({ ...installedSettings, ...(input.piSettings ?? {}), ...protectedResources }, null, 2)}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
-    settingsManager = SettingsManager.create(input.workdir, input.piConfigDir, { projectTrusted: false });
-    settingsManager.applyOverrides(runtimeSettings);
+    settingsManager = SettingsManager.create(input.workdir, input.piConfigDir, { projectTrusted: true });
+    const defaults = settingsManager.getDefaultTools();
+    const bundleTools = defaults?.map(name => name === "bash" ? shell : name);
+    settingsManager.applyOverrides({ ...runtimeSettings,
+      ...(bundleTools && !noTools ? { defaultTools: [...new Set([...bundleTools, ...(useSearch ? ["web_search"] : [])])] } : {}) });
   }
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -469,10 +450,21 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     modelRuntime: runtime,
     model,
     ...(input.model.reasoningEffort === undefined ? {} : { thinkingLevel: input.model.reasoningEffort }),
-    ...(noTools ? { noTools: "all" } : {}),
+    ...(noTools ? { noTools: "builtin" } : {}),
     ...(excluded.length ? { excludeTools: excluded } : {}),
     ...(shellPath === undefined ? {} : {
-      customTools: [shellToolDefinition(shell, input.workdir, shellPath, input.toolPolicy ?? DEFAULT_SHELL_TOOL_POLICY)],
+      customTools: [
+        shellToolDefinition(shell, input.workdir, shellPath, input.toolPolicy ?? DEFAULT_SHELL_TOOL_POLICY),
+        ...(useSearch ? [defineTool({
+          name: "web_search", label: "Web search", description: "Search public web sources for a query.",
+          parameters: { type: "object" as const, properties: { query: { type: "string" as const } }, required: ["query"], additionalProperties: false },
+          async execute(_id, params: { query: string }, signal) {
+            const found = await searchWeb(params.query, { api: input.model.api, model: input.model.name,
+              baseUrl: input.model.endpoint, apiKey: input.auth.value }, signal ?? new AbortController().signal);
+            return { content: [{ type: "text" as const, text: JSON.stringify(found) }], details: { backend: found.backend } };
+          },
+        })] : []),
+      ],
     }),
     resourceLoader,
     sessionManager,
@@ -487,9 +479,21 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
       process.stderr.write(`extension error (${error.extensionPath}): ${String(error.error)}\n`);
     },
   });
-  const active = session.getActiveToolNames();
-  if (required.some(name => !active.includes(name))) {
-    throw new RunnerFailure("CONFIG_INVALID", `Pi web tools are unavailable: ${required.filter(name => !active.includes(name)).join(", ")}`);
+  // MCP finishes registration in before_agent_start, after bindExtensions returns.
+  let webToolFailure: RunnerFailure | undefined;
+  if (required.length) {
+    const stream = session.agent.streamFunction;
+    session.agent.streamFunction = (model, context, options) => {
+      const names = new Set(session.getActiveToolNames());
+      const missing = required.filter(({ tool }) => !names.has(tool));
+      if (missing.length) {
+        const harness = input.extensions || input.piConfigDir ? "Pi Bundle" : "simpleagent (Pi without Bundle)";
+        const details = missing.map(({ option, tool }) => `${option}: enabled requires tool ${tool}`).join(", ");
+        webToolFailure = new RunnerFailure("CONFIG_INVALID", `${harness}: ${details}, but no active extension registered it for this session.${access.mcp === "disabled" ? " With mcp: disabled, MCP-provided tools are unavailable." : ""}`);
+        throw webToolFailure;
+      }
+      return stream(model, context, options);
+    };
   }
   let writeFailure: unknown;
   let modalityFailure: RunnerFailure | undefined;
@@ -573,6 +577,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     );
     await session.prompt(input.input.prompt, { expandPromptTemplates: false, source: "rpc",
       ...(input.media?.length ? { images: input.media.map(item => ({ type: "image" as const, data: item.data, mimeType: item.mediaType })) } : {}) });
+    if (webToolFailure) throw webToolFailure;
     if (modalityFailure) throw modalityFailure;
     await persistTrajectory("failed to flush trajectory", () => trajectory.flush());
     if (writeFailure !== undefined)
@@ -592,7 +597,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     return result;
   } catch (error) {
     primaryFailure = true;
-    const failure = modalityFailure ?? (
+    const failure = webToolFailure ?? modalityFailure ?? (
       writeFailure === undefined
         ? error
         : new RunnerFailure("STORE_WRITE_FAILED", "failed to write trajectory", { cause: writeFailure }));
@@ -623,6 +628,8 @@ export async function startPiRunner(): Promise<void> {
   let auth = "";
   try {
     const input = await inputFromStdin();
+    // A runner process owns one attempt. Native Pi also propagates this policy to child processes.
+    process.env.PI_BUNDLE_RUN_POLICY = JSON.stringify(pickSolverToolPolicy(input.toolAccess ?? {}));
     auth = input.auth.value;
     const result = await run(input);
     output({ schemaVersion: 1, type: "result", result });

@@ -1,3 +1,4 @@
+import { checkAgentLimits, modelWithLimits, parseAgentOptions, type AgentLimits } from "./agent-limits.js";
 import { rm } from "node:fs/promises";
 import { sameCandidate } from "../../runtimes/agentbundle/preparation-state.js";
 import { preparePi } from "../../runtimes/pi/prepare.js";
@@ -17,7 +18,7 @@ import type { AttemptContext, PreparedSolver, Solver, SolverProvenance } from ".
 import type { SolveResult } from "../../core/contracts/result.js";
 import type { JsonValue, PublicTask } from "../../core/contracts/task.js";
 import { canonicalJson } from "../../core/results/run-manifest.js";
-import { parseSolverToolPolicy, parseWebToolNames, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
+import { pickSolverToolPolicy, sessionToolPolicy, parseWebToolNames, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 import { AgentBundleError, type VerifiedBundle } from "../../runtimes/agentbundle/cli.js";
 import { DSH_VERSION, describeDshBundleRuntime, type DshBundleRuntime } from "../../runtimes/dsh/runtime.js";
 import { AGENT_BUNDLE_CORE_VERSION, assertHarnessVersionCompatible, verifyBundleCandidate } from "../../runtimes/agentbundle/sdk.js";
@@ -33,18 +34,17 @@ type DshOptions = { dshhome?: string; dshprofile?: string; environmentName?: str
 type HermesOptions = { hermeshome?: string };
 type JiuwenswarmOptions = { jiuwenswarmhome?: string; jiuwenswarmTimeoutSeconds?: number };
 type PiOptions = { pi?: { settings?: Record<string, JsonValue> } & WebToolNames };
-type HarnessOptions = DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions & SolverToolPolicy & { dify?: DifyOptions };
+type HarnessOptions = DshOptions & HermesOptions & JiuwenswarmOptions & PiOptions & SolverToolPolicy & { limits?: AgentLimits; dify?: DifyOptions };
 
 export function parseAgentBundleConfig(
   value: unknown,
-): { path: string; maxTokens?: number } & HarnessOptions {
+): { path: string } & AgentLimits & HarnessOptions {
   const config = expectRecord(value, "agentbundle");
-  const policy = parseSolverToolPolicy(config, "agentbundle", ["path", "dshhome", "dshprofile", "maxTokens",
+  const policy = parseAgentOptions(config, "agentbundle", ["path", "dshhome", "dshprofile",
     "hermeshome", "jiuwenswarmhome", "jiuwenswarmTimeoutSeconds", "pi", "dify"]);
-  const result: { path: string; maxTokens?: number } & HarnessOptions = {
+  const result: { path: string } & AgentLimits & HarnessOptions = {
     path: expectNonEmptyString(config.path, "agentbundle.path"), ...policy,
   };
-  if (config.maxTokens !== undefined) result.maxTokens = expectPositiveInteger(config.maxTokens, "agentbundle.maxTokens");
   if (config.dshhome !== undefined) result.dshhome = expectNonEmptyString(config.dshhome, "agentbundle.dshhome");
   if (config.dshprofile !== undefined) {
     result.dshprofile = expectNonEmptyString(config.dshprofile, "agentbundle.dshprofile");
@@ -59,7 +59,7 @@ export function parseAgentBundleConfig(
   if (config.pi !== undefined) {
     const pi = expectRecord(config.pi, "agentbundle.pi");
     rejectUnknown(pi, ["settings", "webSearchTools", "webFetchTools"], "agentbundle.pi");
-    result.pi = parseWebToolNames(pi, "agentbundle.pi");
+    result.pi = parseWebToolNames(pi, "agentbundle.pi", policy);
     if (pi.settings !== undefined) {
       const settings = expectRecord(pi.settings, "agentbundle.pi.settings");
       assertJsonValue(settings, "agentbundle.pi.settings");
@@ -68,18 +68,6 @@ export function parseAgentBundleConfig(
   }
   if (config.dify !== undefined) result.dify = parseDifyOptions(config.dify);
   return result;
-}
-
-/**
- * The solver's service model with `agentbundle.maxTokens` applied. Hosts that
- * inject services without generation limits, such as the RSI Runner, bound the
- * harness's per-response output here.
- */
-export function agentBundleModel(model: ModelConfig, maxTokens: number | undefined, service: string): ModelConfig {
-  if (maxTokens === undefined) return model;
-  if (model.maxTokens !== undefined)
-    throw new TypeError(`agentbundle.maxTokens conflicts with services.${service}.maxTokens; declare it in one place`);
-  return { ...model, maxTokens };
 }
 
 type RuntimeAdapter = { installation(harness: string, signal: AbortSignal): Promise<RuntimeInstallation> };
@@ -161,9 +149,23 @@ export class AgentBundleSolver implements Solver {
   async provenance(signal: AbortSignal, previous?: SolverProvenance): Promise<SolverProvenance> {
     signal.throwIfAborted();
     const identified = await verifyBundleCandidate(this.path);
-    const { tools, webSearch, webFetch } = this.options;
-    const policy = parseSolverToolPolicy({ tools, webSearch, webFetch }, "agentbundle");
-    const method = { dsh: "cordis-tools", pi: "pi-sdk", jiuwenswarm: "jiuwenswarm-rail" }[identified.harness.name];
+    const policy = pickSolverToolPolicy(this.options);
+    const harness = identified.harness.name;
+    if (harness === "dify" || harness === "hermes") {
+      if (this.options.limits?.maxTokens !== undefined && this.model.maxTokens !== undefined)
+        throw new AgentBundleError("CONFIG_INVALID", `${harness}: agentbundle.maxTokens conflicts with the selected service's maxTokens; declare it in one place`);
+      for (const field of ["maxTurns", "contextWindow"] as const) {
+        if (this.options.limits?.[field] !== undefined)
+          throw new AgentBundleError("CONFIG_INVALID", `${harness} does not allow overriding ${field} through this Bundle adapter`);
+      }
+    } else {
+      checkAgentLimits(harness, { ...this.model, ...this.options.limits });
+    }
+    const supplementaryOnly = harness === "hermes";
+    if (supplementaryOnly && Object.keys(policy).some(key => key !== "webSearch" || policy.webSearch !== "enabled")) {
+      unsupportedToolPolicy(harness, "the bundle can install its own tools and middleware; this runtime can add search but cannot enforce the requested restrictions");
+    }
+    const method = { dsh: "cordis-tools", pi: "pi-sdk", jiuwenswarm: "jiuwenswarm-rail", deepagents: "langchain-middleware", hermes: "hermes-mcp" }[identified.harness.name];
     if (Object.keys(policy).length > 0 && method === undefined) {
       unsupportedToolPolicy(identified.harness.name, "tool policy is unavailable for this Bundle harness");
     }
@@ -254,14 +256,19 @@ export class AgentBundleSolver implements Solver {
     if (!this.candidate) await this.provenance(context.signal);
     const candidate = this.candidate;
     const runtime = session.runtime;
+    const options = sessionToolPolicy(candidate?.harness.name ?? "agentbundle", this.options, session);
+    if (candidate && ["dify", "hermes"].includes(candidate.harness.name) && options.webSearch === "disabled") {
+      unsupportedToolPolicy(candidate.harness.name, "the workflow owns web tools and cannot guarantee that hosted search is disabled");
+    }
+    const model = modelWithLimits(this.model, this.options.limits ?? {});
     if (candidate?.harness.name === "dify" && this.options.dify !== undefined)
-      return prepareDify(this.path, this.options.dify, session, context, candidate, this.model);
+      return prepareDify(this.path, this.options.dify, session, context, candidate, model);
     if (!candidate || !runtime?.stateRoot)
       throw new AgentBundleError(
         "ENV_RUNTIME_INSTALL_FAILED",
         "agentbundle requires an environment-prepared runtime and state directory",
       );
-    const bundle = { network: this.network, path: this.path, model: this.model, auth: this.auth, options: this.options,
+    const bundle = { network: this.network, path: this.path, model, auth: this.auth, options,
       harnessVersion: this.harnessVersion };
     if (candidate.harness.name === "deepagents") {
       if (this.options.environmentName === "docker") return prepareDeepagentsDocker(bundle, session, context, candidate);

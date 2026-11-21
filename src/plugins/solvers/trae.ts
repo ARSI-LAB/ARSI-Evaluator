@@ -1,3 +1,4 @@
+import { parseAgentOptions, type AgentLimits } from "./agent-limits.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -7,7 +8,7 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import { parseSolverToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { sessionToolPolicy, toolPolicyProvenance, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 import { consumeTrae } from "../../runtimes/trae/protocol.js";
 import { TRAE_VERSION, traeRuntimeInstallation } from "../../runtimes/trae/runtime.js";
@@ -25,12 +26,8 @@ const TRAE_WIRE_APIS = new Map<string, string>([
   ["anthropic-messages", "anthropic_messages"],
 ]);
 
-export function parseTraeConfig(value: unknown): SolverToolPolicy {
-  const policy = parseSolverToolPolicy(value, "trae config");
-  if (policy.webSearch === "enabled" || policy.webFetch === "enabled") {
-    unsupportedToolPolicy("trae", "the locked headless exec mode cannot explicitly enable web search or fetch");
-  }
-  return policy;
+export function parseTraeConfig(value: unknown): SolverToolPolicy & AgentLimits {
+  return parseAgentOptions(value, "trae");
 }
 
 function apiBase(endpoint: string | null): string {
@@ -55,8 +52,8 @@ export class TraeSolver implements Solver {
     }
     this.wireApi = wireApi;
     this.endpoint = apiBase(model.endpoint);
-    if (model.maxTokens !== undefined || model.contextWindow !== undefined || model.retry !== undefined) {
-      throw new TypeError("trae does not support services.*.maxTokens, services.*.contextWindow or services.*.retry");
+    if (model.maxTokens !== undefined || model.retry !== undefined) {
+      throw new TypeError("trae does not support services.*.maxTokens or services.*.retry");
     }
   }
 
@@ -72,14 +69,12 @@ export class TraeSolver implements Solver {
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
+    const policy = sessionToolPolicy("trae", this.policy, session);
     const { signal } = context;
     signal.throwIfAborted();
     const { model, auth } = this.binding;
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "trae requires a non-empty, single-line API key on its selected service");
-    }
-    if (input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "trae does not support task skills or MCP servers");
     }
     if (input.attachments?.some(attachment => attachment.kind === "pdf" && attachment.mode === "native")) {
       throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "trae requires PDF attachments in pages mode");
@@ -93,19 +88,20 @@ export class TraeSolver implements Solver {
     const endpoint = mapping?.originEndpoint === model.endpoint ? apiBase(mapping.baseUrl) : this.endpoint;
     // The locked CLI only applies its effort setting to Chat Completions.
     const effort = model.reasoningEffort;
-    const relay = effort !== undefined && model.api !== "openai-completions"
-      ? { api: model.api, baseUrl: endpoint, reasoningEffort: effort } : undefined;
+    const relay = policy.tools === "none" || policy.webSearch === "disabled" || effort !== undefined && model.api !== "openai-completions"
+      ? { api: model.api, baseUrl: endpoint, reasoningEffort: effort, disableHostedSearch: policy.webSearch === "disabled", disableBuiltinTools: policy.tools === "none", disableMcp: policy.mcp === "disabled" } : undefined;
     const local = runtime.persistent;
     const path = local ? join : posix.join;
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
     const settings = [
       'approval_policy="never"',
       "allow_login_shell=false",
-      'web_search="disabled"',
+      ...(policy.webSearch === "disabled" || policy.tools === "none" ? ['web_search="disabled"'] : []),
+      ...(model.contextWindow === undefined ? [] : [`model_context_window=${model.contextWindow}`, `model_auto_compact_token_limit=${model.contextWindow}`]),
       "analytics.enabled=false",
       "features.hooks=false",
-      "resource_dirs=[]",
-      `projects.${JSON.stringify(session.workdir)}.trust_level="untrusted"`,
+      ...(policy.tools === "none" ? [`model_tool_modes={ ${JSON.stringify(model.name)} = "direct" }`] : []),
+      `projects={ ${JSON.stringify(session.workdir)} = { trust_level = "${policy.mcp === "disabled" ? "untrusted" : "trusted"}" } }`,
       'shell_environment_policy.inherit="core"',
       'shell_environment_policy.exclude=["EVALUATOR_TRAE_API_KEY"]',
       'model_provider="arsi-evaluator"',
@@ -114,24 +110,25 @@ export class TraeSolver implements Solver {
       'model_providers.arsi-evaluator.env_key="EVALUATOR_TRAE_API_KEY"',
       `model_providers.arsi-evaluator.wire_api=${JSON.stringify(this.wireApi)}`,
       ...(effort === undefined || relay ? [] : [`model_reasoning_effort=${JSON.stringify(effort)}`]),
-      ...(local && process.platform === "win32" ? ['windows.sandbox="unelevated"'] : []),
     ];
-    const denied = this.policy.tools === "none" ? TRAE_TOOLS : [
-      ...(this.policy.webSearch === "disabled" ? ["WebSearch", "web_search"] : []),
-      ...(this.policy.webFetch === "disabled" ? ["WebFetch"] : []),
+    const denied = policy.tools === "none" ? TRAE_TOOLS : [
+      ...(policy.subagent === "disabled" ? ["Agent", "ListAgents", "SendMessage"] : []),
+      ...(policy.webSearch === "disabled" ? ["WebSearch", "web_search"] : []),
+      ...(policy.webFetch === "disabled" ? ["WebFetch"] : []),
     ];
     const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
         args: [path(runtime.root, "launch.mjs"), home, "exec", "--json", "--ephemeral",
-          "--ignore-rules", "--skip-git-repo-check", "--color", "never", "--sandbox", local ? "workspace-write" : "danger-full-access",
+          "--skip-git-repo-check", "--color", "never", "--sandbox", "danger-full-access",
           "--model", model.name, ...settings.flatMap(setting => ["-c", setting]),
           ...denied.flatMap(tool => ["--disallowed-tool", tool]), "-"],
         cwd: session.workdir,
         env: {},
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, media, relay }), "utf8"),
+        input: Buffer.from(JSON.stringify({ toolPolicy: policy, outputDir: session.agentOutputDir, skillsDirectories: input.skillsDirectories, mcpServers: input.mcpServers,
+          apiKey: auth.value, prompt: input.prompt, media, relay, api: model.api, baseUrl: endpoint, model: model.name }), "utf8"),
       }, signal);
       return await consumeTrae(handle, context, auth.value);
     } finally {

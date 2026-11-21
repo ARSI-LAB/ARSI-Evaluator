@@ -32,12 +32,12 @@ test.each(["openai-completions", "openai-responses", "anthropic-messages"])("nat
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw Error("No fixture port");
-  const relay = await startModelRelay({ api, baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "upstream-secret", token: "relay-token", reasoningEffort: "low", maxTokens: 70000, noTools: true, captureUsage: true });
+  const relay = await startModelRelay({ api, baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "upstream-secret", token: "relay-token", reasoningEffort: "low", maxTokens: 70000, disableBuiltinTools: true, captureUsage: true });
   try {
     const route = api === "openai-completions" ? "/chat/completions" : api === "openai-responses" ? "/responses" : "/messages";
     for (let i = 0; i < 2; i++) {
       const response = await fetch(relay.endpoint + route, { method: "POST", headers: { authorization: "Bearer relay-token", "content-type": "application/json" },
-        body: JSON.stringify({ model: "fixture", tools: [{ type: "function", name: "Bash" }], tool_choice: "required", max_tokens: 8, reasoning_effort: "high" }) });
+        body: JSON.stringify({ model: "fixture", tools: [{ type: "function", name: "Bash" }], tool_choice: "required", web_search_options: {}, extra_body: { web_search_options: {} }, max_tokens: 8, reasoning_effort: "high" }) });
       expect(response.status).toBe(200);
       expect(await response.text()).not.toContain("upstream-secret");
     }
@@ -45,11 +45,56 @@ test.each(["openai-completions", "openai-responses", "anthropic-messages"])("nat
     for (const request of requests) {
       expect(request.tools).toBeUndefined();
       expect(request.tool_choice).toBeUndefined();
+      expect(request.web_search_options).toBeUndefined();
+      expect(request.extra_body).not.toHaveProperty("web_search_options");
       expect(request).toMatchObject(api === "openai-responses" ? { max_output_tokens: 70000, reasoning: { effort: "low" } }
         : api === "anthropic-messages" ? { max_tokens: 70000, output_config: { effort: "low" } } : { max_tokens: 70000, reasoning_effort: "low" });
     }
     expect(relay.usage()).toEqual({ inputTokens: 26, outputTokens: 4, totalTokens: 30 });
     expect((await fetch(relay.endpoint + route, { method: "POST", body: "{}" })).status).toBe(401);
+  } finally { relay.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test.each(["openai-completions", "openai-responses", "anthropic-messages"])("MCP-only requests preserve the declared tool and reject an undeclared call on %s", async api => {
+  const name = "mcp__fixture__lookup";
+  const chat = api === "openai-completions";
+  const responses = api === "openai-responses";
+  const definition = chat ? { type: "function", function: { name } }
+    : responses ? { type: "namespace", name: "mcp__fixture", tools: [{ type: "function", name: "lookup" }] }
+    : { name, input_schema: { type: "object" }, defer_loading: true };
+  const received: unknown[][] = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received.push(JSON.parse(Buffer.concat(chunks).toString()).tools);
+    const valid = received.length === 1;
+    if (chat) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const fragment of ["mcp__fixture__", valid ? "lookup" : "unknown"]) {
+        const delta = { tool_calls: [{ index: 0, function: { name: fragment } }] };
+        response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`);
+      }
+      response.end("data: [DONE]\n\n");
+    } else {
+      const result = responses ? { output: [{ type: "function_call", namespace: "mcp__fixture", name: valid ? "lookup" : "unknown" }] }
+        : { content: [{ type: "tool_use", name: valid ? name : "mcp__fixture__unknown" }] };
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result));
+    }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw Error("No fixture port");
+  const relay = await startModelRelay({ api, baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "secret", token: "token", disableBuiltinTools: true });
+  try {
+    const route = chat ? "/chat/completions" : responses ? "/responses" : "/messages";
+    const call = () => fetch(relay.endpoint + route, { method: "POST", headers: { authorization: "Bearer token" },
+      body: JSON.stringify({ tools: [definition, { type: "function", name: "Bash" }, { type: "function", name: "WebSearch" },
+        { type: "function", name: "WebFetch" }, { type: "web_search_preview" }, { type: "web_fetch_20250910", name: "web_fetch" }] }) })
+      .then(response => response.text());
+    expect(await call()).toContain("lookup");
+    expect(await call().catch(() => "")).not.toContain("unknown");
+    const expected = chat || responses ? definition : { name, input_schema: { type: "object" } };
+    expect(received).toEqual([[expected], [expected]]);
   } finally { relay.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
@@ -63,7 +108,7 @@ test.each([false, true])("no-tools relay blocks unexpected tool output before na
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw Error("No fixture port");
-  const relay = await startModelRelay({ api: "openai-completions", baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "secret", token: "token", noTools: true });
+  const relay = await startModelRelay({ api: "openai-completions", baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: "secret", token: "token", disableBuiltinTools: true });
   try {
     // The tool-bearing record must never reach the CLI, even if the provider
     // violates the empty tool declaration. A broken stream is an invalid attempt.

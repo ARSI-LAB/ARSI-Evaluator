@@ -38,6 +38,15 @@ function envelope(ok: boolean, events: unknown[]): string {
   return `${JSON.stringify({ ok, session_id: "s", request_id: "r", events })}\n`;
 }
 
+test("reports a missing requested tool even if the native loop returned an answer", async () => {
+  const value = await context("missing-search");
+  const message = "JiuwenSwarm: webSearch: enabled requires a native search tool with mcp: disabled";
+  const stdout = envelope(true, []) + JSON.stringify({ evaluatorConfigurationError: message }) + "\n";
+  await expect(consumeJiuwenswarm(processHandle({ stdout, code: 78 }).handle, value, "")).rejects.toMatchObject({
+    code: "CONFIG_INVALID", message,
+  });
+});
+
 function event(eventType: string, payload: Record<string, unknown>, ok = true): Record<string, unknown> {
   return { request_id: "r", channel_id: "process_cli", session_id: "s", payload: { event_type: eventType, ...payload }, agent_ref: null, metadata: {}, is_complete: false, ok };
 }

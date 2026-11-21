@@ -1,3 +1,4 @@
+import { taskResourceFiles } from "../shared/task-resource-files.js";
 import { fileURLToPath } from "node:url";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
 
@@ -10,7 +11,11 @@ export async function codexRuntimeInstallation(signal: AbortSignal): Promise<Run
     id: `codex:${CODEX_VERSION}`,
     cacheName: `codex-${CODEX_VERSION}`,
     files: [
-      ...["package.json", "package-lock.json", "launch.mjs"].map(target => ({
+      ...taskResourceFiles(),
+      { source: fileURLToPath(new URL("../shared/assets/codex-skill-config.mjs", import.meta.url)), target: "codex-skill-config.mjs" },
+      { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "runtimes/shared/assets/model-relay.mjs" },
+      { source: fileURLToPath(new URL("../../infrastructure/models/reasoning-effort.mjs", import.meta.url)), target: "infrastructure/models/reasoning-effort.mjs" },
+      ...["package.json", "package-lock.json", "launch.mjs", "web-fetch.mjs"].map(target => ({
         source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
       })),
       { source: fileURLToPath(new URL("../shared/assets/stage-attachments.mjs", import.meta.url)), target: "stage-attachments.mjs" },

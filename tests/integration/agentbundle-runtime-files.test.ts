@@ -81,6 +81,7 @@ describe("AgentBundle SDK runtime files", () => {
       await mkdir(join(bundle, "extensions", "demo"), { recursive: true });
       await writeFile(join(bundle, "bundle.yaml"), [
         "kind: pi-agent-bundle",
+        "extensionPolicy: run-v1",
         "schemaVersion: 1",
         "name: probe-pi",
         "harness:",

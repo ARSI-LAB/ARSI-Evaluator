@@ -1,4 +1,5 @@
 kind: pi-agent-bundle
+extensionPolicy: run-v1
 extensions:
   - ./extensions/demo
 settings: ./settings.json

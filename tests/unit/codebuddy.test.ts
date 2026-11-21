@@ -143,7 +143,11 @@ test("CodeBuddy accepts both OpenAI protocols and prepares without a key", async
   expect(() => new CodeBuddySolver({ ...binding, model: { ...binding.model, endpoint: "https://service.test/v1/chat/completions" } })).toThrow(/base_url/u);
   expect(() => new CodeBuddySolver({ ...binding, model: { ...binding.model, contextWindow: 128000 } })).not.toThrow();
   expect(() => new CodeBuddySolver({ ...binding, model: { ...binding.model, retry: { maxAttempts: 2 } } })).toThrow(/does not support/u);
-  await expect(new CodeBuddySolver(binding).runtimeInstallation(AbortSignal.timeout(5000))).resolves.toMatchObject({ id: "codebuddy:2.183.0" });
+  const solver = new CodeBuddySolver(binding);
+  const signal = AbortSignal.timeout(5000);
+  const { capabilityPatchSha256 } = await solver.provenance(signal);
+  expect(capabilityPatchSha256).toMatch(/^[a-f0-9]{64}$/u);
+  expect((await solver.runtimeInstallation(signal)).id).toBe(`codebuddy:2.183.0:${capabilityPatchSha256}`);
 });
 
 test("CodeBuddy validates the optional execution turn limit", () => {

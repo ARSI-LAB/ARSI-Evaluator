@@ -1,3 +1,4 @@
+import { taskResourceFiles } from "../shared/task-resource-files.js";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
@@ -20,6 +21,7 @@ export async function zcodeRuntimeInstallation(signal: AbortSignal): Promise<Run
     id: `zcode:${cliVersion}:${commit}`,
     cacheName: `zcode-${cliVersion}`,
     files: [
+      ...taskResourceFiles(),
       ...["package.json", "package-lock.json", "source-lock.json", "install.mjs", "launch.mjs", "cli.mjs"]
         .map(target => ({ source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target })),
       { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "runtimes/shared/assets/model-relay.mjs" },

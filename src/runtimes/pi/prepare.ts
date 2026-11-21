@@ -1,3 +1,4 @@
+import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { loadAttachments } from "../multimodal/input.js";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -36,11 +37,9 @@ export async function preparePi(
   const path = local ? join : posix.join;
   const node = local ? process.execPath : "node";
   const settings = preparation.options.pi?.settings ?? {};
-  const { tools, webSearch, webFetch, pi } = preparation.options;
+  const { pi } = preparation.options;
   const toolAccess = {
-    ...(tools === undefined ? {} : { tools }),
-    ...(webSearch === undefined ? {} : { webSearch }),
-    ...(webFetch === undefined ? {} : { webFetch }),
+    ...pickSolverToolPolicy(preparation.options),
     ...(pi?.webSearchTools === undefined ? {} : { webSearchTools: pi.webSearchTools }),
     ...(pi?.webFetchTools === undefined ? {} : { webFetchTools: pi.webFetchTools }),
   };

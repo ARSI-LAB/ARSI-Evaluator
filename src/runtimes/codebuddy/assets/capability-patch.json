@@ -1,0 +1,39 @@
+{
+  "package": "@tencent-ai/codebuddy-code",
+  "version": "2.183.0",
+  "files": [
+    {
+      "path": "dist/codebuddy-headless.js",
+      "beforeSha256": "f79e1fa5282361e84aecf5f4c85141b1ba48a821988e5735f7af44a041488b48",
+      "afterSha256": "339cd17d36985c0207c676b481317877c5c43c2724134d822b7892448f41e04f",
+      "replacements": [
+        {
+          "before": "function resolveSkillOverrideState(eA,el){",
+          "after": "function resolveSkillOverrideState(eA,el){if(process.env.EVALUATOR_DISABLE_SKILLS===\"1\")return\"off\";"
+        }
+      ]
+    },
+    {
+      "path": "dist/codebuddy.js",
+      "beforeSha256": "24f46a3fb614310fd3f62dd1d40b2b29e3b71a8aa32ceccc51e83277c25edca0",
+      "afterSha256": "c9d679450c99691dba49a097233f1f27bb7d055ed2ead15358f058a7601d79eb",
+      "replacements": [
+        {
+          "before": "function resolveSkillOverrideState(eA,el){",
+          "after": "function resolveSkillOverrideState(eA,el){if(process.env.EVALUATOR_DISABLE_SKILLS===\"1\")return\"off\";"
+        }
+      ]
+    },
+    {
+      "path": "dist/codebuddy-lite-wb.mjs",
+      "beforeSha256": "a40943902bda3f5fcc59d91daa7b215d781232840fb20358289fb215b6b3d884",
+      "afterSha256": "54b8021a4a152c5fa6d8070c62760002e68531ec8498158c954f686f77f6c3b6",
+      "replacements": [
+        {
+          "before": "function resolveSkillOverrideState(t,i){",
+          "after": "function resolveSkillOverrideState(t,i){if(process.env.EVALUATOR_DISABLE_SKILLS===\"1\")return\"off\";"
+        }
+      ]
+    }
+  ]
+}

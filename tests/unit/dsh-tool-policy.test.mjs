@@ -38,6 +38,6 @@ test("DSH reports enabled web tools missing from the selected service", async ()
     on() {},
   };
   apply(ctx, { webSearch: "enabled" });
-  await expect(ctx.tools.resolve({ agent: {} })).rejects.toThrow(/web_search is unavailable/u);
+  await expect(ctx.tools.resolve({ agent: {} })).rejects.toThrow(/DSH: webSearch: enabled requires web_search.*profile/u);
   expect(dispose).toHaveBeenCalledOnce();
 });

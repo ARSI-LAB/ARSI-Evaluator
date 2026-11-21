@@ -48,6 +48,7 @@ test("Claude Code handles split UTF-8, includes cached input and redacts evidenc
 
 test.each([
   [chunks(jsonl(resultEvent)), 1, "SOLVER_PROCESS_CRASHED"],
+  [chunks(jsonl({ type: "result", subtype: "error_max_turns", is_error: false })), 1, "SOLVER_RESULT_INCOMPLETE"],
   [chunks(jsonl({ type: "result", subtype: "error_during_execution", is_error: true, api_error_status: 401 })), 1, "MODEL_AUTH_FAILED"],
   [chunks(jsonl({ type: "assistant" })), 0, "SOLVER_RESULT_INCOMPLETE"],
   [chunks(jsonl({ type: "assistant" }), Buffer.from('{"type":')), 0, "SOLVER_PROTOCOL_INVALID"],
@@ -66,7 +67,7 @@ test("Claude Code rejects a requested web tool missing from the native inventory
   const context = await attempt();
   const handle = processWith(chunks(jsonl({ type: "system", subtype: "init", tools: ["Bash", "WebFetch"] }, resultEvent)));
   await expect(consumeClaudeCode(handle, context, secret, ["WebFetch", "WebSearch"])).rejects.toMatchObject({
-    code: "CONFIG_INVALID", message: expect.stringContaining("WebSearch is unavailable"),
+    code: "CONFIG_INVALID", message: expect.stringContaining("webSearch: enabled requires WebSearch"),
   });
   expect(handle.stop).toHaveBeenCalledOnce();
 });

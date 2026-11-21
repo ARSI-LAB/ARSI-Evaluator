@@ -1,3 +1,4 @@
+import { taskResourceFiles } from "../shared/task-resource-files.js";
 import { fileURLToPath } from "node:url";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
 
@@ -9,6 +10,8 @@ export async function traeRuntimeInstallation(signal: AbortSignal): Promise<Runt
     id: `trae:${TRAE_VERSION}`,
     cacheName: `trae-${TRAE_VERSION}`,
     files: [
+      ...taskResourceFiles(),
+      { source: fileURLToPath(new URL("../shared/assets/codex-skill-config.mjs", import.meta.url)), target: "codex-skill-config.mjs" },
       ...["release-lock.json", "install.mjs", "launch.mjs"].map(target => ({
         source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
       })),

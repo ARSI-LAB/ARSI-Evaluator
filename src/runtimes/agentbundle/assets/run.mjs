@@ -3,8 +3,9 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { createBundleSdk, errorMessage, harnessNameForKind, resolveDshCommand, resolveHermesCommand } from "agent-bundle-core";
+import { createBundleSdk, errorMessage, harnessNameForKind, isDeepagentsManifest, resolveDshCommand, resolveHermesCommand } from "agent-bundle-core";
 import { satisfies, valid, validRange } from "semver";
+import { parse as parseYaml } from "yaml";
 
 const require = createRequire(import.meta.url);
 
@@ -60,6 +61,15 @@ try {
   const verified = await createBundleSdk().verify(bundleDir, {
     ...(options["--expect-digest"] === undefined ? {} : { expectDigest: options["--expect-digest"] }),
   });
+  if (verified.manifest.kind === "pi-agent-bundle" && parseYaml(readFileSync(join(bundleDir, "bundle.yaml"), "utf8")).extensionPolicy !== "run-v1") {
+    fail("Pi bundle.yaml must declare extensionPolicy: run-v1");
+  }
+  if (isDeepagentsManifest(verified.manifest)) {
+    const graph = JSON.parse(readFileSync(verified.manifest.entryPath, "utf8")).graphs?.agent;
+    if (graph !== verified.manifest.graphModule + ":build_agent_for_run") {
+      fail("DeepAgents graphs.agent must reference <module>:build_agent_for_run");
+    }
+  }
   const harness = {
     name: harnessNameForKind(verified.manifest.kind),
     versionRange: verified.manifest.harnessVersion,

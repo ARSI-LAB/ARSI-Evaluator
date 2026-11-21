@@ -28,16 +28,25 @@ export function consumeClaudeCode(
     label: "Claude Code",
     accept(event) {
       if (event.type === "assistant" || event.type === "user") context.activity?.({});
+      if (event.type === "system" && event.subtype === "init" && typeof event.permissionMode === "string" && event.permissionMode !== "bypassPermissions") {
+        unsupportedToolPolicy("claudecode", `CLI selected ${event.permissionMode} instead of the requested bypassPermissions mode`);
+      }
       if (requiredWebTools.length && event.type === "system" && event.subtype === "init") {
         const tools = Array.isArray(event.tools) ? event.tools : [];
         const missing = requiredWebTools.filter(name => !tools.includes(name));
-        if (missing.length) unsupportedToolPolicy("claudecode", `${missing.join(", ")} is unavailable for the selected model service`);
+        if (missing.length) {
+          const settings = missing.map(name => name === "WebFetch" ? "webFetch: enabled" : "webSearch: enabled");
+          unsupportedToolPolicy("claudecode", `${settings.join(", ")} requires ${missing.join(", ")}, but the CLI did not expose the requested tool for the selected model service`);
+        }
       }
       if (event.type !== "result") return;
       if (result) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "Claude Code emitted multiple result events");
       result = event;
     },
     finish(exit, stderr) {
+      if (result?.subtype === "error_max_turns") {
+        throw new EvaluatorError("SOLVER_RESULT_INCOMPLETE", "Claude Code reached maxTurns before producing a final answer");
+      }
       if (exit.code !== 0 || exit.signal !== null || (result && (result.is_error !== false || result.subtype !== "success"))) {
         const errors = Array.isArray(result?.errors) ? result.errors.filter(item => typeof item === "string").join("\n") : "";
         const resultText = typeof result?.result === "string" ? result.result : "";

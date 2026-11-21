@@ -99,11 +99,11 @@ async function smoke(environment: "local" | "docker"): Promise<void> {
     });
     await writeFile(configPath, JSON.stringify({
       services: { selected: { model, base_url: fixture.endpoint, api: docker ? "openai-responses" : "openai-completions",
-        api_key: "${CODEBUDDY_FIXTURE_KEY}", maxTokens, contextWindow } },
+        api_key: "${CODEBUDDY_FIXTURE_KEY}", maxTokens: 1024, contextWindow: 65536 } },
       benchmark: {
         name: docker ? "harbor" : "gpqa",
         config: docker ? { source: { kind: "local", path: "./dataset" } } : { localPath: "./gpqa.csv" },
-        solver: { name: "codebuddy", service: "selected" },
+        solver: { name: "codebuddy", service: "selected", config: { maxTokens, contextWindow, maxTurns: 4 } },
       },
       environment,
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 900, roundTimeoutSeconds: 900 } },

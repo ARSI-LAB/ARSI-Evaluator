@@ -284,7 +284,7 @@ describe("simpleagent runner", () => {
         activity: (event: ComponentActivity) => { activities.push(event); } };
       const { session, prepared } = await prepareSimpleAgent(environment, solver, attemptPaths, context, [
           { source: join(fixtureRoot, "pi-isolation", "AGENTS.md"), target: "AGENTS.md" },
-          { source: join(fixtureRoot, "pi-isolation", ".pi", "extensions", "evil.js"), target: ".pi/extensions/evil.js" },
+          { source: join(fixtureRoot, "pi-isolation", ".pi", "extensions", "workspace.js"), target: ".pi/extensions/workspace.js" },
       ]);
       const input: PublicTask = { id: name, prompt: `complete ${name}` };
       const promise = prepared.solve(input, context);
@@ -316,7 +316,7 @@ describe("simpleagent runner", () => {
         expect(await readFile(join(item.session.workdir, "marker.txt"), "utf8")).toBe(item.name);
         expect(await stat(join(item.session.workdir, ".arsi-evaluator-runtime")).then(() => true, () => false)).toBe(false);
         expect(trajectoryText).not.toContain(item.key);
-        expect(trajectoryText).not.toContain("ISOLATION_BREACH");
+        expect(await readFile(join(item.session.workdir, "workspace-extension.txt"), "utf8")).toBe("loaded");
       }
     } finally {
       await Promise.all(running.map(item => item.session.dispose(new AbortController().signal)));
@@ -331,7 +331,6 @@ describe("simpleagent runner", () => {
     expect(new Set(requests.map(request => request.authorization))).toEqual(new Set(["Bearer key-alpha", "Bearer key-beta"]));
     expect(requests.every(request => request.body.model === "fixture-model")).toBe(true);
     expect(requests.every(request => request.body.max_tokens === undefined && request.body.max_completion_tokens === undefined)).toBe(true);
-    expect(requests.every(request => !JSON.stringify(request.body).includes("ISOLATION_BREACH"))).toBe(true);
     expect(requests.filter(request => request.authorization === "Bearer key-alpha").every(request => !JSON.stringify(request.body).includes("beta"))).toBe(true);
     expect(requests.filter(request => request.authorization === "Bearer key-beta").every(request => !JSON.stringify(request.body).includes("alpha"))).toBe(true);
   }, 30_000);
@@ -420,6 +419,28 @@ describe("simpleagent runner", () => {
     } finally { await session.dispose(new AbortController().signal); }
   }, 35_000);
 
+  test("plain Pi diagnoses missing capabilities before the first model request", async () => {
+    const attemptPaths = await paths("plain-pi-capabilities");
+    const workspace = join(root, "plain-pi-workspace");
+    await mkdir(workspace);
+    const model = { name: "fixture-model", endpoint, provider: null, api: "openai-completions" };
+    const auth = { value: "key-plain-pi-capabilities", reference: null };
+    const solver = new SimpleAgentSolver(model, auth, undefined, undefined, { webFetch: "enabled", subagent: "disabled" });
+    const warnings: string[] = [];
+    const context = { paths: attemptPaths, key: { runId: "run", taskId: "caps", attemptId: "a" },
+      signal: AbortSignal.timeout(25000), warning: ({ message }: { message: string }) => warnings.push(message) };
+    const { session, prepared } = await prepareSimpleAgent(new LocalEnvironment(workspace), solver, attemptPaths, context);
+    try {
+      await expect(prepared.solve({ id: "caps", prompt: "Fetch the page." }, context)).rejects.toMatchObject({
+        code: "CONFIG_INVALID", message: expect.stringMatching(/simpleagent.*webFetch: enabled requires tool web_fetch/u),
+      });
+      expect(warnings).toContainEqual(expect.stringMatching(/simpleagent.*subagent: disabled.*no built-in/u));
+      expect(await readFile(statePath, "utf8").catch(() => "")).not.toContain(auth.value);
+    } finally {
+      await session.dispose(new AbortController().signal);
+    }
+  }, 30000);
+
   test("no-tools requests stay empty after a model attempts a shell call", async () => {
     const attemptPaths = await paths("no-tools");
     const workspace = join(root, "no-tools-workspace");
@@ -432,7 +453,6 @@ describe("simpleagent runner", () => {
       workdir: workspace,
       outputDir: attemptPaths.agent,
       toolAccess: { tools: "none" },
-      extensions: [join(workspace, "missing-extension.ts")],
     });
     expect((await run(input)).finalText).toBe("Answer: alpha");
     expect(await stat(join(workspace, "marker.txt")).then(() => true, () => false)).toBe(false);
@@ -657,7 +677,7 @@ describe("simpleagent bundle", () => {
     expect(JSON.stringify(installation)).not.toContain("key-bundle-install");
   });
 
-  test("loads extension tools, skills and instructions through the environment runtime", async () => {
+  test("keeps extension tools, skills and instructions when MCP and delegation are disabled", async () => {
     await stubWindowsShell();
     // The fixture lock names packages that do not exist on PyPI; a copy
     // without it keeps the managed runtime install off pip entirely.
@@ -668,7 +688,8 @@ describe("simpleagent bundle", () => {
     const workspaceRoot = join(root, "bundle-workspaces");
     await mkdir(workspaceRoot, { recursive: true });
     const environment = new LocalEnvironment(workspaceRoot);
-    const solver = new SimpleAgentSolver(bundleModel(), { value: "key-bundle", reference: null }, { path: bundleRoot });
+    const solver = new SimpleAgentSolver(bundleModel(), { value: "key-bundle", reference: null }, { path: bundleRoot },
+      undefined, { mcp: "disabled", subagent: "disabled" });
     const signal = new AbortController().signal;
     const context = { key: { runId: "run", taskId: "bundle", attemptId: "attempt" }, paths: attemptPaths, signal };
     const { session, prepared } = await prepareSimpleAgent(environment, solver, attemptPaths, context);

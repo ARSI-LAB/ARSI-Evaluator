@@ -105,12 +105,12 @@ from types import SimpleNamespace
 def invoke(state):
     open('captured.json','w').write(json.dumps(state))
     return {'messages':[SimpleNamespace(type='ai',content='ok',tool_calls=[],usage_metadata={'input_tokens':2,'output_tokens':1})]}
-def build_agent(middleware):
+def build_agent_for_run(*, policy, mcp_servers, skills_directories, tools, middleware):
     return SimpleNamespace(invoke=invoke)
 `);
   const pdf = { name: "document.pdf", mediaType: "application/pdf", data: fixturePDF().toString("base64") };
   const result = await program(process.env.PYTHON_BIN ?? (process.platform === "win32" ? "python" : "python3"),
-    [resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", root], { prompt: "look", media: [image, pdf] }, root);
+    [resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", root, "--factory-module", "agent.py"], { prompt: "look", media: [image, pdf] }, root);
   expect(result.code, result.stdout + result.stderr).toBe(0);
   const content = JSON.parse(await readFile(join(root, "captured.json"), "utf8")).messages[0][1];
   expect(content).toEqual([{ type: "text", text: "look" }, { type: "image_url", image_url: { url: `data:image/png;base64,${image.data}` } },
@@ -168,10 +168,10 @@ test.skipIf(!process.env.EVALUATOR_DEEPAGENTS_TEST_PYTHON)("pinned DeepAgents se
   try {
     await writeFile(join(root, "agent.py"), `from deepagents import create_deep_agent
 from langchain_openai import ChatOpenAI
-def build_agent(middleware):
-    return create_deep_agent(model=ChatOpenAI(model='vision',api_key='fixture',base_url='http://127.0.0.1:${address.port}/v1'),middleware=list(middleware))
+def build_agent_for_run(*, policy, mcp_servers, skills_directories, tools, middleware):
+    return create_deep_agent(model=ChatOpenAI(model='vision',api_key='fixture',base_url='http://127.0.0.1:${address.port}/v1'),tools=tools, middleware=list(middleware))
 `);
-    const result = await program(process.env.EVALUATOR_DEEPAGENTS_TEST_PYTHON!, [resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", root],
+    const result = await program(process.env.EVALUATOR_DEEPAGENTS_TEST_PYTHON!, [resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", root, "--factory-module", "agent.py"],
       { prompt: "Look", imageTools: true, media: [image, { name: "document.pdf", mediaType: "application/pdf", data: fixturePDF().toString("base64") }] }, root);
     expect(result.code, result.stdout + result.stderr).toBe(0);
     expect(requests).toHaveLength(2);
@@ -211,8 +211,8 @@ test.skipIf(!process.env.EVALUATOR_DSH_TEST_RUNTIME)("pinned DSH preserves image
     await new Promise<void>(resolve => init.once("close", () => resolve())); clearTimeout(timer);
     const patches = [join(root, "model.yaml"), join(root, "permissions.yaml"), join(root, "sdk.yaml")];
     await writeFile(patches[0]!, dshModelPatch({ name: "vision", provider: null, endpoint: `http://127.0.0.1:${address.port}/v1`, api: "openai-completions", inputModalities: ["text", "image"] }));
-    await writeFile(patches[1]!, dshPermissionPatch("danger-full-access"));
-    await writeFile(patches[2]!, dshSdkPatch("evaluator", root, "danger-full-access"));
+    await writeFile(patches[1]!, dshPermissionPatch());
+    await writeFile(patches[2]!, dshSdkPatch("evaluator", root));
     const result = await program(process.execPath, [resolve("src/runtimes/dsh/assets/multimodal-runner.mjs")], {
       moduleBase: join(runtime, "package.json"), dsh, home: root, profile: "evaluator", patches,
       workdir: root, outputDir: join(root, "logs"), model: "vision", provider: "arsi-evaluator", key, prompt: "look", media: [image],

@@ -28,7 +28,7 @@ test.each(["length", "max_tokens", "empty", "stop"])("DeepAgents runner preserve
   const value = await context();
   await writeFile(join(value.paths.root, "agent.py"), `
 from types import SimpleNamespace
-def build_agent(middleware):
+def build_agent_for_run(*, policy, mcp_servers, skills_directories, tools, middleware):
     message = SimpleNamespace(type="ai", content=${reason === "empty" ? '""' : '"partial"'}, tool_calls=[],
         usage_metadata={"input_tokens": 3, "output_tokens": 8},
         response_metadata={"finish_reason": "${reason === "empty" ? "length" : reason}"})
@@ -36,7 +36,7 @@ def build_agent(middleware):
 `);
   // The real runner owns stdin; use a small Python launcher to supply it.
   const { stdout } = await exec(python, ["-c", "import io,json,runpy,sys;sys.stdin=io.StringIO(json.dumps(dict(prompt='task',media=[])));sys.argv=sys.argv[1:];runpy.run_path(sys.argv[0],run_name='__main__')",
-    resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", value.paths.root],
+    resolve("src/runtimes/deepagents/assets/runner.py"), "--bundle-dir", value.paths.root, "--factory-module", "agent.py"],
   { cwd: value.paths.root, signal: value.signal, encoding: "utf8" });
   const warnings: unknown[] = [];
   const result = await consumeDsh(handle(stdout, 0), { ...value, warning: warning => warnings.push(warning) }, "", undefined, "DEEPAGENTS");

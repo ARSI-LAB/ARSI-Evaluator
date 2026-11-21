@@ -1,8 +1,9 @@
+import { modelWithLimits } from "../../src/plugins/solvers/agent-limits.js";
 import { expect, test } from "vitest";
 import { parseInstalledBundle } from "../../src/runtimes/agentbundle/cli.js";
 import { parse } from "yaml";
 import { dshModelPatch } from "../../src/runtimes/dsh/model.js";
-import { agentBundleModel, parseAgentBundleConfig } from "../../src/plugins/solvers/agentbundle.js";
+import { parseAgentBundleConfig } from "../../src/plugins/solvers/agentbundle.js";
 
 const model = { name: "office-model", endpoint: "https://example.invalid/v1", provider: null, api: "openai-completions" };
 
@@ -10,11 +11,13 @@ test("binds agentbundle.maxTokens into the DSH provider patch", () => {
   const config = parseAgentBundleConfig({ path: "bundle", maxTokens: 131072 });
   expect(config).toEqual({ path: "bundle", maxTokens: 131072 });
 
-  const patch = parse(dshModelPatch(agentBundleModel(model, config.maxTokens, "default")));
+  const service = { ...model, maxTokens: 128, contextWindow: 300000 };
+  const patch = parse(dshModelPatch(modelWithLimits(service, config)));
   expect(patch.find((entry: { id: string }) => entry.id === "llm-pi-ai").config.providers["arsi-evaluator"].models).toEqual([
-    { id: "office-model", maxTokens: 131072 },
+    { id: "office-model", maxTokens: 131072, contextWindow: 300000 },
   ]);
-  expect(agentBundleModel(model, undefined, "default")).toBe(model);
+  expect(modelWithLimits(model, {})).toBe(model);
+  expect(service.maxTokens).toBe(128);
 });
 
 test("accepts the jiuwenswarm home option and rejects unknown solver fields", () => {

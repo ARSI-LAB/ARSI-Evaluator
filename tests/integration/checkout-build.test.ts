@@ -14,6 +14,7 @@ async function fixture(): Promise<string> {
   await writeFile(join(root, "package-lock.json"), JSON.stringify({ packages: { "": {} } }));
   await mkdir(join(root, "src/infrastructure/network"), { recursive: true });
   await writeFile(join(root, "src/infrastructure/network/package-mirror.mjs"), "export {};\n");
+  await cp(new URL("../../src/infrastructure/network/web-search.mjs", import.meta.url), join(root, "src/infrastructure/network/web-search.mjs"));
   await mkdir(join(root, "src/infrastructure/models"), { recursive: true });
   await cp(new URL("../../src/infrastructure/models/reasoning-effort.mjs", import.meta.url),
     join(root, "src/infrastructure/models/reasoning-effort.mjs"));

@@ -86,7 +86,9 @@ async function readManifest(bundleRoot: string): Promise<PiBundleManifest> {
     || extensions.some(item => typeof item !== "string" || item.trim() === "")) {
     throw new PiBundleError("ENV_RUNTIME_INSTALL_FAILED", "bundle.yaml extensions must be a non-empty array of paths");
   }
-  return { extensions: extensions.map(item => bundleRelative(item, "bundle.yaml extension")) };
+  const paths = extensions.map(item => bundleRelative(item, "bundle.yaml extension"));
+  if (manifest.extensionPolicy !== "run-v1") throw new PiBundleError("ENV_RUNTIME_INSTALL_FAILED", "Pi bundle.yaml must declare extensionPolicy: run-v1");
+  return { extensions: paths };
 }
 
 /** Resolve the explicit entry files a manifest extension directory declares. */

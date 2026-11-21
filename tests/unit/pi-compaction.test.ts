@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { COMPACTION_RESERVE_TOKENS, contextWindowFor, modelFor } from "../../src/runtimes/pi/runner.js";
+import { modelFor } from "../../src/runtimes/pi/runner.js";
 import type { RunnerInput } from "../../src/runtimes/pi/protocol.js";
 import type { RuntimeAuth } from "../../src/core/contracts/config.js";
 
@@ -33,32 +33,24 @@ function input(overrides: Partial<RunnerInput["model"]>): RunnerInput {
   } as RunnerInput;
 }
 
-test("maxTokens is the compaction threshold: the registered window adds the summarizer reserve", () => {
-  expect(contextWindowFor(384_000)).toBe(384_000 + COMPACTION_RESERVE_TOKENS);
-  expect(contextWindowFor(undefined)).toBe(128_000 + COMPACTION_RESERVE_TOKENS);
-  // shouldCompact(context, window, settings) triggers at window - reserve,
-  // so a context above maxTokens is exactly the compaction point.
-  expect(contextWindowFor(384_000) - COMPACTION_RESERVE_TOKENS).toBe(384_000);
-});
-
 test("an explicit endpoint registers the model with the configured budget", async () => {
   const runtime = stubRuntime();
   const model = await modelFor(input({ maxTokens: 384_000 }), runtime as never);
-  expect(model).toMatchObject({ contextWindow: 384_000 + COMPACTION_RESERVE_TOKENS, maxTokens: 384_000 });
-  expect(runtime.providers.get("arsi-evaluator-runtime")!.models[0]).toMatchObject({ contextWindow: 384_000 + COMPACTION_RESERVE_TOKENS });
+  expect(model).toMatchObject({ contextWindow: 144_384, maxTokens: 384_000 });
+  expect(runtime.providers.get("arsi-evaluator-runtime")!.models[0]).toMatchObject({ contextWindow: 144_384 });
 });
 
 test("without model metadata or maxTokens the output limit follows the published 128000 default", async () => {
   const runtime = stubRuntime();
   const model = await modelFor(input({}), runtime as never);
-  expect(model).toMatchObject({ contextWindow: 128_000 + COMPACTION_RESERVE_TOKENS, maxTokens: 128_000 });
+  expect(model).toMatchObject({ contextWindow: 144_384, maxTokens: 128_000 });
 });
 
 test("contextWindow changes compaction without adding a response output limit", async () => {
   const runtime = stubRuntime();
   const configured = input({ contextWindow: 200_000 });
   const model = await modelFor(configured, runtime as never);
-  expect(model.contextWindow).toBe(200_000 + COMPACTION_RESERVE_TOKENS);
+  expect(model.contextWindow).toBe(200_000);
   expect(configured.model.maxTokens).toBeUndefined();
   expect(model.maxTokens).toBe(128_000);
 });
@@ -67,5 +59,5 @@ test.each([null, "https://model.invalid/v1"])("a registered model keeps its own 
   const runtime = stubRuntime();
   runtime.registerProvider("openai", { models: [{ id: "fixture-model", contextWindow: 200000, maxTokens: 64000 }] });
   const model = await modelFor(input({ provider: "openai", endpoint }), runtime as never);
-  expect(model.maxTokens).toBe(64000);
+  expect(model).toMatchObject({ maxTokens: 64000, contextWindow: 200000 });
 });

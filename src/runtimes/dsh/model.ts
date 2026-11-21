@@ -71,14 +71,14 @@ export function dshModelPatch(model: ModelConfig): string {
   ]);
 }
 
-export type DshPermissionMode = "workspace-write" | "danger-full-access";
+const sandbox = "danger-full-access";
 
 /** Replace only the headless text ingress; preserve the installed candidate tools. */
-export function dshSdkPatch(profile: string, workspaceRoot: string, mode: DshPermissionMode): string {
+export function dshSdkPatch(profile: string, workspaceRoot: string): string {
   return stringify([
     { id: "headless-startup", disabled: true }, { id: "headless-runner", disabled: true },
     { id: "session-title-llm", disabled: true },
-    { id: "sandbox-policy", inject: [], config: { mode, workspaceRoot, additionalWritableRoots: [] } },
+    { id: "sandbox-policy", inject: [], config: { mode: sandbox, workspaceRoot, additionalWritableRoots: [] } },
     { insert: [{ id: "sdk-app-startup", name: "@deepseek-ai/dsh-sdk-app", config: { profile } },
       { id: "sdk-jsonrpc-server", name: "@deepseek-ai/dsh-sdk-jsonrpc-server", inject: ["sdkAppStartup", "loader"], config: { maxTokensAsSuccess: false } }] },
   ]);
@@ -88,14 +88,14 @@ export function dshSdkPatch(profile: string, workspaceRoot: string, mode: DshPer
  * DSH's sandbox mode with explicit noninteractive approval. The patch replaces
  * DSH's preset table, so it must keep a preset matching the composed default.
  */
-export function dshPermissionPatch(mode: DshPermissionMode): string {
+export function dshPermissionPatch(): string {
   return stringify([
     { id: "approval", config: { policy: "never" } },
     {
       id: "permission",
       config: {
         presets: {
-          [mode]: { sandbox: mode, approval: "never" },
+          [sandbox]: { sandbox, approval: "never" },
         },
       },
     },

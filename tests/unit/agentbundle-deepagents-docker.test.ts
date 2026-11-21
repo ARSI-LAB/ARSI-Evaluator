@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -108,6 +108,17 @@ function attemptContext(paths: { root: string; agent: string }): AttemptContext 
 }
 
 describe("agentbundle deepagents docker preparation", () => {
+  it("rejects a prebuilt graph even for a run with default permissions", async () => {
+    const bundle = await mkdtemp(join(tmpdir(), "deepagents-old-entry-"));
+    try {
+      await cp(fixtureBundle, bundle, { recursive: true });
+      await writeFile(join(bundle, "langgraph.json"), JSON.stringify({ graphs: { agent: "./agent.py:agent" } }));
+      await expect(verifyBundleCandidate(bundle)).rejects.toThrow("build_agent_for_run");
+    } finally {
+      await rm(bundle, { recursive: true, force: true });
+    }
+  });
+
   it("verifies the baked bundle, records installation evidence and returns the container solve handle", async () => {
     const digest = (await verifyBundleCandidate(fixtureBundle)).digest;
     const { session, started, solveSpec } = fakeDockerSession({
@@ -154,6 +165,8 @@ describe("agentbundle deepagents docker preparation", () => {
         "/opt/evaluator-agent/deepagents/runner.py",
         "--bundle-dir",
         "/opt/evaluator-agent/bundle",
+        "--factory-module",
+        "agent.py",
         "--json",
       ]);
       expect(solve?.cwd).toBe("/workspace");

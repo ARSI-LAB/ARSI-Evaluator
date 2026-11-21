@@ -32,7 +32,7 @@ test.skipIf(!python)("pinned JiuwenSwarm sends the initial image and native read
   try {
     await mkdir(join(root, "config"));
     await writeFile(join(root, "config/config.yaml"), mergeJiuwenswarmModelConfig(
-      "preferred_language: en\nrsi:\n  enabled: false\nsymphony:\n  enabled: false\n", true));
+      "preferred_language: en\nrsi:\n  enabled: false\nsymphony:\n  enabled: false\n", true, undefined, { maxTokens: 2345, maxTurns: 4, contextWindow: 100000 }));
     await writeFile(join(root, "later.png"), fixturePNG(true));
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -60,6 +60,7 @@ test.skipIf(!python)("pinned JiuwenSwarm sends the initial image and native read
       expect(code, stdout + stderr).toBe(0);
     } finally { clearTimeout(timer); }
     expect(requests).toHaveLength(2);
+    expect(requests.map(request => request.max_tokens ?? request.max_completion_tokens)).toEqual([2345, 2345]);
     expect(requests.map(request => request.model)).toEqual(["vision", "vision"]);
     expect(JSON.stringify(requests[0])).toContain(`data:image/png;base64,${image.data}`);
     const imageUrls = JSON.stringify(requests[1]).match(/data:image\/[^"\s]+/g) ?? [];

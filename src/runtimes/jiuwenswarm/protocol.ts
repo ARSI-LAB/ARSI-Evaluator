@@ -299,6 +299,14 @@ export async function consumeJiuwenswarm(
     });
     if (context.signal.aborted) throw context.signal.reason ?? new DOMException("cancelled", "AbortError");
     if (stdoutText.truncated) throw outputLimit("jiuwenswarm", `stdout exceeded ${limits.maxEnvelopeBytes} bytes`);
+    if (exit.code === 78) {
+      const lastLine = stdoutText.text.trimEnd().split("\n").at(-1) ?? "";
+      if (lastLine.startsWith('{"evaluatorConfigurationError":')) {
+        const diagnostic = record(JSON.parse(lastLine), "JiuwenSwarm configuration error");
+        if (typeof diagnostic.evaluatorConfigurationError === "string")
+          throw new JiuwenswarmProtocolError("CONFIG_INVALID", redactText(diagnostic.evaluatorConfigurationError, secret));
+      }
+    }
     const envelope = parseJiuwenswarmEnvelope(stdoutText.text);
     let deltas = "";
     let final = "";

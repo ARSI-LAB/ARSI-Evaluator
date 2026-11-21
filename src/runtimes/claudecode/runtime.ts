@@ -1,3 +1,4 @@
+import { taskResourceFiles } from "../shared/task-resource-files.js";
 import { fileURLToPath } from "node:url";
 import type { RuntimeInstallation } from "../../core/contracts/environment.js";
 
@@ -10,7 +11,8 @@ export async function claudeCodeRuntimeInstallation(signal: AbortSignal): Promis
     id: `claudecode:${CLAUDE_CODE_VERSION}`,
     cacheName: `claudecode-${CLAUDE_CODE_VERSION}`,
     files: [
-      ...["package.json", "package-lock.json", "launch.mjs"].map(target => ({
+      ...taskResourceFiles(),
+      ...["package.json", "package-lock.json", "launch.mjs", "search-hook.mjs"].map(target => ({
         source: fileURLToPath(new URL(`./assets/${target}`, import.meta.url)), target,
       })),
       { source: fileURLToPath(new URL("../shared/assets/model-relay.mjs", import.meta.url)), target: "runtimes/shared/assets/model-relay.mjs" },

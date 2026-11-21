@@ -1,3 +1,4 @@
+import { expectRecord } from "../../core/validation/input.js";
 import { resolveModelInput } from "../multimodal/model.js";
 import { loadAttachments, requireInputModalities } from "../multimodal/input.js";
 import { createHash } from "node:crypto";
@@ -10,7 +11,7 @@ import type { EnvironmentSession } from "../../core/contracts/environment.js";
 import type { AttemptContext, PreparedSolver } from "../../core/contracts/solver.js";
 
 import { canonicalJson } from "../../core/results/run-manifest.js";
-import { AgentBundleError, cliJson, parseInstalledBundle, parseVerifiedBundle, type VerifiedBundle } from "../agentbundle/cli.js";
+import { AgentBundleError, cliJson, cliOutput, parseInstalledBundle, parseVerifiedBundle, type VerifiedBundle } from "../agentbundle/cli.js";
 
 import { HERMES_VERSION, hermesRuntimeInstallation } from "./runtime.js";
 import { HERMES_AUTH_ENV, hermesModelSettings } from "./model.js";
@@ -22,17 +23,21 @@ import { runtimeProcessEnvironment } from "../../infrastructure/process/local.js
 import { type BundlePreparation, sameCandidate, hasCode, customHomeDirectory, writeHomeConfig, claimPersistentState, preparedAttempt } from "../agentbundle/preparation-state.js";
 /** Merge the solver's model_aliases into the install-written Hermes config.yaml
  *  without clobbering model.default/model.provider owned by the bundle install. */
-async function mergeHermesModelConfig(target: string, model: ModelConfig, signal: AbortSignal): Promise<string> {
-  let existing = "";
-  try {
-    existing = await readFile(target, { encoding: "utf8", signal });
-  } catch (error) {
-    if (!hasCode(error, "ENOENT")) throw error;
-  }
+function mergeHermesModelConfig(existing: string, model: ModelConfig, root: string, node: string, search: boolean): string {
   let doc: Record<string, unknown> = {};
   if (existing.trim() !== "") {
     const parsed = parseYaml(existing);
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) doc = parsed as Record<string, unknown>;
+  }
+  doc.terminal = { ...expectRecord(doc.terminal ?? {}, "Hermes terminal"), backend: "local" };
+  doc.approvals = { ...expectRecord(doc.approvals ?? {}, "Hermes approvals"), mode: "off" };
+  if (search) {
+    const servers = expectRecord(doc.mcp_servers ?? {}, "Hermes mcp_servers");
+    let name = "evaluator-search";
+    while (Object.hasOwn(servers, name) && (servers[name] as { args?: unknown[] } | null)?.args?.[0] !== root) name += "-fallback";
+    doc.mcp_servers = { ...servers, [name]: { command: node,
+      args: [root, "--serve", model.api, model.endpoint, model.name, HERMES_AUTH_ENV],
+      env: { [HERMES_AUTH_ENV]: "${ARSI_EVALUATOR_API_KEY}" } } };
   }
   const additions = parseYaml(hermesModelSettings(model)) as Record<string, unknown>;
   if (model.inputModalities?.includes("image")) {
@@ -73,8 +78,8 @@ export async function prepareHermes(
   const configuredHome = local ? preparation.options.hermeshome : undefined;
   const customHome = configuredHome !== undefined;
   let state =
-    configuredHome !== undefined ? await customHomeDirectory(configuredHome) : join(stateRoot, identity.slice(0, 24));
-  const cli = join(runtime.root, "agentbundle", "run.mjs");
+    configuredHome !== undefined ? await customHomeDirectory(configuredHome) : path(stateRoot, identity.slice(0, 24));
+  const cli = path(runtime.root, "agentbundle", "run.mjs");
   // R10: the pm-runtime (ruamel-bearing deps) is provisioned under the runtime-root HOME (see
   // hermesRuntimeInstallation provisionEnv HOME={root}). agent-bundle install borrows it via
   // nativeHome(env.HERMES_HOME)/installs, so run.mjs's env points at the provision home while the
@@ -96,7 +101,7 @@ export async function prepareHermes(
     HOME: state,
     USERPROFILE: state,
     HERMES_HOME: state,
-    AGENT_BUNDLE_REGISTRY: join(state, "registry.json"),
+    AGENT_BUNDLE_REGISTRY: path(state, "registry.json"),
   };
   const start = session.start.bind(session);
   const command = (args: string[]) => ({
@@ -118,8 +123,8 @@ export async function prepareHermes(
     env.HOME = state;
     env.USERPROFILE = state;
     env.HERMES_HOME = state;
-    env.AGENT_BUNDLE_REGISTRY = join(state, "registry.json");
-    const bundle = local ? preparation.path : join(state, "bundle");
+    env.AGENT_BUNDLE_REGISTRY = path(state, "registry.json");
+    const bundle = local ? preparation.path : path(state, "bundle");
     if (!local) await session.upload(preparation.path, bundle, context.signal);
     const verified = parseVerifiedBundle(
       await cliJson(start, command(["verify", bundle, "--expect-digest", candidate.digest]), context.signal),
@@ -134,14 +139,21 @@ export async function prepareHermes(
     context.signal.throwIfAborted();
     // Merge the solver's model_aliases into the install-written config.yaml
     // without clobbering model.default/model.provider owned by the preparation.
-    const merged = await mergeHermesModelConfig(join(state, "config.yaml"), preparation.model, context.signal);
+    const target = path(state, "config.yaml");
+    const existing = local ? await readFile(target, { encoding: "utf8", signal: context.signal }).catch(error => {
+      if (!hasCode(error, "ENOENT")) throw error;
+      return "";
+    }) : await cliOutput(start, { executable: "cat", args: [target], cwd: state, env, inheritEnv: false, input: null }, context.signal);
+    const merged = mergeHermesModelConfig(existing, preparation.model,
+      path(runtime.root, "runtimes", "shared", "assets", "search-stdio.mjs"), node,
+      preparation.options.tools !== "none" && preparation.options.webSearch !== "disabled" && preparation.options.mcp !== "disabled");
     const configYaml = join(context.paths.agent, "hermes-config.yaml");
     await mkdir(context.paths.agent, { recursive: true });
     await writeFile(configYaml, merged, { mode: 0o600 });
     if (customHome) {
-      await writeHomeConfig(join(state, "config.yaml"), merged);
+      await writeHomeConfig(target, merged);
     } else {
-      await session.upload(configYaml, join(state, "config.yaml"), context.signal);
+      await session.upload(configYaml, target, context.signal);
     }
     context.signal.throwIfAborted();
     await writeFile(
@@ -150,11 +162,37 @@ export async function prepareHermes(
       { mode: 0o600 },
     );
     const usageFile = join(context.paths.agent, "usage.json");
+    const runtimeUsageFile = local ? usageFile : path(session.agentOutputDir, "usage.json");
+    let taskConfigWritten = false;
     return preparedAttempt(
-      release,
+      async () => {
+        try {
+          if (local && taskConfigWritten) await writeHomeConfig(target, merged);
+        } finally { await release(); }
+      },
       async (input, signal) => {
         requireInputModalities(input, (preparation.model.inputModalities ?? ["text"]).filter(kind => kind !== "pdf"));
         if (input.attachments?.length && preparation.model.api !== "openai-completions") throw new AgentBundleError("BENCHMARK_UNSUPPORTED", "Hermes image input requires the validated openai-completions route");
+        if (input.mcpServers?.length || input.skillsDirectories?.length) {
+          const doc = expectRecord(parseYaml(merged), "Hermes config");
+          const servers = expectRecord(doc.mcp_servers ?? {}, "Hermes mcp_servers");
+          for (const server of input.mcpServers ?? []) {
+            if (Object.hasOwn(servers, server.name)) throw new AgentBundleError("CONFIG_INVALID", "Duplicate Hermes MCP server " + server.name);
+            servers[server.name] = { url: server.url, transport: server.transport === "http" ? "streamable-http" : "sse" };
+          }
+          const skills = expectRecord(doc.skills ?? {}, "Hermes skills");
+          const dirs = skills.external_dirs ?? [];
+          if (!Array.isArray(dirs)) throw new AgentBundleError("CONFIG_INVALID", "Hermes skills.external_dirs must be an array");
+          const taskConfig = stringifyYaml({ ...doc, mcp_servers: servers,
+            skills: { ...skills, external_dirs: [...new Set([...dirs, ...(input.skillsDirectories ?? [])])] } });
+          taskConfigWritten = true;
+          if (local) await writeHomeConfig(target, taskConfig);
+          else {
+            const file = join(context.paths.agent, "hermes-task.yaml");
+            await writeFile(file, taskConfig, { mode: 0o600 });
+            await session.upload(file, target, signal);
+          }
+        }
         const media = await loadAttachments(input, session, { ...context, signal });
         signal.throwIfAborted();
         return start(
@@ -162,13 +200,14 @@ export async function prepareHermes(
             executable: "bash",
             args: [path(runtime.root, "hermes-agent", "scripts", "run-in-hermes-env"), "python",
               path(runtime.root, "hermes", "runner.py"), path(runtime.root, "hermes-agent"),
-              "-z", input.prompt, "--usage-file", usageFile, "--in", session.workdir, "-m", preparation.model.name,
+              "-z", input.prompt, "--usage-file", runtimeUsageFile, "--in", session.workdir, "-m", preparation.model.name,
               ...(preparation.model.reasoningEffort === undefined ? [] : ["--reasoning", preparation.model.reasoningEffort])],
             cwd: session.workdir,
             env: {
               ...env,
               HERMES_HOME: state,
-              OFFICE_AGENT_WORKDIR: join(state, "work", "office-agent"),
+              HERMES_YOLO_MODE: "1",
+              OFFICE_AGENT_WORKDIR: path(state, "work", "office-agent"),
               [HERMES_AUTH_ENV]: preparation.auth.value,
               ...(preparation.model.reasoningEffort === undefined ? {} : {
                 EVALUATOR_REASONING_EFFORT: preparation.model.reasoningEffort,
@@ -188,7 +227,7 @@ export async function prepareHermes(
           model: preparation.model.name,
           inputModalities: preparation.model.inputModalities ?? ["text"],
           imageInputMode: preparation.model.inputModalities?.includes("image") ? "native" : "text",
-        }),
+        }, local ? undefined : () => session.download(runtimeUsageFile, usageFile, signal)),
       ["text", "image"],
     );
   } catch (error) {

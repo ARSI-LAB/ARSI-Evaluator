@@ -1,45 +1,50 @@
+import { disabledSkillConfig } from "./codex-skill-config.mjs";
+import { stageSkills, taskServers } from "./runtimes/shared/assets/task-resources.mjs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { stageAttachments } from "./stage-attachments.mjs";
 import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, ...args] = process.argv.slice(2);
-const { apiKey, prompt, media, relay: modelRelay } = JSON.parse(readFileSync(0, "utf8"));
+const input = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, prompt, media, relay: modelRelay } = input;
 const root = import.meta.dirname;
 const entry = join(root, process.platform === "win32" ? "traecli.exe" : "traecli");
 await mkdir(home, { mode: 0o700 });
 let relay;
+let resources;
 try {
-  // This release also discovers ~/.agents/skills on the host outside TRAE_HOME.
-  // Disable those paths in the attempt config without reading or copying skill content.
-  const hostSkills = join(homedir(), ".agents", "skills");
-  const entries = await readdir(hostSkills, { withFileTypes: true }).catch(error => {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  });
-  const config = entries.filter(entry => entry.isDirectory() || entry.isSymbolicLink()).map(entry => {
-    const skill = join(hostSkills, entry.name, "SKILL.md");
-    const path = process.platform === "win32" ? skill.replaceAll("\\", "/") : skill;
-    return `[[skills.config]]\npath = ${JSON.stringify(path)}\nenabled = false\n`;
-  });
-  await writeFile(join(home, "traecli.toml"), config.join("\n"), { flag: "wx", mode: 0o600 });
+  const policy = input.toolPolicy ?? {};
+  resources = await taskServers(input);
+  for (const { name, url, transport } of resources.servers) {
+    if (transport !== "http") throw Error("This CLI requires streamable HTTP for task MCP");
+    if (!/^[a-zA-Z0-9_-]+$/u.test(name)) throw Error("Unsupported MCP server name: " + name);
+    args.splice(-1, 0, "-c", "mcp_servers." + name + ".url=" + JSON.stringify(url));
+  }
+  if (policy.skills !== "disabled") {
+    await stageSkills(input.skillsDirectories, join(home, "skills"));
+  }
   const images = await stageAttachments(home, media);
   if (images.length) args.splice(-1, 0, ...images.map(path => `--image=${path}`));
   // Docker passes CommandSpec.env in docker exec arguments, so receive the key over stdin.
   const env = { ...process.env, HOME: home, USERPROFILE: home, TRAE_HOME: home, CODEX_HOME: home, EVALUATOR_TRAE_API_KEY: apiKey };
-  if (modelRelay) {
+  if (modelRelay || resources.completeSearch) {
     const token = randomUUID();
-    relay = await startModelRelay({ ...modelRelay, apiKey, token });
+    relay = await startModelRelay({ api: input.api, baseUrl: input.baseUrl, ...modelRelay, completeSearch: resources.completeSearch, apiKey, token });
     args.splice(-1, 0, "-c", `model_providers.arsi-evaluator.base_url=${JSON.stringify(relay.endpoint)}`);
     env.EVALUATOR_TRAE_API_KEY = token;
     env.NO_PROXY = env.no_proxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
   }
   if (process.platform === "linux") {
     env.PATH = [join(root, "traecli-resources"), process.env.PATH].filter(Boolean).join(delimiter);
+  }
+  if (policy.skills === "disabled") {
+    const project = args.find(arg => arg.startsWith("projects="));
+    const config = await disabledSkillConfig(entry, [], env, project ? ["-c", project] : []);
+    args.splice(-1, 0, "-c", config);
   }
   const cli = spawn(entry, args, { env, stdio: ["pipe", "inherit", "inherit"], windowsHide: true });
   const exited = new Promise((resolve, reject) => {
@@ -58,6 +63,7 @@ try {
     process.removeListener("SIGTERM", terminate);
   }
 } finally {
+  resources?.close?.();
   relay?.close();
   await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 }

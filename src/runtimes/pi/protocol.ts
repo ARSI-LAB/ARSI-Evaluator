@@ -122,10 +122,11 @@ export function parseRunnerInput(value: unknown): RunnerInput {
   const toolPolicy =
     root.toolPolicy === undefined ? undefined : parseShellToolPolicy(root.toolPolicy, "runner input.toolPolicy");
   const access = root.toolAccess === undefined ? undefined : record(root.toolAccess, "runner input.toolAccess");
-  const toolAccess = access === undefined ? undefined : {
-    ...parseSolverToolPolicy(access, "runner input.toolAccess", ["webSearchTools", "webFetchTools"]),
-    ...parseWebToolNames(access, "runner input.toolAccess"),
-  };
+  let toolAccess: RunnerInput["toolAccess"];
+  if (access) {
+    const policy = parseSolverToolPolicy(access, "runner input.toolAccess", ["webSearchTools", "webFetchTools"]);
+    toolAccess = { ...policy, ...parseWebToolNames(access, "runner input.toolAccess", policy) };
+  }
   const key = record(root.key, "runner input.key");
   fields(key, ["runId", "taskId", "attemptId"], "runner input.key");
   const input = record(root.input, "runner input.input");

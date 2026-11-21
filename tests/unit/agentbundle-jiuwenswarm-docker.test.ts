@@ -93,10 +93,6 @@ function fakeDockerSession(options: SessionOptions = {}): {
         return fakeHandle({ stdout: `${options.probeOutput ?? JIUWENSWARM_PROCESS_CLI_MARKER}\n` });
       }
       if (spec.executable === "cat") return fakeHandle({ stdout: `preferred_language: zh\nmodels:\n  defaults:\n    - model_client_config:\n        timeout: 1800\n        custom_headers: {}\n      model_config_obj:\n        max_tokens: 32768\n        reasoning_effort: low\n        context_window: 262144\n` });
-      if (spec.executable.endsWith("/bin/jiuwenswarm-process")) {
-        solve = spec;
-        return fakeHandle({});
-      }
       throw new Error(`unexpected command: ${spec.executable} ${spec.args.join(" ")}`);
     },
     upload: async (source, target) => {
@@ -206,8 +202,8 @@ describe("agentbundle jiuwenswarm docker preparation", () => {
       expect(probe?.executable).toBe("/opt/evaluator-agent/jiuwenswarm/home/bin/python");
 
       const solve = solveSpec();
-      expect(solve?.executable).toBe("/opt/evaluator-agent/jiuwenswarm/home/bin/jiuwenswarm-process");
-      expect(solve?.args).toEqual(["hello", "--output", "json", "--cwd", "/workspace", "--timeout", String(timeoutSeconds ?? 600)]);
+      expect(solve?.executable).toBe("/opt/evaluator-agent/jiuwenswarm/home/bin/python");
+      expect(solve?.args).toEqual(["/opt/evaluator-agent/jiuwenswarm/multimodal-runner.py", "hello", "--output", "json", "--cwd", "/workspace", "--timeout", String(timeoutSeconds ?? 600)]);
       expect(solve?.cwd).toBe("/workspace");
       expect(solve?.env).toMatchObject({
         JIUWENSWARM_DATA_DIR: state,

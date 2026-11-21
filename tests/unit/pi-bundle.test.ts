@@ -44,7 +44,7 @@ async function writeBundle(files: Record<string, string>): Promise<string> {
 }
 
 const manifest = (overrides?: string): string =>
-  `kind: pi-agent-bundle\nextensions:\n  - ./extensions/demo\n${overrides ?? ""}`;
+  `kind: pi-agent-bundle\nextensionPolicy: run-v1\nextensions:\n  - ./extensions/demo\n${overrides ?? ""}`;
 const extensionPackage = JSON.stringify({
   name: "demo-extension",
   pi: { extensions: ["./extension.js"] },
@@ -97,8 +97,11 @@ test("stagePiBundle rejects missing or malformed manifests", async () => {
   const wrongKind = await writeBundle({ "bundle.yaml": "kind: something-else\nextensions: [./extensions/demo]\n" });
   await expect(stage(wrongKind)).rejects.toThrow(/unsupported bundle kind/);
 
+  const unmigrated = await writeBundle({ "bundle.yaml": "kind: pi-agent-bundle\nextensions: [./extensions/demo]\n" });
+  await expect(stage(unmigrated)).rejects.toThrow(/extensionPolicy: run-v1/);
+
   const empty = await writeBundle({
-    "bundle.yaml": "kind: pi-agent-bundle\nextensions: []\n",
+    "bundle.yaml": "kind: pi-agent-bundle\nextensionPolicy: run-v1\nextensions: []\n",
     "extensions/demo/package.json": extensionPackage,
     "extensions/demo/extension.js": extensionEntry,
   });
@@ -107,12 +110,12 @@ test("stagePiBundle rejects missing or malformed manifests", async () => {
 
 test("stagePiBundle rejects unsafe extension paths", async () => {
   const escaping = await writeBundle({
-    "bundle.yaml": "kind: pi-agent-bundle\nextensions:\n  - ../outside\n",
+    "bundle.yaml": "kind: pi-agent-bundle\nextensionPolicy: run-v1\nextensions:\n  - ../outside\n",
   });
   await expect(stage(escaping)).rejects.toMatchObject({ code: "ENV_RUNTIME_INSTALL_FAILED" });
 
   const absolute = await writeBundle({
-    "bundle.yaml": `kind: pi-agent-bundle\nextensions:\n  - /etc/passwd\n`,
+    "bundle.yaml": `kind: pi-agent-bundle\nextensionPolicy: run-v1\nextensions:\n  - /etc/passwd\n`,
   });
   await expect(stage(absolute)).rejects.toThrow(/not a safe relative path/);
 });

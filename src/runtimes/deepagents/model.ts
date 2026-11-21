@@ -13,7 +13,7 @@ export type DeepagentsModelBinding = {
 
 /**
  * Map the evaluator model contract onto the deepagents runtime binding. The
- * bundle composition entry resolves AGENT_MODEL_* placeholders at import;
+ * run factory resolves AGENT_MODEL_* when composing the graph;
  * the langchain `openai` provider reads OPENAI_API_KEY/OPENAI_BASE_URL from
  * the process environment. Providers with their own authentication variables
  * are not validated yet and stay unsupported.

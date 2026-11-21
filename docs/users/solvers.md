@@ -6,21 +6,92 @@ Benchmarks define tasks and scoring; solvers define model requests and agent exe
 
 ## Configure tools and web access
 
-Set `benchmark.solver.config.tools: none` to disable solver tools as described below. Set `webSearch` and `webFetch` independently to `default`, `disabled`, or `enabled` to control native web search and URL fetching. Omitted fields use the solver's existing behavior. Solvers that disable all tools reject `tools: none` together with an enabled web tool.
+Set the following fields under `benchmark.solver.config`. Omitted fields and `default` preserve the harness defaults. Explicit restrictions take precedence over automatic permission approval.
 
-| Solver | Supported configuration |
-| --- | --- |
-| SimpleAgent, Pi | Support disabling all tools. The base tool set has no native web tools. When a bundle or task MCP is present, declare exact `webSearchTools` and `webFetchTools` names for explicit web settings. Put the names under `config.bundle` for SimpleAgent or `config.pi` for Pi. |
-| Claude Code, CodeBuddy | Support disabling all tools and independent `WebSearch` and `WebFetch` settings. Execution depends on the selected model service. |
-| ZCode | Supports disabling all tools or either web tool, and enabling fetch. Explicit search is unsupported on the custom model route. |
-| TRAE | Supports disabling all tools or either web tool. The pinned non-interactive `exec` does not support explicitly enabling search or fetch. |
-| Codex | `tools: none` maps to `shellTool: disabled` and removes shell tools with `--disable shell_tool`. The pinned CLI still declares tools such as `request_user_input`. `webSearch` controls native search separately. Opening pages is part of live search. |
-| DeepSeek Harness, JiuwenSwarm | Support disabling all tools. Explicitly enabled web tools require the corresponding native service. |
-| Qwen Code, Kimi Code CLI, MiniMax Code | Support disabling all tools, disabling search, and enabling or disabling fetch. These adapters do not yet configure native search backends; explicit search returns `CONFIG_INVALID`. |
-| OpenCode | Supports disabling all tools and independent native search/fetch switches. Search uses OpenCode's Exa service and requires network access to it. |
+| Field | Values | Effect |
+| --- | --- | --- |
+| `tools` | `default`, `none` | `none` disables built-in tools, including WebSearch, WebFetch and Evaluator’s automatic search fallback. MCP servers declared by the task, project or bundle remain available. Add `mcp: disabled` to disable MCP as well. Use `shellTool: disabled` to disable just the Codex shell. |
+| `webSearch`, `webFetch` | `default`, `enabled`, `disabled` | Control search and page fetching separately. With `tools: none`, both are disabled. |
+| `subagent`, `mcp`, `skills` | `default`, `disabled` | Disable delegation, MCP connections or skill discovery. Codex and TRAE query their native skill list and disable each path. |
+
+### Switches by Solver
+
+All rows accept the six fields and values listed above. “Yes” means the harness can control that capability. The web columns also identify the tool source. “No built-in” refers to the default toolset. A project or Bundle extension can supply its own implementation.
+
+| Solver | `tools` | `webSearch` | `webFetch` | `subagent` | `mcp` | `skills` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Codex | Yes | Native or fallback MCP | Independent fetch via MCP | Yes | Yes | Yes |
+| TRAE | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
+| Claude Code | Yes | Hook / Exa | Yes | Yes | Yes | Yes |
+| CodeBuddy | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
+| Qwen Code | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
+| Kimi Code | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
+| MiniMax Code | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
+| ZCode | Yes | Fallback MCP | Yes | Yes | Yes | Yes |
+| OpenCode | Yes | Native Exa | Yes | Yes | Yes | Yes |
+| SimpleAgent (no Bundle) | Yes | Pi / Exa | No built-in | No built-in | Yes | Yes |
+| DSH (Bundle) | Yes | DSH / Exa | Yes | Yes | Yes | Yes |
+| Pi (Bundle) | Yes | Pi / Exa | Bundle-provided | Bundle-provided | Yes | Yes |
+| JiuwenSwarm (Bundle) | Yes | Native or fallback MCP | Bundle default | Yes | Yes | Yes |
+| DeepAgents (Bundle) | Yes | Evaluator / Exa | Bundle-provided | Yes | Yes | Yes |
+
+`tools: none` is compatible with `mcp: disabled` and either web field set to `disabled`. It conflicts with `webSearch: enabled` and `webFetch: enabled` because disabling built-ins disables both web tools. Omit `tools` to enable a web tool. Omit both web fields to keep only explicitly declared MCP tools.
+
+With task network `none` or `model-api`, explicitly enabling search or fetch produces an error. A domain allowlist permits fetching allowed URLs. The available public search backends cannot enforce the same allowlist, so explicit search is rejected. With search left at its default, the evaluator disables it on restricted networks.
+
+Local file and shell operations run with the operating system user's permissions, including writable paths outside the task directory. Docker retains its configured user, mounts and network policy. Claude Code 2.1.322 rejects permission bypass as root on Linux. CodeBuddy configures bypass for both the parent and child.
+
+On unrestricted networks Claude's WebSearch result hook and DSH's search service try Exa when native search returns no sources. Exa failures fall back to hosted search on the selected model endpoint. For CLIs that return an identifiable model function call and tool result, the relay supplies supplementary MCP results on the next model turn. The native function has priority when both tools are declared. With hosted search or an opaque tool result, the CLI or model can still choose the supplementary tool. OpenCode's native websearch uses Exa, so its fallback goes directly to the model service. Claude and Pi support search independently of MCP.
+
+Supplementary search records source URLs. Model text without source metadata is reported as a failure. Offline, model-api and domain-restricted tasks disable searches that cannot respect their network scope, including provider-hosted search. Declare custom Pi web tool names in `config.bundle` or `config.pi`.
+
+For Volcano Ark search through LiteLLM, check that the proxy has a deployment for the selected model name and that the upstream account has search enabled for it. Inspect Responses for `web_search_call.action.sources` or `url_citation` annotations. HTTP 200 alone only confirms request completion. The attempt reports an activation or authorization failure when Ark returns `ToolNotOpen` or explicitly denies access to web search.
+
+For Hermes or DeepAgents installation, use `--network network.yaml` to configure package sources and proxies. WSL local needs a host-accessible proxy. Docker needs container-accessible addresses for the `build` and `runtime` stages. Include the local model gateway hostname in `noProxy`. See the [network guide](network.md).
 
 The environment controls whether shell commands can access the network. For MMLU-Pro, `benchmark.config.solveNetwork: model-api` with Docker allows the solve container to reach only the model API. See the [MMLU-Pro Playbook](../../playbook/mmlu-pro/mmlu-pro-simpleagent.yaml).
 
+
+## Generation limits and attachments
+
+Set positive integers under `benchmark.solver.config`. `maxTokens` caps the output tokens in one model response. `maxTurns` caps iterations of the main agent during one solve, as counted by the harness. `contextWindow` configures the context capacity used for automatic compaction. Harnesses can compact earlier to reserve space for a response or a summary.
+
+Solver values for `maxTokens` and `contextWindow` take precedence over the same service fields. Omitting both levels preserves harness and model defaults. An unsupported setting reports the harness and field name. AgentBundle checks limits after reading the Bundle to identify its harness.
+
+```yaml
+benchmark:
+  solver:
+    name: claudecode
+    config:
+      maxTokens: 8192
+      maxTurns: 12
+      contextWindow: 200000
+```
+
+The table reports Docker behavior for the pinned versions. A pass requires an observed output cap or attachment bytes at the model endpoint, a stop at the requested main-agent turn count, or an actual compaction with the smaller window. Unsupported means the current harness or Bundle entry rejects the setting. Every cell was exercised.
+
+| Solver / harness | `maxTokens` | `maxTurns` | `contextWindow` compaction | Image | PDF pages | Original PDF |
+| --- | --- | --- | --- | --- | --- | --- |
+| Codex | Unsupported | Unsupported | Pass | Pass | Pass | Unsupported |
+| TRAE CLI | Unsupported | Unsupported | Pass | Pass | Pass | Unsupported |
+| Claude Code | Pass | Pass | Pass | Pass | Pass | Pass |
+| CodeBuddy | Pass | Pass | Pass | Pass | Pass | Pass |
+| Qwen Code | Pass | Pass | Pass | Pass | Pass | Pass on Chat Completions and Messages. Unsupported on Responses |
+| Kimi Code | Pass | Pass | Pass | Pass | Pass | Unsupported |
+| MiniMax Code | Pass | Pass | Pass | Pass | Pass | Unsupported |
+| ZCode | Pass | Unsupported | Pass | Pass | Pass | Pass |
+| OpenCode | Pass | Pass | Pass | Pass | Pass | Pass |
+| SimpleAgent | Pass | Unsupported | Pass | Pass | Pass | Unsupported |
+| DSH (AgentBundle) | Pass | Unsupported | Pass | Pass | Pass | Unsupported |
+| Pi (AgentBundle) | Pass | Unsupported | Pass | Pass | Pass | Unsupported |
+| JiuwenSwarm (AgentBundle) | Pass | Pass | Pass | Pass | Pass | Unsupported |
+| DeepAgents (AgentBundle) | Unsupported | Unsupported | Unsupported | Pass | Pass | Pass |
+
+The Evaluator patch for MiniMax Code 0.7.8 checks `maxTurns` before dispatching a main-agent model request. Docker runs with 200,000- and 36,000-token windows stopped at the requested 1 or 2 turns. Automatic checkpoints use a separate request path, and the last allowed turn can still produce a final answer.
+
+Claude Code accepts windows from 100,000 to 1,000,000 tokens. Codex and TRAE configure the context window and automatic compaction threshold in `exec`. ZCode uses the model rules `properties.contextWindow` and `optionSpecs.maxOutputTokens.max`. JiuwenSwarm uses `react.max_iterations`, the model request's `max_tokens` and its native context engine. The DeepAgents Bundle's Python factory owns model construction, the loop and summarization. Its current interface cannot override these limits for arbitrary graphs.
+
+Images and rendered PDF pages require an image-capable model. Original PDFs require a PDF-capable model endpoint that accepts the harness's file format. The image column covers still images only. [Attachment modes and examples](multimodal.md)
 
 ## Choose a Solver
 
@@ -32,7 +103,7 @@ The environment controls whether shell commands can access the network. For MMLU
 | `claudecode` | Claude Code for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Anthropic Messages API and tool calling |
 | `zcode` | ZCode CLI for text, images, PDFs, and Bash in local and Docker runs | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
 | `trae` | TRAE CLI 2.0 for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions, Responses, or Messages and tool calling |
-| `codebuddy` | CodeBuddy Code for text, images, PDF pages, and shell commands | Model service with streaming Chat Completions or Responses and tool calling |
+| `codebuddy` | CodeBuddy Code for text, images, PDFs, and shell commands | Model service with streaming Chat Completions or Responses and tool calling |
 | `qwencode`, `kimicode`, `minimaxcode`, `opencode` | Official Code CLIs for text, images, PDF pages and tool tasks | A streaming Chat Completions, Responses or Messages service |
 | `agentx-replay` | Trace-driven model requests for service performance | Streaming API, long context, tokenizer, and Python or Docker |
 | `choice-logprobs` | Candidate probabilities at one output position for MMLU | local environment; actual logprobs/top_logprobs support; disable thinking when needed |
@@ -72,11 +143,13 @@ Set all six environment variables as shown in [quick start](quick-start.md#3-set
 - **SimpleQA/HealthBench** select judges through `benchmark.config.judgeService`; the evaluated model is not automatically used as judge. `init` generates judge variables. Use `judgeService: default` to reuse the default service explicitly.
 - **Harbor/WorkBuddy** model verifiers use `benchmark.verifier.service`. Web requires a judge; Office model scoring is optional. See [Harbor](benchmarks/harbor.md). This differs from record-based benchmarks' `judgeService` field.
 
-`api` defaults to `openai-completions`. With an explicit Chat Completions `base_url`, Pi/SimpleAgent and built-in judges send no client output cap unless `services.<name>.maxTokens` is a positive integer. Other providers and external harnesses retain their protocol-specific rules.
+`api` defaults to `openai-completions`. With an explicit Chat Completions `base_url`, Pi/SimpleAgent and built-in judges send a client output cap only when an effective `maxTokens` is set. For SimpleAgent, `solver.config.maxTokens` takes precedence over the selected service value. Other providers and external harnesses retain their protocol-specific rules.
 
 Add `maxTokens: 8192` to a service to limit replies. Configure model request retries with `services.<name>.retry.maxAttempts`; exhaustion ends the current attempt without restarting the solution.
 
 ## SimpleAgent (Based on Pi)
+
+Without a Bundle, SimpleAgent supplies search and has no built-in fetch or delegation tool. Explicitly disabling `webFetch` or `subagent` emits a solve warning and still passes the restriction to workspace extensions. With `webFetch: enabled`, the runner checks the active tools before the first model request and reports a configuration error if no extension registered `web_fetch`.
 
 `simpleagent` is Evaluator's built-in solver, using the Pi SDK for the agent loop, model requests and tool calls. Without a bundle, it runs with Evaluator's default instructions and tools. For example, `benchmark: gsm8k` selects default SimpleAgent and requires no Pi Bundle preparation.
 
@@ -96,7 +169,7 @@ benchmark:
 
 Point to a prepared Pi Bundle, rather than an arbitrary source directory. `bundle.settings` supplies serializable Pi settings applied to a staged copy, leaving the original bundle intact.
 
-> Note: Extensions in a Pi Bundle load through Pi's officially supported Extensions (plugin) mechanism. The bundle packages those extensions and related resources.
+A Pi Bundle must declare `extensionPolicy: run-v1` in `bundle.yaml`. Each attempt uses a separate Pi process. Before loading extensions, Evaluator writes the six capability settings to `PI_BUNDLE_RUN_POLICY`. Read that policy during activation before registering tools, connecting MCP, loading skills, or starting a child. Pass the same policy to children.
 
 ### Tool Command Timeouts
 
@@ -115,6 +188,8 @@ benchmark:
 Provide both fields; the maximum must be at least the default. This fragment retains default `simpleagent`. Actual tool call timeouts cannot exceed the maximum.
 
 ## Codex
+
+Codex still runs through `exec`. The evaluator provides a separate `web_fetch` tool through its local MCP server, so a solver can fetch a page with search disabled. Disabling fetch also removes Codex's combined native search and page-opening tool. Search then uses Exa alone and returns source URLs. With `mcp: disabled`, explicit fetch or explicit search with fetch disabled fails before startup. With `tools: none`, the evaluator removes both supplementary web tools and leaves independently declared MCP servers subject to the `mcp` setting.
 
 `codex` runs Codex CLI in the task working directory on the local machine or in Docker. Evaluator installs CLI version `0.167.0` during environment preparation and authenticates with the selected model service. Save the following experiment YAML and set `CODEX_MODEL`, `CODEX_ENDPOINT`, and `CODEX_API_KEY` before running it.
 
@@ -138,10 +213,12 @@ output:
 ```
 
 - Set `base_url` to the API base, for example `https://api.openai.com/v1`. Codex sends requests to `/responses` under that base. `contextWindow` sets the automatic compaction threshold. The solver rejects the `maxTokens` and `retry` service fields.
-- Local runs use the Codex `workspace-write` sandbox. If the Windows sandbox blocks task commands, use Docker or WSL for evaluations that write files. Select `environment: docker` for container-based benchmarks such as TerminalBench.
-- For images and PDF attachments in `pages` mode, set `inputModalities: [text, image]` on the service. Codex passes both as images. Task skills directories and task MCP configuration are unsupported. Each attempt saves Codex events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+- Codex uses `danger-full-access` and `approval_policy="never"` in local and Docker runs.
+- For images and PDF attachments in `pages` mode, set `inputModalities: [text, image]` on the service. Codex passes both as images. Each attempt saves Codex events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## Claude Code
+
+Claude Code enables native WebFetch by default for the main agent and subagents. Omitting `webFetch` or setting it to `enabled` applies `skipWebFetchPreflight` for that attempt, so fetching a page skips Anthropic's domain safety lookup. The Environment enforces task network access. Set `webFetch: disabled` to turn off native fetch or `tools: none` to disable it along with the other built-in tools.
 
 Evaluator installs Claude Code `2.1.322` for local and Docker tasks. Save this experiment YAML and set `CLAUDE_MODEL`, `CLAUDE_ENDPOINT`, and `CLAUDE_API_KEY` before running it.
 
@@ -165,12 +242,14 @@ output:
 ```
 
 - Set `base_url` to the API base. Claude Code sends requests to `/v1/messages` under that base and authenticates via `x-api-key`. Use `https://api.anthropic.com` for Anthropic or `https://api.deepseek.com/anthropic` for DeepSeek's compatible API.
-- The built-in file tools are limited to the task workspace. The restricted CLI may use `Edit` to create files. Bash is available locally and in Docker, and it runs with the permissions of the host or container process. On Windows, install Git for Windows and set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` if Claude Code cannot find it.
+- Claude starts with its sandbox disabled and `--permission-mode bypassPermissions`. Bash is available locally and in Docker, and it runs with the permissions of the host or container process. On Windows, install Git for Windows and set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` if Claude Code cannot find it.
 - On Linux, the runtime sends model requests through an attempt-local relay and clears its temporary credentials from Bash's environment.
-- For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use a Messages endpoint that accepts document content blocks. Task skills directories and task MCP configuration are unsupported. See [image and PDF evaluations](multimodal.md).
+- For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use a Messages endpoint that accepts document content blocks. See [image and PDF evaluations](multimodal.md).
 - `maxTokens` sets Claude Code's output token setting, and `contextWindow` sets the auto-compaction window between 100000 and 1000000 tokens. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
 
 ## ZCode
+
+ZCode supplies search on the custom model route through a supplementary MCP server. `webSearch: enabled` conflicts with `mcp: disabled`. The native `WebFetch` tool can still run with MCP disabled.
 
 Evaluator builds ZCode CLI `0.17.1` from a pinned source archive during runtime preparation. The first run or `warmup` needs access to GitHub and the npm registry. Later runs reuse the build. Warmup requires no model credentials. See [network configuration](network.md) for mirror settings.
 
@@ -198,13 +277,15 @@ output:
 
 The preparation timeouts allow up to 30 minutes for the initial build and can be adjusted for your network.
 
-Use the API base URL. Chat Completions and Responses usually use a URL ending in `/v1`. The solver also accepts `api: openai-responses` and `api: anthropic-messages`. Omit `maxTokens`, `contextWindow`, and `retry`.
+Use the API base URL. Chat Completions and Responses usually use a URL ending in `/v1`. The solver also accepts `api: openai-responses` and `api: anthropic-messages`. Omit `retry`.
 
 ZCode enables Bash in local and Docker runs. Use local mode for trusted tasks since Bash runs with the host process's permissions. Install Git Bash for Bash tools on Windows. Use Docker for tasks that need container isolation.
 
-For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use an endpoint that accepts PDF input. Task skills and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use an endpoint that accepts PDF input. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## TRAE CLI
+
+TRAE's native WebFetch works independently of MCP. Native search needs working credentials. Setting `mcp: disabled` removes the evaluator's supplementary Exa service.
 
 Evaluator downloads and caches the official `traecli` version `0.214.1` on x64 Windows, WSL, and Linux Docker. The first run or `warmup` needs access to the TRAE release CDN. Warmup requires no model key. Download proxies use the [network configuration](network.md).
 
@@ -232,11 +313,13 @@ output:
   directory: ./results/trae
 ```
 
-- The selected service's `api` controls the request path. TRAE appends `/chat/completions` for `openai-completions`, `/responses` for `openai-responses`, or `/messages` for `anthropic-messages` to `base_url`. Include any API prefix required by the service (for example, `/v1` for LiteLLM). Omit the service fields `maxTokens`, `contextWindow`, and `retry`.
-- WSL uses Bash and native Windows uses PowerShell. Both run in the `workspace-write` sandbox. Native Windows may need [TRAE sandbox initialization](https://docs.trae.cn/cli_get-started-with-trae-cli-2?lang=zh). Use WSL or Docker for tasks that require Bash. Docker runs Bash within the task container.
-- Set `inputModalities: [text, image]` for images and PDF `pages` attachments. Native PDFs, task skills, and task MCP configuration are unsupported. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+- The selected service's `api` controls the request path. TRAE appends `/chat/completions` for `openai-completions`, `/responses` for `openai-responses`, or `/messages` for `anthropic-messages` to `base_url`. Include any API prefix required by the service (for example, `/v1` for LiteLLM). Omit the service fields `maxTokens` and `retry`.
+- WSL uses Bash and native Windows uses PowerShell. Both use `danger-full-access` with approval set to `never`.
+- Set `inputModalities: [text, image]` for images and PDF `pages` attachments. Use pages mode for PDFs. Each attempt saves redacted session events, the Evaluator trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## CodeBuddy Code
+
+Version 2.183.0 uses a pinned patch so `skills: disabled` disables project and plugin skills. The same plugin's MCP tools remain available when `mcp` is left at its default.
 
 Evaluator installs and caches the standalone `@tencent-ai/codebuddy-code` version `2.183.0` on x64 Windows, WSL, and Linux Docker. The first `warmup` or run uses the configured npm registry. Warmup requires no model key. Set `CODEBUDDY_MODEL`, `CODEBUDDY_ENDPOINT`, and `CODEBUDDY_API_KEY` to run this example.
 
@@ -268,9 +351,11 @@ output:
 - Set `base_url` to the API base, such as `https://api.openai.com/v1`. You can also select `api: openai-responses`. `services.<name>.contextWindow` sets the model's native `maxInputTokens`, which CodeBuddy uses to calculate when to compact. `maxTokens` sets the model output limit. Omit `retry`.
 - `solver.config.maxTurns` accepts a positive integer and maps to CodeBuddy's native `--max-turns`, limiting agentic turns per solve. When omitted, Evaluator leaves the CLI default unchanged. The turn limit and `run.solveTimeoutSeconds` apply independently; whichever is reached first ends the solve.
 - Native Windows exposes PowerShell. WSL and Docker expose Bash. Local commands run with the host process's permissions, so use local mode for trusted tasks. Docker commands run in the task container.
-- A workspace `.codebuddy/models.json` can override the selected endpoint. The solver reports an error before starting CodeBuddy when the file is present. For images and PDF `pages` attachments, declare `inputModalities: [text, image]`. Native PDF, task skills, and task MCP configuration are unsupported. Each attempt saves redacted events, trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
+- A workspace `.codebuddy/models.json` can override the selected endpoint. The solver reports an error before starting CodeBuddy when the file is present. For images and PDF `pages` attachments, declare `inputModalities: [text, image]`. Declare `pdf` to send original PDF files. Each attempt saves redacted events, trajectory, and stderr under `agent/`. See [image and PDF evaluations](multimodal.md).
 
 ## Qwen Code, Kimi Code CLI, MiniMax Code and OpenCode
+
+Evaluator verifies and applies version-specific patches to CodeBuddy 2.183.0, Kimi 2.7.0, and MiniMax 0.7.8 during installation. CodeBuddy can disable project and plugin skills. Kimi can disable skills and project MCP, and MiniMax can disable project MCP and enforce its main-agent turn limit before dispatch. Solver provenance records `capabilityPatchSha256`. The installation contains `capability-patch-receipt.json` with the upstream and patched SHA-256 of each file.
 
 Select `qwencode`, `kimicode`, `minimaxcode`, or `opencode` in `benchmark.solver.name`. Evaluator installs the pinned official CLIs in an isolated runtime and does not reuse host login state.
 
@@ -300,6 +385,7 @@ benchmark:
     name: qwencode # kimicode, minimaxcode, or opencode
     config:
       tools: none
+      mcp: disabled
       webSearch: disabled
       webFetch: disabled
       maxTurns: 2000
@@ -308,19 +394,30 @@ run:
   solveTimeoutSeconds: 600
 ```
 
-`services.*.maxTokens` overrides the native per-response output limit; `solver.config.maxTurns` limits agent model steps; `run.solveTimeoutSeconds` sets the whole-task deadline. Omitted limits preserve CLI defaults. MiniMax custom models default to 16,384 output tokens. Kimi does not apply its native output-cap option to Chat requests, so Evaluator adds an explicit service limit at the model relay. Configure `services.*.contextWindow` for the actual service capacity; unknown custom models in Kimi and MiniMax fall back to a 200,000-token context window.
+`maxTokens` sets the per-response output cap, `maxTurns` sets the native step limit, and `run.solveTimeoutSeconds` sets the task deadline. At limits of 1 and 2, Qwen, Kimi, MiniMax, and OpenCode issued 1 and 2 main-agent requests respectively. Omitted solver limits use the service settings and CLI defaults. MiniMax custom models default to 16,384 output tokens. Kimi omits its native output cap on Chat requests, so Evaluator applies an explicit `maxTokens` at the relay. Unknown custom models in Kimi and MiniMax default to a 200,000-token window. Set `contextWindow` for the actual service capacity.
 
-All four select Chat Completions, Responses, or Messages from the selected service's `api`. Explicit service `reasoningEffort` overrides native defaults and model-name inference. Real model credentials remain in the relay process; child CLIs receive a temporary local token. Qwen, Kimi, and OpenCode receive initial images over native ACP; MiniMax uses native `exec --file`. Use `pages` mode for PDF attachments. Qwen uses native `--safe-mode` to skip custom context, hooks, extensions and MCP discovery; this mode also disables its native search. OpenCode disables project configuration and session title generation. Native PDF, audio, video, task-provided Skills and MCP servers are not currently supported.
+All four select Chat Completions, Responses, or Messages from the selected service's `api`. Explicit service `reasoningEffort` overrides native defaults and model-name inference. Real model credentials remain in the relay process; child CLIs receive a temporary local token. Qwen, Kimi, and OpenCode receive initial images over native ACP; MiniMax uses native `exec --file`. OpenCode transmits original PDFs over all three APIs. Qwen supports original PDFs on Chat Completions and Messages, and requires pages on Responses. Kimi drops binary ACP resources. MiniMax sends a file reference without the PDF bytes. Use pages mode for these two CLIs. Task skill directories and MCP servers are passed to the selected CLI when enabled.
 
-`tools: none` uses native tool controls and checks the model boundary: requests contain no tool declarations and unexpected tool responses cannot reach the CLI. MiniMax's native empty capability lists still leave task/goal/MCP helpers, requiring the additional check. Qwen's native deny list is maintained with its pinned version. Disabling web tools alone preserves ordinary file/Shell tools; environment policy still controls Shell network access.
+When built-in tools are disabled, CLI model requests retain only registered MCP tool declarations. Evaluator also skips its automatic search fallback. Search tools provided by a task’s MCP servers follow the MCP setting and the task’s network policy.
 
-All four support `webFetch: enabled` or `disabled` with `tools: default`. OpenCode also supports `webSearch: enabled`, using its native Exa service. Qwen, Kimi and MiniMax provide native search, but these adapters do not yet configure their search backends or authentication. Qwen can reuse compatible provider credentials in supported configurations; a separate search key is not always required. Explicit `webSearch: enabled` on these three currently returns `CONFIG_INVALID` instead of assuming the selected inference endpoint supports search.
+OpenCode's native `websearch` uses Exa and can run with MCP disabled. For Qwen, Kimi and MiniMax, disabling MCP removes the supplementary search server. Whether native search can return sources depends on the model route and credentials. Check the actual tool result in the attempt.
 
 MiniMax installation verifies its native SQLite module; if its prebuilt binary cannot be downloaded, the native installer may require Python, make and a C++ compiler. Node 24 is required; OpenCode installs the official platform binary. Use [network configuration](network.md) for registry and Docker sources. If a registry mirror has not synchronized MiniMax `0.7.8`, set `sources.npm.registry` to `https://registry.npmjs.org`. Run `warmup` before `run`; four [MMLU-Pro examples](../../playbook/mmlu-pro/) are provided.
 
 Artifacts retain native JSONL/ACP events, final text and usage. ACP `usage_update` is context occupancy, not cumulative usage. Evaluator uses native final usage when available and otherwise complete model-response usage; unreported usage remains missing.
 
 ## AgentBundle
+
+Use the `harness.name` in the Bundle manifest to find its additional conditions.
+
+| Harness | Conditions |
+| --- | --- |
+| DSH | The six switches target the pinned 0.2.2-rc.1 runtime. Explicit search or fetch requires the selected profile and model service to expose `web_search` or `web_fetch`. The search plugin can call Exa directly. |
+| Pi | Extensions supply fetch and delegation. `pi.webSearchTools` and `pi.webFetchTools` select exact tool names. If the lists share a tool, setting one feature to `enabled` and the other to `disabled` conflicts. With `mcp: disabled`, explicitly enabled web tools must still be registered in the session. The same rules apply to aliases in `simpleagent.bundle`. |
+| JiuwenSwarm | Fetch defaults to the Bundle configuration. Explicit fetch can activate the native fetch tool. With `mcp: disabled`, supplementary search is removed. Explicit search then requires a native search tool visible to the main session. A tool name in the config alone is insufficient. |
+| DeepAgents | The graph returned by `build_agent_for_run` controls built-ins, fetch, delegation, MCP and skills. The maintained example provides fetch. Other Bundles must implement fetch and report unsupported settings when building the graph. The evaluator's search tool can still run with MCP disabled. |
+
+JiuwenSwarm disables its inner sandbox and approval prompts. The main agent and the three default children (`statusline-setup`, `explore_agent`, and `plan_agent`) can load task and Bundle skills through their own native `skill_tool`. The optional `code_agent` and `browser_agent` also get their own readers when enabled. Setting `skills: disabled` removes skill discovery and the reader from these sessions. File tools retain their configured access. By default, the Bundle selects the available web tools. Set `webFetch: enabled` to enable the native `fetch_webpage` tool or `webFetch: disabled` to remove it from the model's tool list while keeping other tools available. Hermes uses a local terminal with approvals off. DeepAgents graphs and remote Dify workflows control their own execution backends. Adapters reject restrictions they cannot enforce.
 
 Follow [source installation](installation.md#install-from-source) to prepare Evaluator. pnpm installs the AgentBundle SDK automatically, without a sibling source repository. `AGENT_BUNDLE_PATH` below points to a prepared **agent bundle directory**, supplied separately rather than the SDK installation path. See the [AgentBundle project](https://github.com/ARSI-LAB/agentbundle) for concepts, CLI usage and examples, and its [bundle authoring guide](https://github.com/ARSI-LAB/agentbundle/blob/master/docs/bundle-formats.md) for harness-specific layouts, manifests and validation.
 
@@ -349,7 +446,7 @@ Prefer an absolute `AGENT_BUNDLE_PATH`. Evaluator reads the declared harness and
 | Harness declaration | Behavior |
 | --- | --- |
 | `dsh` | Prepare and run through DSH; see [DSH output](usage.md#dsh-tool-output) |
-| `deepagents` **Beta** | `deepagents` / LangGraph adapter |
+| `deepagents` **Beta** | Set `graphs.agent` in `langgraph.json` to `./agent.py:build_agent_for_run`. The evaluator passes the run policy, task MCP servers, skill directories and middleware to the factory before it builds the main graph and its children. Preparation rejects the old `:agent` reference. |
 | `hermes` **Beta** | Hermes adapter |
 | `jiuwenswarm` **Beta** | Jiuwenswarm adapter |
 | `pi` **Beta** | pi with release artifact and settings digest validation |
@@ -361,7 +458,7 @@ Specify existing installations with Solver settings such as `dshhome`, `dshprofi
 
 For Docker, DSH uses the pinned default (0.2.2-rc.1) when it satisfies the Bundle’s `harness.version`. Otherwise the Solver selects the highest compatible release from the configured npm registry. Use an explicit prerelease comparator to allow a release candidate. Local environments check the installed DSH version against the same range.
 
-Prefer `services.<name>.maxTokens` for output limits. AgentBundle also accepts Solver `maxTokens`, but setting both is an error. This page covers Evaluator configuration and execution; use the linked AgentBundle documentation for bundle creation, formats and installation.
+For bundles that support an output cap, Solver `maxTokens` overrides the service field. This page covers Evaluator configuration and execution; use the linked AgentBundle documentation for bundle creation, formats and installation.
 
 For DSH, `services.<name>.contextWindow` sets the selected model's native context capacity for compaction. On the built-in DeepSeek API-key route, an explicit context size supplies a local catalog entry for the selected model. Leave room for the output cap and the profile's compaction headroom (65,536 tokens by default). DSH's ordinary task loop has no native `maxTurns` setting. Use `run.solveTimeoutSeconds` to set a task deadline.
 

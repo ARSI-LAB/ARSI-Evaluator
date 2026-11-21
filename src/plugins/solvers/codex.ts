@@ -1,3 +1,4 @@
+import { parseAgentOptions, type AgentLimits } from "./agent-limits.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -8,24 +9,27 @@ import type { AttemptContext, Solver, SolverProvenance } from "../../core/contra
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
 import { expectRecord } from "../../core/validation/input.js";
-import { parseSolverToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
+import { sessionToolPolicy, toolPolicyProvenance, unsupportedToolPolicy, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { consumeCodex } from "../../runtimes/codex/protocol.js";
 import { CODEX_ENTRY, CODEX_VERSION, codexRuntimeInstallation } from "../../runtimes/codex/runtime.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 
-type CodexConfig = Omit<SolverToolPolicy, "tools"> & { shellTool?: "disabled" };
+type CodexConfig = SolverToolPolicy & AgentLimits & { shellTool?: "disabled" };
 
 export function parseCodexConfig(value: unknown): CodexConfig {
-  const { tools, shellTool, ...webConfig } = expectRecord(value, "codex config");
-  // Codex maps the shared tool switch to shell only, independently of web search.
-  const policy = parseSolverToolPolicy({ ...webConfig, tools: tools === "none" ? undefined : tools }, "codex config");
+  const { shellTool, ...config } = expectRecord(value, "codex config");
+  const policy = parseAgentOptions(config, "codex");
   if (shellTool !== undefined && shellTool !== "default" && shellTool !== "disabled") {
     throw new TypeError("codex config.shellTool must be default or disabled");
   }
-  if (policy.webFetch === "enabled" || policy.webSearch === "enabled" && policy.webFetch === "disabled") {
-    unsupportedToolPolicy("codex", "web fetch is part of native web search and cannot be configured independently");
+  if (policy.mcp === "disabled" && policy.webFetch === "enabled") {
+    unsupportedToolPolicy("codex", "webFetch: enabled cannot be combined with mcp: disabled because codex exec provides independent fetching through the evaluator MCP.");
   }
-  return { ...policy, ...(tools === "none" || shellTool === "disabled" ? { shellTool: "disabled" } : {}) };
+  if (policy.mcp === "disabled" && policy.webFetch === "disabled" && policy.webSearch === "enabled") {
+    unsupportedToolPolicy("codex", "webSearch: enabled, webFetch: disabled and mcp: disabled cannot be combined because disabling fetch removes the native combined search/open tool and search-only mode requires the evaluator MCP.");
+  }
+  return { ...policy, ...(shellTool === "disabled" ? { shellTool: "disabled" } : {}) };
 }
 
 function responsesEndpoint(endpoint: string | null): string {
@@ -63,14 +67,12 @@ export class CodexSolver implements Solver {
   }
 
   async solve(input: PublicTask, session: EnvironmentSession, context: AttemptContext): Promise<SolveResult> {
+    const policy = sessionToolPolicy("codex", this.policy, session);
     const { signal } = context;
     signal.throwIfAborted();
     const { model, auth } = this.binding;
     if (!auth.value.trim() || /[\r\n\0]/u.test(auth.value)) {
       throw new EvaluatorError("MODEL_AUTH_FAILED", "codex requires a non-empty, single-line API key on its selected service");
-    }
-    if (input.skillsDirectories?.length || input.mcpServers?.length) {
-      throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex does not support task skills or MCP servers");
     }
     if (input.attachments?.some(attachment => attachment.kind === "pdf" && attachment.mode === "native")) {
       throw new EvaluatorError("BENCHMARK_UNSUPPORTED", "codex requires PDF attachments in pages mode");
@@ -87,11 +89,12 @@ export class CodexSolver implements Solver {
     const home = path(runtime.stateRoot, `attempt-${randomUUID()}`);
     const settings = [
       'approval_policy="never"',
+      ...(policy.tools === "none" || policy.subagent === "disabled" ? ["features.multi_agent=false", "features.multi_agent_v2=false"] : []),
       "allow_login_shell=false",
-      this.policy.webSearch === "enabled" ? 'web_search="live"' : 'web_search="disabled"',
+      ...(policy.tools === "none" || policy.webSearch === "disabled" || policy.webFetch === "disabled" ? ['web_search="disabled"'] : policy.webSearch === "enabled" ? ['web_search="live"'] : []),
       "analytics.enabled=false",
-      "features.hooks=false",
-      `projects.${JSON.stringify(session.workdir)}.trust_level="untrusted"`,
+
+      `projects={ ${JSON.stringify(session.workdir)}={ trust_level="${policy.mcp === "disabled" ? "untrusted" : "trusted"}" } }`,
       'shell_environment_policy.inherit="core"',
       "shell_environment_policy.ignore_default_excludes=false",
       'shell_environment_policy.filters.EVALUATOR_CODEX_API_KEY="exclude"',
@@ -101,21 +104,24 @@ export class CodexSolver implements Solver {
       'model_providers.arsi-evaluator.env_key="EVALUATOR_CODEX_API_KEY"',
       'model_providers.arsi-evaluator.wire_api="responses"',
       ...(model.reasoningEffort === undefined ? [] : [`model_reasoning_effort=${JSON.stringify(model.reasoningEffort)}`]),
-      ...(model.contextWindow === undefined ? [] : [`model_auto_compact_token_limit=${model.contextWindow}`]),
+      ...(model.contextWindow === undefined ? [] : [`model_context_window=${model.contextWindow}`, `model_auto_compact_token_limit=${model.contextWindow}`]),
     ];
     const media = await loadAttachments(input, session, context);
     try {
       const handle = await session.start({
         executable: local ? process.execPath : "node",
         args: [path(runtime.root, "launch.mjs"), home, path(runtime.root, CODEX_ENTRY),
-          "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-          "--color", "never", "--sandbox", local ? "workspace-write" : "danger-full-access", "--model", model.name,
-          ...(this.policy.shellTool === "disabled" ? ["--disable", "shell_tool"] : []),
+          "exec", "--json", "--ephemeral", ...(policy.mcp === "disabled" ? ["--ignore-user-config"] : []), "--skip-git-repo-check",
+          "--color", "never", "--sandbox", "danger-full-access", "--model", model.name,
+          ...(policy.tools === "none" || policy.shellTool === "disabled" ? ["--disable", "shell_tool"] : []),
           ...settings.flatMap(setting => ["-c", setting]), "-"],
         cwd: session.workdir,
         env: {},
         inheritEnv: false,
-        input: Buffer.from(JSON.stringify({ apiKey: auth.value, prompt: input.prompt, media }), "utf8"),
+        input: Buffer.from(JSON.stringify({ toolPolicy: policy, fetchNetwork: typeof session.solveNetwork === "object"
+          ? { allowedHosts: normalizeAllowedHosts(session.solveNetwork.allowedHosts) } : session.solveNetwork,
+          outputDir: session.agentOutputDir, skillsDirectories: input.skillsDirectories, mcpServers: input.mcpServers,
+          apiKey: auth.value, prompt: input.prompt, media, api: model.api, baseUrl: endpoint, model: model.name }), "utf8"),
       }, signal);
       return await consumeCodex(handle, context, auth.value);
     } finally {

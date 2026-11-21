@@ -1,22 +1,43 @@
+import { nativeMcpConfig, stageSkills } from "./runtimes/shared/assets/task-resources.mjs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 
 const [home, entry, ...args] = process.argv.slice(2);
-const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, reasoningEffort, media = [] } = JSON.parse(readFileSync(0, "utf8"));
+const input = JSON.parse(readFileSync(0, "utf8"));
+const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, reasoningEffort, media = [] } = input;
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
+  const policy = input.toolPolicy ?? {};
+  if (policy.mcp !== "disabled" && input.mcpServers?.length) {
+    args.push("--mcp-config", JSON.stringify(nativeMcpConfig(input.mcpServers)));
+  }
+  const settings = { sandbox: { enabled: false } };
+  // Fetch uses the task's network policy without a separate call to Anthropic's domain service.
+  if (policy.tools !== "none" && policy.webFetch !== "disabled") settings.skipWebFetchPreflight = true;
+  if (policy.tools !== "none" && policy.webSearch !== "disabled") {
+    const handler = { type: "command", command: process.execPath,
+      args: [fileURLToPath(new URL("./search-hook.mjs", import.meta.url)), input.outputDir ?? ""], timeout: 130 };
+    const hooks = [{ matcher: "WebSearch", hooks: [handler] }];
+    settings.hooks = { PostToolUse: hooks, PostToolUseFailure: hooks };
+  }
+  args.push("--settings", JSON.stringify(settings));
+  if (input.toolPolicy?.skills !== "disabled") {
+    await stageSkills(input.skillsDirectories, join(home, ".claude", "skills"));
+  }
   const shellPrefix = join(home, "shell");
   const needsShellPrefix = process.platform === "linux";
   const relayKey = randomUUID();
-  if (needsShellPrefix || reasoningEffort !== undefined)
-    relay = await startModelRelay({ api: "anthropic-messages", baseUrl: baseUrl + "/v1", apiKey, token: relayKey, reasoningEffort });
-  // Claude Code requires nested PID namespaces for its Linux env scrub.
-  // The standard task container does not grant those permissions.
+  // SUBPROCESS_ENV_SCRUB forces the pinned CLI back to its default approval
+  // mode. Keep the real credential in this relay on every operating system.
+  relay = await startModelRelay({ disableHostedSearch: input.toolPolicy?.webSearch === "disabled",
+    disableMcp: input.toolPolicy?.mcp === "disabled", disableBuiltinTools: input.toolPolicy?.tools === "none", api: "anthropic-messages", baseUrl,
+    apiKey, token: relayKey, reasoningEffort });
   if (needsShellPrefix) {
     // The CLI passes the entire Bash command as one argument to the prefix.
     await writeFile(shellPrefix, '#!/bin/sh\nunset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL\nexec /bin/bash -c "$1"\n',
@@ -31,14 +52,13 @@ try {
     env: {
       ...env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, ".claude"),
       ...(process.env.CLAUDE_CODE_GIT_BASH_PATH === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: process.env.CLAUDE_CODE_GIT_BASH_PATH }),
-      ANTHROPIC_API_KEY: relay ? relayKey : apiKey, ANTHROPIC_BASE_URL: relay ? new URL(relay.endpoint).origin : baseUrl, ANTHROPIC_MODEL: model,
+      ANTHROPIC_API_KEY: relayKey, ANTHROPIC_BASE_URL: new URL(relay.endpoint).origin, ANTHROPIC_MODEL: model,
       ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
       CLAUDE_CODE_SUBAGENT_MODEL: model, CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      ...(relay ? { NO_PROXY: noProxy, no_proxy: noProxy } : {}),
-      ...(needsShellPrefix ? {
-        CLAUDE_CODE_SHELL_PREFIX: shellPrefix,
-      } : { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" }),
+      ...(policy.tools === "none" ? { ENABLE_TOOL_SEARCH: "false" } : {}),
+      NO_PROXY: noProxy, no_proxy: noProxy,
+      ...(needsShellPrefix ? { CLAUDE_CODE_SHELL_PREFIX: shellPrefix } : {}),
       DISABLE_UPDATES: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1",
       ...(maxTokens === undefined ? {} : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens) }),
       ...(contextWindow === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow) }),
