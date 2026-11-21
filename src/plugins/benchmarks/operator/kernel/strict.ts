@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import { expectRecord, expectNonEmptyString, rejectUnknown } from "../../../../core/validation/input.js";
+import { parseKernelTolerance, type KernelTolerance } from "./tolerance.js";
 
 export const KERNEL_CHECK_IDS = ["entry", "shape", "dtype", "device", "layout", "independent-output", "input-unmodified", "numerical"] as const;
 export type KernelCheckId = typeof KERNEL_CHECK_IDS[number];
@@ -12,7 +13,7 @@ export type KernelContract = { caseId: string; inputs: TensorContract[];
 export type KernelCheck = { id: KernelCheckId; seed: number; call: number;
   status: "passed" | "failed" | "not-run"; message: string };
 export type KernelEffectiveProtocol = { seeds: number[]; rtol: number; atol: number; warmup: number; repeat: number;
-  timingScope: "all-device-kernels"; aggregation: "iteration-mean"; timingSeed: number };
+  timingScope: "all-device-kernels"; aggregation: "iteration-mean"; timingSeed: number; tolerance?: KernelTolerance };
 export const KERNEL_ENVIRONMENT_FIELDS = ["python", "torch", "torchNpu", "triton", "cann", "driver", "device", "visibleDevices"] as const;
 export type KernelEnvironment = Record<typeof KERNEL_ENVIRONMENT_FIELDS[number], string | null>;
 export type KernelAssessment = { contractSha256: string; checks: KernelCheck[];
@@ -59,10 +60,11 @@ export function parseKernelAssessment(value: unknown, contract: KernelContract, 
     return { id: c.id as KernelCheckId, seed: c.seed as number, call: c.call, status: c.status as KernelCheck["status"], message: c.message };
   });
   const p = expectRecord(r.effectiveProtocol, "effectiveProtocol");
-  rejectUnknown(p, ["seeds", "rtol", "atol", "warmup", "repeat", "timingScope", "aggregation", "timingSeed"], "effectiveProtocol");
+  rejectUnknown(p, ["seeds", "rtol", "atol", "warmup", "repeat", "timingScope", "aggregation", "timingSeed", "tolerance"], "effectiveProtocol");
   if (JSON.stringify(p.seeds) !== JSON.stringify(seeds) || p.timingSeed !== seeds.at(-1) || p.timingScope !== "all-device-kernels" || p.aggregation !== "iteration-mean") throw new TypeError("Invalid effectiveProtocol identity");
   for (const name of ["rtol", "atol"] as const) if (typeof p[name] !== "number" || !Number.isFinite(p[name]) || p[name] < 0) throw new TypeError(`Invalid ${name}`);
   for (const name of ["warmup", "repeat"] as const) if (!Number.isSafeInteger(p[name]) || Number(p[name]) <= 0) throw new TypeError(`Invalid ${name}`);
+  const tolerance = p.tolerance === undefined ? undefined : parseKernelTolerance(p.tolerance);
   const e = expectRecord(r.environment, "kernel environment");
   rejectUnknown(e, [...KERNEL_ENVIRONMENT_FIELDS], "kernel environment");
   const environment = Object.fromEntries(KERNEL_ENVIRONMENT_FIELDS.map(name => {
@@ -73,5 +75,6 @@ export function parseKernelAssessment(value: unknown, contract: KernelContract, 
   if (r.errorOwnership !== null && r.errorOwnership !== "candidate" && r.errorOwnership !== "evaluation") throw new TypeError("Invalid errorOwnership");
   return { contractSha256: String(r.contractSha256), checks,
     effectiveProtocol: { seeds, rtol: Number(p.rtol), atol: Number(p.atol), warmup: Number(p.warmup), repeat: Number(p.repeat),
-      timingScope: "all-device-kernels", aggregation: "iteration-mean", timingSeed: Number(p.timingSeed) }, environment, errorOwnership: r.errorOwnership };
+      timingScope: "all-device-kernels", aggregation: "iteration-mean", timingSeed: Number(p.timingSeed),
+      ...(tolerance === undefined ? {} : { tolerance }) }, environment, errorOwnership: r.errorOwnership };
 }

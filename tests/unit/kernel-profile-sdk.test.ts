@@ -404,7 +404,7 @@ test("SDK profiling stages the declared candidate tree and binds every helper ha
     expect(await readFile(join(request.candidateRoot, "kernels/tiling.py"), "utf8")).toBe("def run(x): return x\n");
     expect(Object.keys(request.hashes).sort()).toEqual([
       ...["data/problem.py", "data/candidate/kernels/__init__.py", "data/candidate/kernels/problem.py", "data/candidate/kernels/tiling.py",
-        "runtime/precision.py", "runtime/timing.py", "runtime/strict.py", "runtime/timing_evidence.py", "runtime/msprof_replay.py"]
+        "runtime/precision.py", "runtime/timing.py", "runtime/strict.py", "runtime/timing_evidence.py", "runtime/msprof_replay.py", "runtime/tolerance.py"]
         .map(path => join(f.session.workdir, path)),
       join(request.candidateRoot, "kernels/__init__.py"), request.candidate, join(request.candidateRoot, "kernels/tiling.py")].sort());
     const raw = JSON.parse(await readFile(join(f.session.verifierOutputDir, "kernel-profile.raw.json"), "utf8"));

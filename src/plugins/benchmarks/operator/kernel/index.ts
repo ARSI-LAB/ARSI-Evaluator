@@ -13,7 +13,8 @@ import { assertKernelHardware, createKernelBackend, type KernelBackend } from ".
 import { parseKernelSeeds } from "./runtime/seeds.js";
 import { MAX_KERNEL_TIMER_MS } from "./runtime/execution.js";
 import { parseKernelContract, kernelContractDigest } from "./strict.js";
-import { kernelBenchVerdict, kernelVerdict, kernelProfileVerdict } from "./result.js";
+import { KERNEL_TOLERANCE_MODES } from "./tolerance.js";
+import { kernelBenchVerdict, kernelProbeVerdict, kernelVerdict, kernelProfileVerdict } from "./result.js";
 
 export function relativeFile(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
@@ -28,9 +29,17 @@ function positiveTimer(value: unknown, name: string, millisecondsPerUnit = 1): n
   return duration;
 }
 
+function stringList(value: unknown, name: string, allowed: readonly string[]): string[] {
+  if (!Array.isArray(value) || !value.length) throw new TypeError(`${name} must be a nonempty array`);
+  const items = value.map(item => expectNonEmptyString(item, name));
+  if (items.some(item => !allowed.includes(item))) throw new TypeError(`${name} must contain only ${allowed.join(", ")}`);
+  if (new Set(items).size !== items.length) throw new TypeError(`${name} must be unique`);
+  return items;
+}
+
 export function parseKernelConfig(value: unknown) {
   const c = expectRecord(value, "kernel");
-  rejectUnknown(c, ["operation", "manifest", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "outputLimitBytes", "cleanupGraceMs", "cleanupTimeoutMs", "profiling"], "kernel");
+  rejectUnknown(c, ["operation", "manifest", "python", "device", "seeds", "rtol", "atol", "warmup", "repeat", "timeoutSeconds", "outputLimitBytes", "cleanupGraceMs", "cleanupTimeoutMs", "profiling", "timing", "callCount", "tolerance"], "kernel");
   const p = expectRecord(c.profiling ?? {}, "profiling");
   rejectUnknown(p, ["enabled", "collection", "warmup", "attemptTimeoutSeconds", "maxAttempts", "retryDelayMs", "roundNum", "msprofBin", "deviceName", "cacheEnabled", "cacheDir", "cacheMaxEntries"], "profiling");
   if (p.enabled !== undefined && typeof p.enabled !== "boolean") throw new TypeError("profiling.enabled must be boolean");
@@ -38,12 +47,13 @@ export function parseKernelConfig(value: unknown) {
   if (p.roundNum !== undefined && !Number.isSafeInteger(p.roundNum)) throw new TypeError("profiling.roundNum must be an integer");
   if (p.retryDelayMs !== undefined && (!Number.isSafeInteger(p.retryDelayMs) || Number(p.retryDelayMs) < 0))
     throw new TypeError("profiling.retryDelayMs must be a non-negative integer");
-  const operations = ["evaluate", "precision", "bench", "profile"] as const;
+  const operations = ["evaluate", "precision", "bench", "profile", "probe-profile"] as const;
   const operation = operations.find(value => value === (c.operation ?? "evaluate"));
   if (operation === undefined)
-    throw new TypeError("kernel.operation must be evaluate, precision, bench or profile");
+    throw new TypeError("kernel.operation must be evaluate, precision, bench, profile or probe-profile");
   const independentProfile = operation === "profile";
   const independentBench = operation === "bench";
+  const independentProbe = operation === "probe-profile";
   const collection = p.collection === undefined ? "PipeTimeline,Default" : p.collection;
   if (collection !== "Default" && collection !== "PipeTimeline,Default")
     throw new TypeError("profiling.collection must be Default or PipeTimeline,Default");
@@ -63,6 +73,15 @@ export function parseKernelConfig(value: unknown) {
   } as const;
   const timeoutSeconds = positiveTimer(c.timeoutSeconds ??
     (profiling.enabled ? profiling.maxAttempts * profiling.attemptTimeoutSeconds + 300 : 300), "timeoutSeconds", 1000);
+  const timingConfig = expectRecord(c.timing ?? {}, "timing");
+  rejectUnknown(timingConfig, ["scopes", "statistics"], "timing");
+  const scopes = timingConfig.scopes === undefined ? ["device"]
+    : stringList(timingConfig.scopes, "timing.scopes", ["device", "host", "endToEnd"]);
+  if (!scopes.includes("device")) throw new TypeError("timing.scopes must include device; candidate identity requires device timing");
+  const statistics = timingConfig.statistics === undefined ? ["mean"]
+    : stringList(timingConfig.statistics, "timing.statistics", ["mean", "p50", "p95"]);
+  const timing = { scopes, statistics };
+  const callCount = expectPositiveInteger(c.callCount ?? 1, "callCount");
   const processOptions = {
     ...(c.outputLimitBytes === undefined ? {} : { outputLimitBytes: expectPositiveInteger(c.outputLimitBytes, "outputLimitBytes") }),
     cleanupGraceMs: positiveTimer(c.cleanupGraceMs ?? 100, "cleanupGraceMs"),
@@ -72,12 +91,29 @@ export function parseKernelConfig(value: unknown) {
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new TypeError(`${name} must be finite and nonnegative`);
     return value;
   };
+  const toleranceConfig = expectRecord(c.tolerance ?? {}, "tolerance");
+  rejectUnknown(toleranceConfig, ["mode", "rtol", "atol", "safetyFactor"], "tolerance");
+  const toleranceMode = KERNEL_TOLERANCE_MODES.find(mode => mode === (toleranceConfig.mode ?? "explicit"));
+  if (toleranceMode === undefined)
+    throw new TypeError(`tolerance.mode must be one of ${KERNEL_TOLERANCE_MODES.join(", ")}`);
+  const tolerance = {
+    mode: toleranceMode,
+    rtol: nonnegative(toleranceConfig.rtol ?? c.rtol ?? 0.001, "tolerance.rtol"),
+    atol: nonnegative(toleranceConfig.atol ?? c.atol ?? 0.001, "tolerance.atol"),
+    safetyFactor: nonnegative(toleranceConfig.safetyFactor ?? 10, "tolerance.safetyFactor"),
+  };
+  if (tolerance.safetyFactor <= 0) throw new TypeError("tolerance.safetyFactor must be positive");
+  if (toleranceMode === "observed")
+    throw new TypeError("tolerance.mode=observed requires preflight error evidence; measure it with operation=precision and freeze the resolved pair");
   const device = nonnegative(c.device ?? 0, "device");
   if (!Number.isSafeInteger(device)) throw new TypeError("device must be an integer");
-  const seeds = parseKernelSeeds(c.seeds ?? (independentProfile || independentBench ? [0] : [0, 1, 2]));
+  const seeds = parseKernelSeeds(c.seeds ?? (independentProfile || independentBench || independentProbe ? [0] : [0, 1, 2]));
   if (independentBench && seeds.length !== 1) throw new TypeError("Independent bench requires a single seed");
+  if (independentProbe && seeds.length !== 1) throw new TypeError("Profile probe requires a single seed");
   if ((independentBench || operation === "precision") && profiling.enabled)
     throw new TypeError(`kernel.operation=${operation} requires profiling.enabled=false; use operation=profile for diagnostics`);
+  if (independentProbe && profiling.enabled)
+    throw new TypeError("kernel.operation=probe-profile requires profiling.enabled=false; the probe only checks capabilities");
   if (independentProfile) {
     if (seeds.length !== 1) throw new TypeError("Independent profile requires a single seed");
     if (!profiling.enabled) throw new TypeError("Independent profile requires profiling.enabled=true");
@@ -88,6 +124,7 @@ export function parseKernelConfig(value: unknown) {
     rtol: nonnegative(c.rtol ?? 0.001, "rtol"), atol: nonnegative(c.atol ?? 0.001, "atol"),
     warmup: expectPositiveInteger(c.warmup ?? (independentBench ? 25 : 5), "warmup"),
     repeat: expectPositiveInteger(c.repeat ?? (independentBench ? 100 : 20), "repeat"),
+    timing, callCount, tolerance,
     ...processOptions,
     timeoutSeconds, profiling };
 }
@@ -130,7 +167,7 @@ export class KernelBenchmark implements Benchmark {
   private readonly backend: KernelBackend;
   constructor(private readonly config: KernelConfig, hardware: HardwareKind = "npu") {
     this.backend = createKernelBackend(hardware, config);
-    this.evaluationKind = (config.operation === "profile" || config.operation === "bench") ? "performance" : "quality";
+    this.evaluationKind = (config.operation === "profile" || config.operation === "bench" || config.operation === "probe-profile") ? "performance" : "quality";
   }
 
   validateRun(config: EffectiveConfig): void {
@@ -206,6 +243,7 @@ export class KernelBenchmark implements Benchmark {
         files: selected.map(f => ({ source: f.origin, target: f.path })),
         problem: `data/${task.problem}`, referenceKind: task.referenceKind, outputIndices: task.outputIndices ?? null,
         seeds: this.config.seeds, rtol: this.config.rtol, atol: this.config.atol, warmup: this.config.warmup, repeat: this.config.repeat,
+        timing: this.config.timing, callCount: this.config.callCount, tolerance: this.config.tolerance,
         profiling: this.config.profiling,
         ...(task.contract === undefined ? {} : { contract: task.contract, contractSha256: kernelContractDigest(task.contract) }),
         hashes: Object.fromEntries([...selected.map(f => [f.path, f.sha256]), [candidate.path, candidate.sha256]]) },
@@ -233,6 +271,12 @@ export class KernelBenchmark implements Benchmark {
     }
     const value = await this.backend.execute(request, session, active);
     const candidateFiles = lockedCandidateFiles(request);
+    if (this.config.operation === "probe-profile") {
+      const verdict = kernelProbeVerdict(value, String(request.candidateSha256), String(request.referenceKind),
+        this.config.profiling.collection);
+      await writeFile(join(session.verifierOutputDir, "kernel-probe-result.json"), JSON.stringify(verdict.details, null, 2), "utf8");
+      return verdict;
+    }
     if (this.config.operation === "profile") {
       const verdict = kernelProfileVerdict(value, String(request.candidateSha256), String(request.referenceKind), {
         caseId: String(request.caseId), seed: this.config.seeds[0]!, warmup: this.config.profiling.warmup ?? 25,

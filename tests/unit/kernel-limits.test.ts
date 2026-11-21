@@ -32,21 +32,25 @@ test("kernel process timers reject values outside Node's timer range", () => {
   expect(() => parseKernelConfig({ manifest: "m", profiling: { attemptTimeoutSeconds: 2147484 } })).toThrow(/attemptTimeoutSeconds.*timer range/);
 });
 
-test("NPU worker accepts complete results beyond one MiB and honors an explicit output limit", async () => {
+test("NPU worker accepts complete results beyond one MiB and classifies an explicit output limit", async () => {
   const root = await mkdtemp(join(tmpdir(), "kernel-output-"));
-  const response = { status: "incorrect", error: "x".repeat(1024 * 1024 + 128) };
+  const sha = "a".repeat(64);
+  const response = { operation: "evaluate", candidateSha256: sha, referenceKind: "pytorch",
+    timingScope: "all-device-kernels", status: "incorrect", error: "x".repeat(1024 * 1024 + 128) };
   const bytes = Buffer.from(JSON.stringify(response));
   const session: EnvironmentSession = { id: "fixture", workdir: root, agentOutputDir: root, verifierOutputDir: root, metadata: null,
     async start() { return { stdout: (async function* () { yield bytes; })(), stderr: (async function* () {})(),
       done: Promise.resolve({ code: 0, signal: null }), async stop() {} }; },
     async upload() {}, async download() {}, async exportState() { throw new Error("unused"); }, async restoreState() {}, async dispose() {} };
   const config = { python: "fixture", device: 0, profiling: { enabled: false, roundNum: 1 } };
+  const request = { operation: "evaluate", candidateRoot: "data/candidate", hashes: { "data/candidate/kernel.py": sha },
+    candidateSha256: sha, referenceKind: "pytorch" };
   try {
     await writeFile(join(root, "kernel-result.json"), bytes);
     const signal = new AbortController().signal;
-    const request = { candidateRoot: "data/candidate", hashes: { "data/candidate/kernel.py": "a".repeat(64) } };
     expect(await new NpuKernelBackend(config).execute(request, session, signal)).toEqual(response);
-    await expect(new NpuKernelBackend({ ...config, outputLimitBytes: 1024 }).execute(request, session, signal)).rejects.toThrow(/output exceeds limit/);
+    expect(await new NpuKernelBackend({ ...config, outputLimitBytes: 1024 }).execute(request, session, signal))
+      .toMatchObject({ status: "infrastructure_error", code: "WORKER_PROTOCOL_INVALID", retryable: true });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
