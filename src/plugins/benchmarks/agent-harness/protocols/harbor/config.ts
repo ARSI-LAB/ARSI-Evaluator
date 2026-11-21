@@ -8,7 +8,7 @@ export type HarborConfig = {
   dataset: string;
   cacheDir: string;
   source?: DirectorySource;
-  tasks: { root: string; id: "directory" | "task.name" | "metadata.task_id"; expectedCount?: number; requireTestScript: boolean; metadataFields: string[] };
+  tasks: { root: string; id: "directory" | "task.name" | "metadata.task_id"; depth: number; expectedCount?: number; requireTestScript: boolean; metadataFields: string[] };
   defaults: { workdir?: string; buildTimeoutSeconds: number; artifactPaths?: string[]; timeoutMultiplier?: number;
     agentUser?: string; verifierUser?: string };
   scoring: { primary: string; passThreshold: number; errorValues: number[] };
@@ -58,7 +58,7 @@ export function parseHarborConfig(value: unknown): HarborConfig {
     if (hostPlatform !== undefined) source.hostPlatform = hostPlatform;
   }
   const tasks = expectRecord(config.tasks ?? {}, "harbor.tasks");
-  rejectUnknown(tasks, ["root", "id", "expectedCount", "requireTestScript", "metadataFields"], "harbor.tasks");
+  rejectUnknown(tasks, ["root", "id", "depth", "expectedCount", "requireTestScript", "metadataFields"], "harbor.tasks");
   const id = tasks.id ?? "task.name";
   if (id !== "directory" && id !== "task.name" && id !== "metadata.task_id") throw new TypeError("Invalid tasks.id");
   if (tasks.requireTestScript !== undefined && typeof tasks.requireTestScript !== "boolean") throw new TypeError("Invalid tasks.requireTestScript");
@@ -93,7 +93,8 @@ export function parseHarborConfig(value: unknown): HarborConfig {
     dataset: expectNonEmptyString(config.dataset ?? "terminal-bench@2.0", "harbor.dataset"),
     cacheDir: expectNonEmptyString(config.cacheDir ?? ".cache/harbor", "harbor.cacheDir"),
     ...(source ? { source } : {}),
-    tasks: { root: relativePath(tasks.root ?? "tasks", "tasks.root"), id, requireTestScript: tasks.requireTestScript === true, metadataFields: metadataFields as string[],
+    tasks: { root: relativePath(tasks.root ?? "tasks", "tasks.root"), id, depth: expectPositiveInteger(tasks.depth ?? 1, "tasks.depth"),
+      requireTestScript: tasks.requireTestScript === true, metadataFields: metadataFields as string[],
       ...(tasks.expectedCount === undefined ? {} : { expectedCount: expectPositiveInteger(tasks.expectedCount, "tasks.expectedCount") }) },
     defaults: { buildTimeoutSeconds: expectPositiveNumber(defaults.buildTimeoutSeconds ?? 600, "defaults.buildTimeoutSeconds"),
       ...(defaults.timeoutMultiplier === undefined ? {} : { timeoutMultiplier: expectPositiveNumber(defaults.timeoutMultiplier, "defaults.timeoutMultiplier") }),

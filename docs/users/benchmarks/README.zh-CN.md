@@ -14,6 +14,7 @@
 | 全量文档检索与财政问答 | [OfficeQA Pro V2](officeqa-pro-v2.zh-CN.md) | [解析 JSON 两题](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml)、[原始 PDF](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-original-pdf.yaml)、[解析 JSON + Ray](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-ray.yaml)；不含纯图片协议 |
 | 软件工程代码修改 | [DeepSWE](deepswe.zh-CN.md) | [单机配置](../../../playbook/deepswe/deepswe-simpleagent.yaml) |
 | 终端操作 | [Terminal-Bench](terminalbench.zh-CN.md) | [4.0 快速入门](../quick-start/terminalbench.zh-CN.md) |
+| 科学研究任务 | [Terminal-Bench Science](terminalbench-science.zh-CN.md) | [SimpleAgent 配置](../../../playbook/terminalbench-science/terminalbench-science-simpleagent.yaml) |
 | SWE-bench Verified | [Harbor 执行规则](harbor.zh-CN.md) | [AgentBundle 配置](../../../playbook/swebench/swebench-agentbundle.yaml) |
 | 模型服务吞吐与延迟 | [AgentX](agentx.zh-CN.md) | [性能快速入门](../quick-start/agentx.zh-CN.md) |
 | SSH 远程服务压测与 Prefix Cache | [AISBench 插件](../../../plugins/aisbench/README.md) | [SSH 配置](../../../plugins/aisbench/playbook/01-ssh.yaml) |
