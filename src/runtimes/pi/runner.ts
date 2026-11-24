@@ -17,10 +17,7 @@ import {
   type SessionStats,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
-import { InMemoryCredentialStore, type Api, type AssistantMessage, type ProviderStreams } from "@earendil-works/pi-ai";
-import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { InMemoryCredentialStore, type Api, type AssistantMessage } from "@earendil-works/pi-ai";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +36,6 @@ import { classifyError } from "../../core/errors/classify.js";
 import { streamWithProviderOutput } from "../../infrastructure/models/openai-output.js";
 import { LIVE_LINES, safeLiveText, toolActivity, toolOutputLines } from "../../core/progress/live-progress.js";
 import { installEnvProxy } from "../../infrastructure/network/env-proxy.js";
-import { applyReasoningEffort } from "../../infrastructure/models/reasoning-effort.mjs";
 
 installEnvProxy();
 
@@ -210,22 +206,6 @@ async function inputFromStdin(): Promise<RunnerInput> {
 // Preserve the existing fallback for custom models without catalog metadata.
 const DEFAULT_CONTEXT_WINDOW = 128_000 + 16_384;
 
-function serviceStream(model: RunnerInput["model"], api: string): ProviderStreams["streamSimple"] | undefined {
-  const useProviderBudget = api === "openai-completions" && model.maxTokens === undefined;
-  const effort = model.reasoningEffort;
-  if (effort === undefined) return useProviderBudget ? streamWithProviderOutput : undefined;
-  const stream = useProviderBudget ? streamWithProviderOutput :
-    api === "openai-completions" ? openAICompletionsApi().streamSimple :
-    api === "openai-responses" ? openAIResponsesApi().streamSimple :
-    api === "anthropic-messages" ? anthropicMessagesApi().streamSimple : undefined;
-  if (!stream) throw new RunnerFailure("CONFIG_INVALID", `Pi cannot set reasoning effort for ${api}`);
-  return (model, context, options) => stream(model, context, {
-    ...options,
-    onPayload: async (payload, payloadModel) => applyReasoningEffort(
-      await options?.onPayload?.(payload, payloadModel) ?? payload, api, effort),
-  });
-}
-
 export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
   const defaults = await loadModelDefaults();
   const matches = runtime.getModels().filter(model => model.id === input.model.name);
@@ -236,21 +216,29 @@ export async function modelFor(input: RunnerInput, runtime: ModelRuntime) {
     if (input.model.api === null)
       throw new RunnerFailure("CONFIG_INVALID", "an explicit endpoint requires an API protocol");
     providerId = "arsi-evaluator-runtime";
-    const streamSimple = serviceStream(input.model, input.model.api);
+    const { api, reasoningEffort } = input.model;
+    const compatible = registered?.api === api ? registered : undefined;
+    const useProviderBudget = api === "openai-completions" && input.model.maxTokens === undefined;
+    // The SDK needs wire capabilities for custom aliases; the session supplies
+    // the effort on each call, including independent choices by extensions.
+    const customCompat = api === "openai-completions" ? { thinkingFormat: "openai" as const, supportsReasoningEffort: true } :
+      api === "anthropic-messages" ? { forceAdaptiveThinking: true } : undefined;
+    const compat = reasoningEffort === undefined ? undefined : compatible ? compatible.compat : customCompat;
+    const thinkingLevelMap = compatible ? compatible.thinkingLevelMap :
+      reasoningEffort === "xhigh" || reasoningEffort === "max" ? { [reasoningEffort]: reasoningEffort } : undefined;
     runtime.registerProvider(providerId, {
       name: "ARSI-Evaluator runtime provider",
       baseUrl: input.model.endpoint,
       api: input.model.api as Api,
-      ...(streamSimple === undefined ? {} : { streamSimple }),
+      ...(useProviderBudget ? { streamSimple: streamWithProviderOutput } : {}),
       models: [
         {
           id: input.model.name,
           name: input.model.name,
           api: input.model.api as Api,
           reasoning: input.model.reasoningEffort !== undefined,
-          ...(input.model.reasoningEffort === undefined ? {} : {
-            thinkingLevelMap: { [input.model.reasoningEffort]: input.model.reasoningEffort },
-          }),
+          ...(compat === undefined ? {} : { compat }),
+          ...(reasoningEffort !== undefined && thinkingLevelMap !== undefined ? { thinkingLevelMap } : {}),
           input: (input.model.inputModalities ?? registered?.input ?? ["text"]).filter((kind): kind is "text" | "image" => kind !== "pdf"),
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: input.model.contextWindow ?? registered?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,

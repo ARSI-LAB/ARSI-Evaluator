@@ -106,10 +106,6 @@ async def _run(bundle_dir: Path, factory_module: str, emitter: Emitter) -> int:
     cwd = os.getcwd()
     provider = os.environ.get("AGENT_MODEL_PROVIDER", "") or "deepagents-default"
     model_name = os.environ.get("AGENT_MODEL_NAME", "")
-    if request.get("reasoningEffort") is not None:
-        from reasoning_effort import install_openai_reasoning_effort
-
-        install_openai_reasoning_effort(request["reasoningEffort"], model_name)
     emitter.emit({
         "type": "session",
         "sessionId": session_id,
@@ -201,12 +197,21 @@ async def _run(bundle_dir: Path, factory_module: str, emitter: Emitter) -> int:
             return result.stdout
 
         tools.append(evaluator_web_search)
-    graph = composition.build_agent_for_run(
+    factory = composition.build_agent_for_run
+    effort = request.get("reasoningEffort")
+    effort_options = {} if effort is None else {"reasoning_effort": effort}
+    if effort_options:
+        try:
+            inspect.signature(factory).bind_partial(**effort_options)
+        except TypeError as error:
+            raise ValueError("DeepAgents bundle must accept reasoning_effort in build_agent_for_run to use service reasoningEffort") from error
+    graph = factory(
         policy=request.get("toolPolicy", {}),
         mcp_servers=request.get("mcpServers", []),
         skills_directories=request.get("skillsDirectories", []),
         tools=tools,
         middleware=(recorder,),
+        **effort_options,
     )
     if inspect.isawaitable(graph):
         graph = await graph

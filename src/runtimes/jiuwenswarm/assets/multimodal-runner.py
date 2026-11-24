@@ -16,12 +16,6 @@ def main() -> None:
     # Older image-only callers send a media array.
     media = incoming if isinstance(incoming, list) else incoming.get("media", [])
     resources = {} if isinstance(incoming, list) else incoming
-    if os.environ.get("EVALUATOR_REASONING_EFFORT"):
-        from reasoning_effort import install_openai_reasoning_effort
-
-        install_openai_reasoning_effort(
-            os.environ["EVALUATOR_REASONING_EFFORT"], os.environ["MODEL_NAME"]
-        )
     policy_errors = []
     tool_policy = json.loads(os.environ.pop("EVALUATOR_JIUWENSWARM_TOOL_POLICY", "{}"))
     with contextlib.redirect_stdout(sys.stderr):

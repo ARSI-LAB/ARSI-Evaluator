@@ -209,10 +209,6 @@ export async function prepareHermes(
               HERMES_YOLO_MODE: "1",
               OFFICE_AGENT_WORKDIR: path(state, "work", "office-agent"),
               [HERMES_AUTH_ENV]: preparation.auth.value,
-              ...(preparation.model.reasoningEffort === undefined ? {} : {
-                EVALUATOR_REASONING_EFFORT: preparation.model.reasoningEffort,
-                EVALUATOR_REASONING_MODEL: preparation.model.name,
-              }),
               ...(media.length ? { EVALUATOR_HERMES_MEDIA: "1" } : {}),
             },
             inheritEnv: false,
