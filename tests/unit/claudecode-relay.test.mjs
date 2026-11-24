@@ -12,12 +12,15 @@ test("Claude Code relay scopes temporary credentials to Anthropic Messages reque
       authorization: request.headers.authorization, beta: request.headers["anthropic-beta"], body });
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.write('event: message_start\ndata: {}\n\n');
+    if (request.url.includes("beta=true")) {
+      response.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"fixture thought"}}\n\n');
+    }
     response.end('event: message_stop\ndata: {}\n\n');
   });
   await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
   const key = "temporary-fixture-key";
   const relay = await startModelRelay({ api: "anthropic-messages",
-    baseUrl: `http://127.0.0.1:${upstream.address().port}/anthropic/v1`, apiKey: "real-fixture-key", token: key });
+    baseUrl: `http://127.0.0.1:${upstream.address().port}/anthropic/v1`, apiKey: "real-fixture-key", token: key, maxTokens: 8192 });
   try {
     const send = (route, key) => fetch(new URL(relay.endpoint).origin + route, { method: "POST",
       headers: { "x-api-key": key, authorization: "Bearer do-not-forward", "anthropic-beta": "test", "content-type": "application/json" },
@@ -28,8 +31,13 @@ test("Claude Code relay scopes temporary credentials to Anthropic Messages reque
     const result = await send("/v1/messages?beta=true", key);
     expect(result.status).toBe(200);
     expect(result.headers.get("content-type")).toBe("text/event-stream");
-    expect(await result.text()).toContain("event: message_stop");
+    const stream = await result.text();
+    expect(stream).toContain('"thinking":"fixture thought"');
+    expect(stream).toContain("event: message_stop");
+    expect((await send("/v1/messages/count_tokens", key)).status).toBe(200);
     expect(received).toEqual([{ path: "/anthropic/v1/messages?beta=true", key: "real-fixture-key",
+      authorization: undefined, beta: "test", body: '{"model":"fixture","max_tokens":8192}' },
+    { path: "/anthropic/v1/messages/count_tokens", key: "real-fixture-key",
       authorization: undefined, beta: "test", body: '{"model":"fixture"}' }]);
   } finally {
     relay.close();

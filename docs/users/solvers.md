@@ -249,7 +249,7 @@ output:
 - Claude disables its internal sandbox. Linux UID 0 uses `dontAsk` with an allow rule for available tools. Other users run with `bypassPermissions`. Explicit tool exclusions apply in both modes. Bash is available locally and in Docker, and it runs with the permissions of the host or container process. On Windows, install Git for Windows and set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` if Claude Code cannot find it.
 - On Linux, the runtime sends model requests through an attempt-local relay and clears its temporary credentials from Bash's environment.
 - For images and PDF pages, declare `image` in the service's `inputModalities`. For native PDFs, declare `pdf` and use a Messages endpoint that accepts document content blocks. See [image and PDF evaluations](multimodal.md).
-- `maxTokens` sets Claude Code's output token setting, and `contextWindow` sets the auto-compaction window between 100000 and 1000000 tokens. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
+- `maxTokens` sets the CLI output budget and the Messages API `max_tokens`. Set `contextWindow` between 100,000 and 1,000,000 tokens according to the model service's capacity. At 1,000,000, Evaluator selects Claude Code's `[1m]` mode, and the CLI strips the suffix from the model ID it sends to the service. The solver rejects `retry`. Each attempt saves events, the trajectory, and stderr under `agent/`.
 
 ## ZCode
 

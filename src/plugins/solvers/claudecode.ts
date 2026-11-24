@@ -93,7 +93,7 @@ export class ClaudeCodeSolver implements Solver {
           ...(none ? ["--tools", ""] : []),
           ...(policy.skills === "disabled" ? ["--disable-slash-commands"] : []),
           ...(policy.mcp === "disabled" ? ["--strict-mcp-config"] : []),
-          ...(denied.length ? ["--disallowedTools", ...denied] : []), "--model", model.name],
+          ...(denied.length ? ["--disallowedTools", ...denied] : [])],
         cwd: session.workdir,
         env: gitBash === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: gitBash },
         inheritEnv: false,

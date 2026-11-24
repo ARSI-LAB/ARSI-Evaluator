@@ -23,6 +23,7 @@ export function consumeClaudeCode(
   handle: ProcessHandle, context: AttemptContext, secret: string, requiredWebTools: readonly string[] = [],
 ): Promise<SolveResult> {
   let result: CliEvent | undefined;
+  const turnUsages: Usage[] = [];
   return consumeCliJsonl(handle, context, [secret], {
     solver: "claudecode",
     label: "Claude Code",
@@ -40,8 +41,17 @@ export function consumeClaudeCode(
         }
       }
       if (event.type !== "result") return;
-      if (result) throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "Claude Code emitted multiple result events");
+      if (result) {
+        const previousIndex = tokenCount(result.result_index);
+        const index = tokenCount(event.result_index);
+        if (previousIndex === null || index !== previousIndex + 1) {
+          throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "Claude Code emitted duplicate or out-of-order result events");
+        }
+      }
+      // The CLI can complete queued turns after its initial result. Each
+      // indexed result accounts for work since the previous result.
       result = event;
+      turnUsages.push(usageFrom(event.usage));
     },
     finish(exit, stderr) {
       if (result?.subtype === "error_max_turns") {
@@ -59,7 +69,17 @@ export function consumeClaudeCode(
       }
       if (!result) throw new EvaluatorError("SOLVER_RESULT_INCOMPLETE", "Claude Code exited without a result event");
       if (typeof result.result !== "string") throw new EvaluatorError("SOLVER_PROTOCOL_INVALID", "Claude Code result is missing its final text");
-      return { finalText: result.result, usage: usageFrom(result.usage) };
+      const sum = (field: keyof Usage): number | null => {
+        let value = 0;
+        for (const usage of turnUsages) {
+          const tokens = usage[field];
+          if (tokens === null) return null;
+          value += tokens;
+        }
+        return tokenCount(value);
+      };
+      return { finalText: result.result,
+        usage: { inputTokens: sum("inputTokens"), outputTokens: sum("outputTokens"), totalTokens: sum("totalTokens") } };
     },
   });
 }

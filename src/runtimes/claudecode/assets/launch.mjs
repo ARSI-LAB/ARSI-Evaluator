@@ -10,6 +10,10 @@ import { startModelRelay } from "./runtimes/shared/assets/model-relay.mjs";
 const [home, entry, ...args] = process.argv.slice(2);
 const input = JSON.parse(readFileSync(0, "utf8"));
 const { apiKey, prompt, baseUrl, model, maxTokens, contextWindow, reasoningEffort, media = [] } = input;
+// The pinned CLI assumes 200K for unrecognized models without this suffix.
+// It strips the suffix before sending the model ID to the provider.
+const cliModel = contextWindow === 1_000_000 && !/\[1m\]$/iu.test(model) ? `${model}[1m]` : model;
+args.push("--model", cliModel);
 await mkdir(home, { mode: 0o700 });
 let relay;
 try {
@@ -39,7 +43,7 @@ try {
   // mode. Keep the real credential in this relay on every operating system.
   relay = await startModelRelay({ disableHostedSearch: input.toolPolicy?.webSearch === "disabled",
     disableMcp: input.toolPolicy?.mcp === "disabled", disableBuiltinTools: input.toolPolicy?.tools === "none", api: "anthropic-messages", baseUrl,
-    apiKey, token: relayKey });
+    apiKey, token: relayKey, maxTokens });
   if (needsShellPrefix) {
     // The CLI passes the entire Bash command as one argument to the prefix.
     await writeFile(shellPrefix, '#!/bin/sh\nunset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL\nexec /bin/bash -c "$1"\n',
@@ -54,9 +58,9 @@ try {
     env: {
       ...env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: join(home, ".claude"),
       ...(process.env.CLAUDE_CODE_GIT_BASH_PATH === undefined ? {} : { CLAUDE_CODE_GIT_BASH_PATH: process.env.CLAUDE_CODE_GIT_BASH_PATH }),
-      ANTHROPIC_API_KEY: relayKey, ANTHROPIC_BASE_URL: new URL(relay.endpoint).origin, ANTHROPIC_MODEL: model,
-      ANTHROPIC_DEFAULT_OPUS_MODEL: model, ANTHROPIC_DEFAULT_SONNET_MODEL: model, ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-      CLAUDE_CODE_SUBAGENT_MODEL: model, CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+      ANTHROPIC_API_KEY: relayKey, ANTHROPIC_BASE_URL: new URL(relay.endpoint).origin, ANTHROPIC_MODEL: cliModel,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: cliModel, ANTHROPIC_DEFAULT_SONNET_MODEL: cliModel, ANTHROPIC_DEFAULT_HAIKU_MODEL: cliModel,
+      CLAUDE_CODE_SUBAGENT_MODEL: cliModel, CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       ...(reasoningEffort === undefined ? {} : {
         ANTHROPIC_CUSTOM_MODEL_OPTION: model,

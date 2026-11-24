@@ -249,7 +249,7 @@ output:
 - Claude 启动时关闭自带沙箱。Linux UID 0 使用 `dontAsk` 并自动允许已开放的工具，其他用户使用 `bypassPermissions`。两种模式都遵守显式禁用的工具配置。本机和 Docker 都开放 Bash，命令按宿主机或容器进程的权限执行。Windows 需要安装 Git for Windows。如果 Claude Code 找不到 Git Bash，将 `CLAUDE_CODE_GIT_BASH_PATH` 设置为对应的 `bash.exe` 路径。
 - Linux 运行时通过仅供当前 attempt 使用的本地转发器访问模型，Bash 启动时会清除转发凭据。
 - 图片和 PDF 页图需要在模型服务的 `inputModalities` 声明 `image`。原生 PDF 需要声明 `pdf`，并使用接收 `document` 内容块的 Messages 服务。见[图片与 PDF 评测](multimodal.zh-CN.md)。
-- 服务字段 `maxTokens` 传给 Claude Code 的输出用量设置，`contextWindow` 设置自动压缩阈值，允许 100000 到 1000000 token。此 Solver 不接受 `retry`。事件、轨迹和 stderr 保存在每次 attempt 的 `agent/` 目录。
+- `maxTokens` 同时设置 Claude Code 的输出预算和 Messages API 的 `max_tokens`。`contextWindow` 按服务支持的容量填写 100,000 到 1,000,000 token。设为 1,000,000 时，Evaluator 选择 Claude Code 的 `[1m]` 模式，CLI 在发出请求前会从模型名中去掉该后缀。此 Solver 不接受 `retry`。事件、轨迹和 stderr 保存在每次 attempt 的 `agent/` 目录。
 
 ## 使用 ZCode
 
