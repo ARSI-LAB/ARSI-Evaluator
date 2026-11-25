@@ -12,6 +12,12 @@ from pathlib import Path
 
 
 def main() -> None:
+    # The SDK passes an empty proxy URL to HTTPX instead of connecting directly.
+    # Docker uses empty values to clear inherited proxies.
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        if name in os.environ and not os.environ[name].strip():
+            del os.environ[name]
+
     incoming = json.load(sys.stdin)
     # Older image-only callers send a media array.
     media = incoming if isinstance(incoming, list) else incoming.get("media", [])

@@ -22,8 +22,11 @@ try {
     args.push("--mcp-config", JSON.stringify(nativeMcpConfig(input.mcpServers)));
   }
   const root = process.platform === "linux" && process.getuid() === 0;
-  args.push("--permission-mode", root ? "dontAsk" : "bypassPermissions");
-  const settings = { sandbox: { enabled: false }, ...(root ? { permissions: { allow: ["*"] } } : {}) };
+  const dockerRoot = root && input.docker === true;
+  const permissionMode = root && !dockerRoot ? "dontAsk" : "bypassPermissions";
+  args.push("--permission-mode", permissionMode);
+  const settings = { sandbox: { enabled: false },
+    ...(permissionMode === "dontAsk" ? { permissions: { allow: ["*"] } } : {}) };
   // Fetch uses the task's network policy without a separate call to Anthropic's domain service.
   if (policy.tools !== "none" && policy.webFetch !== "disabled") settings.skipWebFetchPreflight = true;
   if (policy.tools !== "none") {
@@ -54,7 +57,7 @@ try {
       { mode: 0o700 });
   }
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
-    !/^(?:ANTHROPIC_|CLAUDE_|DISABLE_(?:UPDATES|AUTOUPDATER|TELEMETRY|ERROR_REPORTING)$)/iu.test(name)));
+    !/^(?:ANTHROPIC_|CLAUDE_|IS_SANDBOX$|DISABLE_(?:UPDATES|AUTOUPDATER|TELEMETRY|ERROR_REPORTING)$)/iu.test(name)));
   const noProxy = [env.NO_PROXY ?? env.no_proxy, "127.0.0.1"].filter(Boolean).join(",");
   if (media.length) args.push("--input-format", "stream-json");
   if (reasoningEffort !== undefined) args.push("--effort", reasoningEffort);
@@ -73,6 +76,8 @@ try {
       ...(policy.tools === "none" ? { ENABLE_TOOL_SEARCH: "false" } : {}),
       NO_PROXY: noProxy, no_proxy: noProxy,
       ...(needsShellPrefix ? { CLAUDE_CODE_SHELL_PREFIX: shellPrefix } : {}),
+      // The pinned CLI accepts bypassPermissions as UID 0 in an isolated container.
+      ...(dockerRoot ? { IS_SANDBOX: "1" } : {}),
       DISABLE_UPDATES: "1", DISABLE_TELEMETRY: "1", DISABLE_ERROR_REPORTING: "1",
       ...(maxTokens === undefined ? {} : { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens) }),
       ...(contextWindow === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow) }),
