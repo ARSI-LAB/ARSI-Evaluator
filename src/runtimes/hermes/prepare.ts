@@ -36,8 +36,7 @@ function mergeHermesModelConfig(existing: string, model: ModelConfig, root: stri
     let name = "evaluator-search";
     while (Object.hasOwn(servers, name) && (servers[name] as { args?: unknown[] } | null)?.args?.[0] !== root) name += "-fallback";
     doc.mcp_servers = { ...servers, [name]: { command: node,
-      args: [root, "--serve", model.api, model.endpoint, model.name, HERMES_AUTH_ENV],
-      env: { [HERMES_AUTH_ENV]: "${ARSI_EVALUATOR_API_KEY}" } } };
+      args: [root, "--serve", JSON.stringify({ fetch: true })] } };
   }
   const additions = parseYaml(hermesModelSettings(model)) as Record<string, unknown>;
   if (model.inputModalities?.includes("image")) {

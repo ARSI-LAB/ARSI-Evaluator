@@ -119,7 +119,7 @@ export class CodexSolver implements Solver {
         env: {},
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({ toolPolicy: policy, fetchNetwork: typeof session.solveNetwork === "object"
-          ? { allowedHosts: normalizeAllowedHosts(session.solveNetwork.allowedHosts) } : session.solveNetwork,
+          ? { allowedHosts: normalizeAllowedHosts(session.solveNetwork.allowedHosts) } : session.solveNetwork ?? "bridge",
           outputDir: session.agentOutputDir, skillsDirectories: input.skillsDirectories, mcpServers: input.mcpServers,
           apiKey: auth.value, prompt: input.prompt, media, api: model.api, baseUrl: endpoint, model: model.name }), "utf8"),
       }, signal);

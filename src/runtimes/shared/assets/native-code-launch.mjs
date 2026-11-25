@@ -51,7 +51,7 @@ export async function launchCodeCli({ entry, native = false, enforceMaxTurns = f
     resources = await taskServers(input, entry.includes("opencode-ai"));
     relay = await startModelRelay({
       api: input.api, baseUrl: input.baseUrl, apiKey: input.apiKey, token: input.token, maxTokens: input.maxTokens,
-      completeSearch: resources.completeSearch, disableBuiltinTools: input.toolPolicy.tools === "none", disableMcp: input.toolPolicy.mcp === "disabled",
+      completeWebTools: resources.completeWebTools, disableBuiltinTools: input.toolPolicy.tools === "none", disableMcp: input.toolPolicy.mcp === "disabled",
       isMcpTool: name => options?.isMcpTool ? options.isMcpTool(name) : name.startsWith("mcp__"),
       disableHostedSearch: input.toolPolicy.webSearch === "disabled",
       disableWebFetch: input.toolPolicy.webFetch === "disabled", captureUsage: true,

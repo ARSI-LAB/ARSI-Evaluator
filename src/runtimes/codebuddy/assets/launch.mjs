@@ -26,8 +26,8 @@ try {
   resources = await taskServers(input);
   if (toolPolicy.skills !== "disabled") await stageSkills(input.skillsDirectories, join(home, "skills"));
   relay = await startModelRelay({
-    completeSearch: resources.completeSearch, api, baseUrl, apiKey, token,
-    disableHostedSearch: toolPolicy.webSearch === "disabled", disableMcp: toolPolicy.mcp === "disabled",
+    completeWebTools: resources.completeWebTools, api, baseUrl, apiKey, token,
+    disableWebFetch: toolPolicy.webFetch === "disabled", disableHostedSearch: toolPolicy.webSearch === "disabled", disableMcp: toolPolicy.mcp === "disabled",
     disableBuiltinTools: toolPolicy.tools === "none",
   });
   await writeFile(join(home, "models.json"), JSON.stringify({

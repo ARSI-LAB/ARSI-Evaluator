@@ -419,7 +419,7 @@ describe("simpleagent runner", () => {
     } finally { await session.dispose(new AbortController().signal); }
   }, 35_000);
 
-  test("plain Pi diagnoses missing capabilities before the first model request", async () => {
+  test("plain Pi exposes supplementary fetch when requested and diagnoses unused delegation", async () => {
     const attemptPaths = await paths("plain-pi-capabilities");
     const workspace = join(root, "plain-pi-workspace");
     await mkdir(workspace);
@@ -431,11 +431,11 @@ describe("simpleagent runner", () => {
       signal: AbortSignal.timeout(25000), warning: ({ message }: { message: string }) => warnings.push(message) };
     const { session, prepared } = await prepareSimpleAgent(new LocalEnvironment(workspace), solver, attemptPaths, context);
     try {
-      await expect(prepared.solve({ id: "caps", prompt: "Fetch the page." }, context)).rejects.toMatchObject({
-        code: "CONFIG_INVALID", message: expect.stringMatching(/simpleagent.*webFetch: enabled requires tool web_fetch/u),
-      });
+      await prepared.solve({ id: "caps", prompt: "Complete alpha" }, context);
+      const requests = (await readFile(statePath, "utf8")).trim().split("\n").map(line => JSON.parse(line))
+        .filter(request => request.authorization === "Bearer " + auth.value);
+      expect(requests[0]?.body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain("web_fetch");
       expect(warnings).toContainEqual(expect.stringMatching(/simpleagent.*subagent: disabled.*no built-in/u));
-      expect(await readFile(statePath, "utf8").catch(() => "")).not.toContain(auth.value);
     } finally {
       await session.dispose(new AbortController().signal);
     }

@@ -26,11 +26,15 @@ try {
   const settings = { sandbox: { enabled: false }, ...(root ? { permissions: { allow: ["*"] } } : {}) };
   // Fetch uses the task's network policy without a separate call to Anthropic's domain service.
   if (policy.tools !== "none" && policy.webFetch !== "disabled") settings.skipWebFetchPreflight = true;
-  if (policy.tools !== "none" && policy.webSearch !== "disabled") {
-    const handler = { type: "command", command: process.execPath,
-      args: [fileURLToPath(new URL("./search-hook.mjs", import.meta.url)), input.outputDir ?? ""], timeout: 130 };
-    const hooks = [{ matcher: "WebSearch", hooks: [handler] }];
-    settings.hooks = { PostToolUse: hooks, PostToolUseFailure: hooks };
+  if (policy.tools !== "none") {
+    const allowed = [policy.webSearch !== "disabled" ? "WebSearch" : undefined, policy.webFetch !== "disabled" ? "WebFetch" : undefined].filter(Boolean);
+    if (allowed.length) {
+      const handler = { type: "command", command: process.execPath,
+        args: [fileURLToPath(new URL("./search-hook.mjs", import.meta.url)), input.outputDir ?? "",
+          JSON.stringify(input.fetchNetwork ?? "bridge")], timeout: 100 };
+      const hooks = [{ matcher: allowed.join("|"), hooks: [handler] }];
+      settings.hooks = { PostToolUse: hooks, PostToolUseFailure: hooks };
+    }
   }
   args.push("--settings", JSON.stringify(settings));
   if (input.toolPolicy?.skills !== "disabled") {
@@ -42,7 +46,7 @@ try {
   // SUBPROCESS_ENV_SCRUB forces the pinned CLI back to its default approval
   // mode. Keep the real credential in this relay on every operating system.
   relay = await startModelRelay({ disableHostedSearch: input.toolPolicy?.webSearch === "disabled",
-    disableMcp: input.toolPolicy?.mcp === "disabled", disableBuiltinTools: input.toolPolicy?.tools === "none", api: "anthropic-messages", baseUrl,
+    disableWebFetch: policy.webFetch === "disabled", disableMcp: policy.mcp === "disabled", disableBuiltinTools: input.toolPolicy?.tools === "none", api: "anthropic-messages", baseUrl,
     apiKey, token: relayKey, maxTokens });
   if (needsShellPrefix) {
     // The CLI passes the entire Bash command as one argument to the prefix.

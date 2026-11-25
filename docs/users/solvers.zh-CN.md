@@ -22,18 +22,18 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 | --- | --- | --- | --- | --- | --- | --- |
 | Codex | 支持 | 原生或补充 MCP | 独立抓取用 MCP | 支持 | 支持 | 支持 |
 | TRAE | 支持 | 原生或补充 MCP | 支持 | 支持 | 支持 | 支持 |
-| Claude Code | 支持 | Hook / Exa | 支持 | 支持 | 支持 | 支持 |
+| Claude Code | 支持 | 原生 / 补充工具 | 支持 | 支持 | 支持 | 支持 |
 | CodeBuddy | 支持 | 原生或补充 MCP | 支持 | 支持 | 支持 | 支持 |
 | Qwen Code | 支持 | 原生或补充 MCP | 支持 | 支持 | 支持 | 支持 |
 | Kimi Code | 支持 | 原生或补充 MCP | 支持 | 支持 | 支持 | 支持 |
 | MiniMax Code | 支持 | 原生或补充 MCP | 支持 | 支持 | 支持 | 支持 |
 | ZCode | 支持 | 补充 MCP | 支持 | 支持 | 支持 | 支持 |
 | OpenCode | 支持 | 原生 Exa | 支持 | 支持 | 支持 | 支持 |
-| SimpleAgent（无 Bundle） | 支持 | Pi / Exa | 原生无 | 原生无 | 支持 | 支持 |
-| DSH (Bundle) | 支持 | DSH / Exa | 支持 | 支持 | 支持 | 支持 |
-| Pi (Bundle) | 支持 | Pi / Exa | Bundle 提供 | Bundle 提供 | 支持 | 支持 |
+| SimpleAgent（无 Bundle） | 支持 | Pi / 补充工具 | 显式开启时提供补充抓取 | 原生无 | 支持 | 支持 |
+| DSH (Bundle) | 支持 | 原生 / 补充工具 | 支持 | 支持 | 支持 | 支持 |
+| Pi (Bundle) | 支持 | Pi / 补充工具 | Bundle 提供 | Bundle 提供 | 支持 | 支持 |
 | JiuwenSwarm (Bundle) | 支持 | 原生或补充 MCP | 按 Bundle 缺省 | 支持 | 支持 | 支持 |
-| DeepAgents (Bundle) | 支持 | 评测器 / Exa | Bundle 提供 | 支持 | 支持 | 支持 |
+| DeepAgents (Bundle) | 支持 | 评测器补充工具 | Bundle 或显式开启的补充抓取 | 支持 | 支持 | 支持 |
 
 `tools: none` 可以和 `mcp: disabled` 或任一网页字段的 `disabled` 同用。它与 `webSearch: enabled`、`webFetch: enabled` 分别冲突，因为关闭内置工具也会关闭搜索和抓取。若要使用网页工具，省略 `tools`；若要只保留自行声明的 MCP，省略两个网页字段。
 
@@ -41,11 +41,9 @@ Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执�
 
 local 中的文件和 Shell 操作使用当前操作系统用户的权限，可以写任务目录之外该用户有权写入的路径。Docker 保留指定的用户、挂载和网络策略。CodeBuddy 为主 Agent 和子 Agent 分别设置免审批。
 
-网络允许时，保留原生搜索。Claude 通过 WebSearch 结果钩子、DSH 通过搜索服务钩子，在原生工具没有来源时自动查询 Exa，再尝试当前模型服务。支持模型函数调用的 CLI 还可在下一次请求中匹配原生调用及其结果，自动用补充 MCP 的结果补全失败的查询。在原生函数和补充工具同时可用时优先原生函数。仅暴露厂商托管搜索、没有可配对工具结果的 CLI 仍由 Harness 或模型选择补充工具。OpenCode 的原生 websearch 使用 Exa，回退时直接查询模型服务。Pi 通过扩展工具搜索，Claude 和 Pi 在单独关闭 MCP 后仍有搜索接入方式。
+网页工具优先使用 Harness 原生入口。若原生工具需要未配置的厂商凭据，Evaluator 支持补充工具的入口可继续求解，用户继续使用原有模型凭据和网页开关。可识别的原生工具调用失败时，Evaluator 在钩子或下一轮工具结果中补充证据。对于由上游执行、且没有可配对客户端结果的托管工具，Harness 或模型可以选择补充工具。
 
-补充搜索成功时记录来源 URL，只有模型正文时记为无来源。断网、`model-api` 和域名白名单任务关闭不能遵守网络范围的搜索方式，包括模型厂商代查。Pi 的自定义网页工具名可在 `config.bundle` 或 `config.pi` 声明。
-
-通过 LiteLLM 调用火山方舟联网搜索时，先确认当前模型名已在代理上部署，并且上游账号已开通该模型的联网搜索服务。用 Responses 请求检查 `web_search_call.action.sources` 或回复中的 `url_citation`。HTTP 200 只能确认请求成功。方舟返回 `ToolNotOpen` 或明确拒绝搜索权限时，attempt 会记录服务未开通或未授权。
+任务允许公开联网时，补充 WebSearch 和 WebFetch 分别调用公共 Exa MCP 的 `web_search_exa` 和 `web_fetch_exa`，不使用模型 API Key。补充搜索必须返回结构化来源。抓取失败、回退和后端保存在轨迹或网页工具日志中。域名白名单任务的补充抓取只走直接 HTTP，逐次校验重定向。详见[网页工具网络规则](network.zh-CN.md#网页工具网络规则)。
 
 准备 Hermes 或 DeepAgents 时，可用 `--network network.yaml` 指定包源和代理。WSL local 使用宿主可达的代理，Docker 的 `build` 与 `runtime` 分别填写容器可达的地址。将本地模型网关的主机名列入 `noProxy`。详见[网络配置](network.zh-CN.md)。
 
@@ -149,7 +147,7 @@ output:
 
 ## SimpleAgent（基于 Pi）
 
-无 Bundle 的 SimpleAgent 有搜索工具，缺省没有网页抓取或委派工具。显式关闭 `webFetch` 或 `subagent` 时，求解进度会提示缺少对应的内置能力，关闭策略仍传给工作目录扩展。`webFetch: enabled` 会在首次模型请求前检查实际工具；如果扩展没有注册 `web_fetch`，该次求解报配置错误。
+无 Bundle 的 SimpleAgent 提供补充搜索。显式设置 `webFetch: enabled` 时提供补充抓取。挂载 Bundle 后仍可声明扩展工具名。单独关闭子 Agent 时，求解进度会说明默认没有委派工具。
 
 `simpleagent` 是 Evaluator 内置的 Solver，使用 Pi SDK 执行 Agent 循环、模型请求与工具调用。不配置 Bundle 时，使用 Evaluator 默认的指令和工具即可运行；例如 `benchmark: gsm8k` 会选择默认 SimpleAgent，无需额外准备 Pi Bundle。
 
@@ -191,7 +189,7 @@ benchmark:
 
 服务的 `reasoningEffort` 映射到 Codex 原生的 `model_reasoning_effort`。
 
-Codex 保留 `exec` 入口。评测器通过进程内的本地 MCP 提供独立的 `web_fetch`，可在关闭搜索时读取网页正文。关闭抓取会同时撤下 Codex 自带的搜索和打开网页组合工具，此时仍开放的搜索只使用 Exa，返回来源 URL。`mcp: disabled` 会停止补充 MCP；此时显式开启独立抓取，或显式要求开启搜索并关闭抓取，都会在启动前报错。`tools: none` 同时移除补充搜索和抓取，自行声明的 MCP 仍按 `mcp` 开关执行。
+Codex 保留 `exec` 入口。评测器通过进程内的本地 MCP 提供独立的 `web_fetch`，可在关闭搜索时读取网页正文。关闭抓取会同时撤下 Codex 自带的搜索和打开网页组合工具，此时由补充工具提供搜索并返回来源 URL。`mcp: disabled` 会停止补充 MCP；此时显式开启独立抓取，或显式要求开启搜索并关闭抓取，都会在启动前报错。`tools: none` 同时移除补充搜索和抓取，自行声明的 MCP 仍按 `mcp` 开关执行。
 
 `codex` 在本机或 Docker 的任务目录运行 Codex CLI。Evaluator 在首次准备时安装固定版本 `0.167.0`，认证来自所选模型服务。将以下配置保存为实验 YAML，设置 `CODEX_MODEL`、`CODEX_ENDPOINT` 和 `CODEX_API_KEY` 后运行。
 
@@ -293,7 +291,7 @@ output:
 
 当前 TRAE 版本通过原生 `model_reasoning_effort` 为 Chat Completions 设置档位。如需显式设置服务的 `reasoningEffort`，请使用 `api: openai-completions`。Responses 和 Messages 可省略该字段。
 
-TRAE 的原生 WebFetch 可独立于 MCP 使用。原生搜索需要可用的认证；`mcp: disabled` 会移除评测器补充的 Exa 搜索服务。
+TRAE 的原生 WebFetch 可独立于 MCP 使用。原生搜索需要可用的认证；`mcp: disabled` 会移除评测器补充的搜索服务。
 
 Evaluator 在 x64 Windows、WSL 和 Linux Docker 中下载并缓存官方 `traecli` 版本 `0.214.1`。首次运行或预热需要访问 TRAE 发布 CDN，预热无需模型密钥。下载代理使用现有的[网络配置](network.zh-CN.md)。
 
@@ -424,10 +422,10 @@ MiniMax 安装时会验证 SQLite 原生模块；如果预编译模块下载失�
 
 | Harness | 配置时需要注意的条件 |
 | --- | --- |
-| DSH | 六项开关针对锁定版 0.2.2-rc.1。显式开启搜索或抓取时，所选 profile 和模型服务须注册对应的 `web_search` 或 `web_fetch`。搜索插件可直接使用 Exa。 |
+| DSH | 六项开关针对锁定版 0.2.2-rc.1。显式开启搜索或抓取时，所选 profile 和模型服务须注册对应的 `web_search` 或 `web_fetch`。搜索插件可回退到补充搜索。 |
 | Pi | 抓取和委派由扩展提供。`pi.webSearchTools` 和 `pi.webFetchTools` 可指定工具名；同一工具同时归入两列时，不能要求一项 `enabled` 另一项 `disabled`。若 `mcp: disabled`，显式启用的网页工具必须仍能在当前会话注册。`simpleagent.bundle` 的别名遵循相同规则。 |
 | JiuwenSwarm | 抓取缺省沿用 Bundle 设置，显式启用可装入原生抓取工具。`mcp: disabled` 会关闭补充搜索；同时显式开启搜索时，主会话必须实际暴露原生搜索工具。配置文件中写有工具名本身不足以证明它可用。 |
-| DeepAgents | 内置工具、抓取、委派、MCP 和技能由 `build_agent_for_run` 构建的图控制。仓库维护的示例提供抓取；其他 Bundle 需要自己实现抓取并在构图时报告不支持的设置。评测器注入的搜索工具可在关闭 MCP 后继续使用。 |
+| DeepAgents | 内置工具、抓取、委派、MCP 和技能由 `build_agent_for_run` 构建的图控制。仓库维护的示例提供抓取。显式开启抓取时，评测器也会向图提供补充抓取工具。关闭 MCP 后仍可使用评测器注入的搜索和抓取工具。 |
 
 JiuwenSwarm 关闭内层沙箱和审批。主 Agent 和三个默认子 Agent（`statusline-setup`、`explore_agent`、`plan_agent`）各自通过原生 `skill_tool` 读取任务或 Bundle 提供的技能。启用的 `code_agent` 和 `browser_agent` 也使用各自的读取器。`skills: disabled` 会关闭这些会话的技能发现和读取器，普通文件工具仍按各自的权限执行。网页抓取缺省沿用 Bundle 的工具配置。`webFetch: enabled` 启用原生 `fetch_webpage`，`webFetch: disabled` 会从模型的工具列表移除它，其他工具仍可用。Hermes 使用本地终端并关闭交互审批。DeepAgents 的工具执行由 Bundle 图配置，Dify 由部署的工作流执行。对于能够自行加载工具的图或远端工作流，适配器会拒绝无法落实的限制。
 

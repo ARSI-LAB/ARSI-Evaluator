@@ -1,5 +1,5 @@
 import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
-import { searchWeb } from "../../infrastructure/network/web-search.mjs";
+import { fetchWeb, searchWeb } from "../../infrastructure/network/web-search.mjs";
 import { requireInputModalities } from "../multimodal/input.js";
 import { externalizeMedia } from "../multimodal/evidence.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
@@ -341,6 +341,8 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   const tools = noTools ? [] : [shell, "read", "write", "edit"];
   const useSearch = !noTools && access.webSearch !== "disabled" && !access.webSearchTools?.length;
   if (useSearch) tools.push("web_search");
+  const useFetch = !noTools && access.webFetch === "enabled" && input.supplementaryFetch !== undefined;
+  if (useFetch) tools.push("web_fetch");
   const excluded: string[] = [];
   const required: { option: string; tool: string }[] = [];
   for (const [key, aliases, builtin] of [["webSearch", access.webSearchTools, "web_search"], ["webFetch", access.webFetchTools, "web_fetch"]] as const) {
@@ -348,7 +350,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     if (noTools) {
       // Pi registers declared MCP tools in the mcp__ namespace.
       excluded.push(builtin, ...(aliases ?? []).filter(name => !name.startsWith("mcp__") || access.mcp === "disabled" || mode === "disabled"));
-    } else if (mode === "enabled" && !(key === "webSearch" && useSearch)) {
+    } else if (mode === "enabled" && (key === "webSearch" ? !useSearch : !useFetch)) {
       required.push(...(aliases ?? [builtin]).map(tool => ({ option: key, tool })));
     } else if (mode === "disabled") excluded.push(...(aliases ?? [builtin]));
   }
@@ -446,8 +448,15 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
           name: "web_search", label: "Web search", description: "Search public web sources for a query.",
           parameters: { type: "object" as const, properties: { query: { type: "string" as const } }, required: ["query"], additionalProperties: false },
           async execute(_id, params: { query: string }, signal) {
-            const found = await searchWeb(params.query, { api: input.model.api, model: input.model.name,
-              baseUrl: input.model.endpoint, apiKey: input.auth.value }, signal ?? new AbortController().signal);
+            const found = await searchWeb(params.query, signal ?? new AbortController().signal);
+            return { content: [{ type: "text" as const, text: JSON.stringify(found) }], details: { backend: found.backend } };
+          },
+        })] : []),
+        ...(useFetch ? [defineTool({
+          name: "web_fetch", label: "Web fetch", description: "Read the body of a public web page by URL.",
+          parameters: { type: "object" as const, properties: { url: { type: "string" as const } }, required: ["url"], additionalProperties: false },
+          async execute(_id, params: { url: string }, signal) {
+            const found = await fetchWeb(params.url, input.supplementaryFetch?.allowedHosts, signal ?? new AbortController().signal);
             return { content: [{ type: "text" as const, text: JSON.stringify(found) }], details: { backend: found.backend } };
           },
         })] : []),

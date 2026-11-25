@@ -1,3 +1,4 @@
+import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
 import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -147,7 +148,7 @@ function jiuwenswarmReasoning({ model }: BundlePreparation) {
   return model.reasoningEffort === undefined ? undefined : { modelName: model.name, level: model.reasoningEffort };
 }
 
-function configureJiuwenswarmTools(config: string, preparation: BundlePreparation, root: string, local: boolean) {
+function configureJiuwenswarmTools(config: string, preparation: BundlePreparation, root: string, local: boolean, network: EnvironmentSession["solveNetwork"]) {
   const doc = expectRecord(parseYaml(config), "JiuwenSwarm config");
   const mcp = expectRecord(doc.mcp ?? {}, "JiuwenSwarm MCP");
   const servers = mcp.servers ?? [];
@@ -168,12 +169,15 @@ function configureJiuwenswarmTools(config: string, preparation: BundlePreparatio
   const path = local ? join : posix.join;
   const entry = path(root, "runtimes", "shared", "assets", "search-stdio.mjs");
   const existing = servers.filter(server => server?.args?.[0] !== entry);
-  if (options.tools === "none" || options.webSearch === "disabled") return stringifyYaml({ ...doc, mcp: { ...mcp, servers: existing } });
+  const search = options.webSearch !== "disabled";
+  const fetch = options.webFetch !== "disabled";
+  if (options.tools === "none" || !search && !fetch) return stringifyYaml({ ...doc, mcp: { ...mcp, servers: existing } });
+  const configArg = JSON.stringify({ search, fetch,
+    ...(typeof network === "object" ? { allowedHosts: normalizeAllowedHosts(network.allowedHosts) } : {}) });
   let name = "evaluator-search";
   while (existing.some(server => server?.name === name)) name += "-fallback";
   return stringifyYaml({ ...doc, mcp: { ...mcp, servers: [...existing, { name, enabled: true, transport: "stdio",
-    command: local ? process.execPath : "node", args: [entry, "--serve", preparation.model.api, preparation.model.endpoint,
-      preparation.model.name, "API_KEY"] }] } });
+    command: local ? process.execPath : "node", args: [entry, "--serve", configArg] }] } });
 }
 
 function imageInputEnabled(preparation: BundlePreparation): boolean {
@@ -284,7 +288,7 @@ export async function prepareJiuwenswarm(
     });
     await mkdir(dirname(configPath), { recursive: true });
     const configured = mergeJiuwenswarmModelConfig(installedConfig, images, reasoning, limits);
-    await writeFile(configPath, configureJiuwenswarmTools(configured, preparation, runtime.root, true), { mode: 0o600 });
+    await writeFile(configPath, configureJiuwenswarmTools(configured, preparation, runtime.root, true, session.solveNetwork), { mode: 0o600 });
     return preparedAttempt(
       release,
       async (input, signal) => {
@@ -434,7 +438,7 @@ export async function prepareJiuwenswarmDocker(
     ).trim(),
   );
   const mergedConfig = configureJiuwenswarmTools(
-    mergeJiuwenswarmModelConfig(installedConfig, images, reasoning, limits), preparation, root, false);
+    mergeJiuwenswarmModelConfig(installedConfig, images, reasoning, limits), preparation, root, false, session.solveNetwork);
   const configYaml = join(context.paths.agent, "jiuwenswarm-config.yaml");
   await mkdir(context.paths.agent, { recursive: true });
   await writeFile(configYaml, mergedConfig, { mode: 0o600 });

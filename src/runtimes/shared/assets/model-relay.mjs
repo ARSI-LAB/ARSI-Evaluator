@@ -76,7 +76,7 @@ function toolResponseGuard(allowed) {
   };
 }
 
-export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, disableBuiltinTools = false, disableMcp = false, isMcpTool = name => name.startsWith("mcp__"), disableHostedSearch = false, disableWebFetch = false, completeSearch, captureUsage = false, maxModelCalls }) {
+export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, disableBuiltinTools = false, disableMcp = false, isMcpTool = name => name.startsWith("mcp__"), disableHostedSearch = false, disableWebFetch = false, completeWebTools, captureUsage = false, maxModelCalls }) {
   const anthropic = api === "anthropic-messages";
   const base = anthropic && !baseUrl.endsWith("/v1") ? baseUrl + "/v1" : baseUrl;
   const totals = { inputTokens: 0, outputTokens: 0, reported: false };
@@ -106,7 +106,7 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
       let body = request;
       let guard;
       let observeSearchResponse;
-      if (disableBuiltinTools || disableHostedSearch || disableWebFetch || completeSearch ||
+      if (disableBuiltinTools || disableHostedSearch || disableWebFetch || completeWebTools ||
           (maxTokens !== undefined && route !== "/messages/count_tokens")) {
         const payload = JSON.parse(await text(request));
         if (maxTokens !== undefined && route !== "/messages/count_tokens") {
@@ -117,6 +117,8 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
           payload[key] = maxTokens;
         }
         if (disableBuiltinTools || disableHostedSearch) {
+          // Suppress standard hosted search when the task disallows it. Deployment routes
+          // must honor the request tool declarations rather than injecting automatic web access.
           delete payload.web_search_options;
           if (payload.extra_body) delete payload.extra_body.web_search_options;
         }
@@ -125,16 +127,16 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
         } else if (disableHostedSearch || disableWebFetch) {
           const blocked = tool => {
             const name = tool?.function?.name ?? tool?.name;
-            return (disableHostedSearch && /^web_search(?:$|_)/u.test(tool?.type))
-              || (disableWebFetch && /^(?:web_fetch|webfetch|fetchurl)$/iu.test(name));
+            return (disableHostedSearch && (/^web_search(?:$|_)/u.test(tool?.type) || /^(?:web_?search|search_web)$/iu.test(name)))
+              || (disableWebFetch && (/^web_fetch(?:$|_)/u.test(tool?.type) || /^(?:web_?fetch|fetchurl)$/iu.test(name)));
           };
           if (Array.isArray(payload.tools)) payload.tools = payload.tools.filter(tool => !blocked(tool));
           if (Array.isArray(payload.functions)) payload.functions = payload.functions.filter(tool => !blocked(tool));
           if (blocked(payload.tool_choice)) delete payload.tool_choice;
           if (blocked(payload.function_call)) delete payload.function_call;
         }
-        if (completeSearch && !disableBuiltinTools && !disableHostedSearch && route !== "/messages/count_tokens") {
-          const observe = await completeSearch(payload, controller.signal);
+        if (completeWebTools && !disableBuiltinTools && route !== "/messages/count_tokens") {
+          const observe = await completeWebTools(payload, controller.signal);
           if (api === "openai-responses") observeSearchResponse = observe;
         }
         body = JSON.stringify(payload);

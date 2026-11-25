@@ -19,6 +19,7 @@ import { projectRunnerInput } from "../../runtimes/pi/protocol.js";
 import { consumePiRunner, PiRunnerError } from "../../runtimes/pi/process.js";
 import { parseShellToolPolicy, type ShellToolPolicy } from "../../runtimes/pi/tool-policy.js";
 import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/validation/input.js";
+import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
 import { sessionToolPolicy, parseWebToolNames, toolPolicyProvenance, type SolverToolPolicy, type WebToolNames } from "../../core/validation/solver-tool-policy.js";
 
 export class SimpleAgentError extends Error {
@@ -178,6 +179,8 @@ export class SimpleAgentSolver implements Solver {
       });
     }
     const extensions = await this.extensions(session, context.signal);
+    const toolAccess = sessionToolPolicy("simpleagent", this.policy, session);
+    const network = session.solveNetwork;
     const runnerInput = projectRunnerInput({
       ...(input.attachments?.length ? { media: await loadAttachments(input, session, context) } : {}),
       key: context.key,
@@ -187,7 +190,10 @@ export class SimpleAgentSolver implements Solver {
       workdir: session.workdir,
       outputDir: session.agentOutputDir,
       ...(this.toolPolicy === undefined ? {} : { toolPolicy: this.toolPolicy }),
-      toolAccess: sessionToolPolicy("simpleagent", this.policy, session),
+      toolAccess,
+      ...(this.bundle === undefined && toolAccess.webFetch === "enabled" ? {
+        supplementaryFetch: typeof network === "object" ? { allowedHosts: normalizeAllowedHosts(network.allowedHosts) } : {},
+      } : {}),
       ...(extensions === undefined ? {} : { extensions }),
     });
     const handle = await session.start(

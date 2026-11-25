@@ -1,6 +1,7 @@
 import { parseInputModalities, parseTaskAttachments } from "../../core/validation/multimodal.js";
 import { parseReasoningEffort } from "../../core/validation/reasoning-effort.js";
 import { parseEncodedAttachments, type EncodedAttachment } from "../multimodal/wire.js";
+import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
 import { isErrorCode, type ErrorCode } from "../../core/errors/registry.js";
 import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
 import type { AttemptKey, SolveResult } from "../../core/contracts/result.js";
@@ -23,6 +24,7 @@ export type RunnerInput = {
   /** Absent keeps the runner's default shell tool policy. */
   toolPolicy?: ShellToolPolicy;
   toolAccess?: SolverToolPolicy & WebToolNames;
+  supplementaryFetch?: { allowedHosts?: string[] };
   /** Extension entry files inside the target environment; absent means no extensions. */
   extensions?: string[];
   /** Isolated AgentBundle installation selected instead of ambient Pi config. */
@@ -109,6 +111,7 @@ export function projectRunnerInput(source: RunnerInputSource): RunnerInput {
     outputDir: source.outputDir,
     ...(source.toolPolicy === undefined ? {} : { toolPolicy: source.toolPolicy }),
     ...(source.toolAccess === undefined ? {} : { toolAccess: source.toolAccess }),
+    ...(source.supplementaryFetch === undefined ? {} : { supplementaryFetch: source.supplementaryFetch }),
     ...(source.extensions === undefined ? {} : { extensions: [...source.extensions] }),
     ...(source.piConfigDir === undefined ? {} : { piConfigDir: source.piConfigDir }),
     ...(source.piSettings === undefined ? {} : { piSettings: JSON.parse(JSON.stringify(source.piSettings)) as Record<string, JsonValue> }),
@@ -117,7 +120,7 @@ export function projectRunnerInput(source: RunnerInputSource): RunnerInput {
 
 export function parseRunnerInput(value: unknown): RunnerInput {
   const root = record(value, "runner input");
-  fields(root, ["schemaVersion", "key", "input", "model", "auth", "workdir", "outputDir", "extensions", "piConfigDir", "piSettings", "toolPolicy", "toolAccess", "media"], "runner input");
+  fields(root, ["schemaVersion", "key", "input", "model", "auth", "workdir", "outputDir", "extensions", "piConfigDir", "piSettings", "toolPolicy", "toolAccess", "supplementaryFetch", "media"], "runner input");
   if (root.schemaVersion !== 1) throw new TypeError("runner input schemaVersion must be 1");
   const toolPolicy =
     root.toolPolicy === undefined ? undefined : parseShellToolPolicy(root.toolPolicy, "runner input.toolPolicy");
@@ -127,6 +130,8 @@ export function parseRunnerInput(value: unknown): RunnerInput {
     const policy = parseSolverToolPolicy(access, "runner input.toolAccess", ["webSearchTools", "webFetchTools"]);
     toolAccess = { ...policy, ...parseWebToolNames(access, "runner input.toolAccess", policy) };
   }
+  const fetch = root.supplementaryFetch === undefined ? undefined : record(root.supplementaryFetch, "runner input.supplementaryFetch");
+  if (fetch) fields(fetch, ["allowedHosts"], "runner input.supplementaryFetch");
   const key = record(root.key, "runner input.key");
   fields(key, ["runId", "taskId", "attemptId"], "runner input.key");
   const input = record(root.input, "runner input.input");
@@ -181,6 +186,7 @@ export function parseRunnerInput(value: unknown): RunnerInput {
     outputDir: text(root.outputDir, "runner input.outputDir"),
     ...(toolPolicy === undefined ? {} : { toolPolicy }),
     ...(toolAccess === undefined ? {} : { toolAccess }),
+    ...(fetch === undefined ? {} : { supplementaryFetch: fetch.allowedHosts === undefined ? {} : { allowedHosts: normalizeAllowedHosts(fetch.allowedHosts) } }),
     ...(root.extensions === undefined ? {} : { extensions: extensionPaths(root.extensions) }),
     ...(root.piConfigDir === undefined ? {} : { piConfigDir: text(root.piConfigDir, "runner input.piConfigDir") }),
     ...(root.piSettings === undefined ? {} : { piSettings: jsonRecord(root.piSettings, "runner input.piSettings") }),

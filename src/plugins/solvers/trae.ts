@@ -8,6 +8,7 @@ import type { SolveResult } from "../../core/contracts/result.js";
 import type { AttemptContext, Solver, SolverProvenance } from "../../core/contracts/solver.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
+import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
 import { sessionToolPolicy, toolPolicyProvenance, type SolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
 import { loadAttachments, requireInputModalities } from "../../runtimes/multimodal/input.js";
 import { consumeTrae } from "../../runtimes/trae/protocol.js";
@@ -131,6 +132,8 @@ export class TraeSolver implements Solver {
         env: {},
         inheritEnv: false,
         input: Buffer.from(JSON.stringify({ toolPolicy: policy, outputDir: session.agentOutputDir, skillsDirectories: input.skillsDirectories, mcpServers: input.mcpServers,
+          fetchNetwork: typeof session.solveNetwork === "object"
+            ? { allowedHosts: normalizeAllowedHosts(session.solveNetwork.allowedHosts) } : session.solveNetwork ?? "bridge",
           apiKey: auth.value, prompt: input.prompt, media, relay, api: model.api, baseUrl: endpoint, model: model.name }), "utf8"),
       }, signal);
       return await consumeTrae(handle, context, auth.value);
