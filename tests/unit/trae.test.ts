@@ -134,11 +134,13 @@ test.each([
   const command = start.mock.calls[0]?.[0];
   expect(command?.args).toContain(`model_providers.arsi-evaluator.wire_api="${wireApi}"`);
   if (api === "openai-completions") expect(command?.args).toContain('model_reasoning_effort="max"');
-  if (webSearch === "disabled") {
+  if (api === "anthropic-messages" || webSearch === "disabled") {
     if (!command?.input) throw Error("Missing TRAE launch input");
-    expect(JSON.parse(Buffer.from(command.input).toString("utf8")).relay).toEqual({
-      disableHostedSearch: true, disableBuiltinTools: false, disableMcp: false,
+    expect(JSON.parse(Buffer.from(command.input).toString("utf8"))).toMatchObject({
+      baseUrl: "http://127.0.0.1:4321/v1",
+      relay: { disableHostedSearch: webSearch === "disabled", disableBuiltinTools: false, disableMcp: false },
     });
+    expect(command.args.some(arg => arg.startsWith("model_providers.arsi-evaluator.base_url="))).toBe(false);
   } else {
     expect(command?.args).toContain('model_providers.arsi-evaluator.base_url="http://127.0.0.1:4321/v1"');
   }

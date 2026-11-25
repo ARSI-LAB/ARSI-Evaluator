@@ -90,7 +90,7 @@ export class TraeSolver implements Solver {
     const mapping = session.modelEndpoint;
     const endpoint = mapping?.originEndpoint === model.endpoint ? apiBase(mapping.baseUrl) : this.endpoint;
     const effort = model.reasoningEffort;
-    const relay = policy.tools === "none" || policy.webSearch === "disabled"
+    const relay = model.api === "anthropic-messages" || policy.tools === "none" || policy.webSearch === "disabled"
       ? { disableHostedSearch: policy.webSearch === "disabled", disableBuiltinTools: policy.tools === "none", disableMcp: policy.mcp === "disabled" }
       : undefined;
     const local = runtime.persistent;

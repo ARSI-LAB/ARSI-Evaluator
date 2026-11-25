@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { text } from "node:stream/consumers";
+import { buffer, text } from "node:stream/consumers";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 
@@ -80,6 +80,7 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
   const anthropic = api === "anthropic-messages";
   const base = anthropic && !baseUrl.endsWith("/v1") ? baseUrl + "/v1" : baseUrl;
   const totals = { inputTokens: 0, outputTokens: 0, reported: false };
+  let messagesAuthHeader = "x-api-key";
   let modelCalls = 0;
   const server = createServer(async (request, response) => {
     const authorized = request.headers.authorization === "Bearer " + token
@@ -97,7 +98,7 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
           type: "invalid_request_error", code: "MAX_TURNS_EXCEEDED", message: `The configured maxTurns limit (${maxModelCalls}) was reached` } }));
         return;
       }
-      const headers = new Headers(anthropic ? { "x-api-key": apiKey } : { authorization: "Bearer " + apiKey });
+      const headers = new Headers();
       for (const name of requestHeaders) {
         const value = request.headers[name];
         if (typeof value === "string") headers.set(name, value);
@@ -137,13 +138,28 @@ export async function startModelRelay({ api, baseUrl, apiKey, token, maxTokens, 
           if (api === "openai-responses") observeSearchResponse = observe;
         }
         body = JSON.stringify(payload);
+      } else if (anthropic) {
+        // A rejected Messages request can be replayed with the other auth header.
+        body = await buffer(request);
       }
       if (counted) modelCalls++;
       let upstream;
       try {
-        upstream = await fetch(base + route + url.search, {
-          method: "POST", headers, body, duplex: "half", redirect: "error", signal: controller.signal,
-        });
+        let authHeader = anthropic ? messagesAuthHeader : "authorization";
+        const send = () => {
+          headers.set(authHeader, authHeader === "authorization" ? "Bearer " + apiKey : apiKey);
+          return fetch(base + route + url.search, {
+            method: "POST", headers, body, duplex: "half", redirect: "error", signal: controller.signal,
+          });
+        };
+        upstream = await send();
+        if (anthropic && upstream.status === 401) {
+          await upstream.body?.cancel();
+          headers.delete(authHeader);
+          authHeader = authHeader === "x-api-key" ? "authorization" : "x-api-key";
+          upstream = await send();
+        }
+        if (anthropic && upstream.ok) messagesAuthHeader = authHeader;
       } catch (error) {
         if (counted) modelCalls--;
         throw error;
