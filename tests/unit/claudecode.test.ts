@@ -56,6 +56,10 @@ test.each([
   [chunks(jsonl({ ...resultEvent, result_index: 0 }, { ...resultEvent, result_index: 0 })), 0, "SOLVER_PROTOCOL_INVALID"],
   [chunks(jsonl({ ...resultEvent, result_index: 0 }, { type: "result", result_index: 1,
     subtype: "error_during_execution", is_error: true, api_error_status: 401 })), 0, "MODEL_AUTH_FAILED"],
+  [chunks(jsonl({ type: "result", result_index: 0, subtype: "error_max_turns", is_error: false },
+    { ...resultEvent, result_index: 1 })), 0, "SOLVER_RESULT_INCOMPLETE"],
+  [chunks(jsonl({ type: "result", result_index: 0, subtype: "error_during_execution", is_error: true, api_error_status: 401 },
+    { ...resultEvent, result_index: 1 })), 0, "MODEL_AUTH_FAILED"],
 ] as const)("Claude Code preserves evidence on failure (%#)", async (stdout, code, expected) => {
   const context = await attempt();
   const handle = processWith(stdout, code);
