@@ -67,10 +67,17 @@ export function nativeWebFallback(url, serverName, record, nativeBackend = "nati
     const remember = (id, name, args) => {
       if (!id) return;
       calls.delete(id);
-      const operation = nativeOperation(name);
+      // Qwen dispatches a deferred web_fetch through tool_call and replies with the outer ID.
+      const deferredFetch = fetchEnabled && name === "tool_call";
+      const operation = deferredFetch ? "web_fetch" : nativeOperation(name);
       if (!operation) return;
       if (typeof args === "string") {
         try { args = JSON.parse(args); } catch { return; }
+      }
+      if (deferredFetch) {
+        if (args?.name !== "web_fetch") return;
+        name = args.name;
+        args = args.arguments;
       }
       const value = operation === "web_fetch" ? args?.url : args?.query ?? args?.search_query;
       if (typeof value !== "string" || !value.trim()) return;

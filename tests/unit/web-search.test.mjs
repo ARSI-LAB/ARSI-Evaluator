@@ -216,3 +216,25 @@ test("native fetch wins, and a failed call gets only the corresponding supplemen
   expect(request.messages[1].content[1].content).toContain("fixture body");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+test.each([true, false])("Qwen deferred WebFetch respects fetch policy and pairs results by outer call ID (enabled=%s)", async enabled => {
+  const fetch = vi.fn(async () => Response.json({ result: { content: [{ text: "supplementary page" }] } }));
+  vi.stubGlobal("fetch", fetch);
+  const complete = nativeWebFallback("http://localhost/fixture", "evaluator-search", undefined, "native", enabled);
+  const toolCall = (id, name, args) => ({ id, function: { name: "tool_call", arguments: JSON.stringify({ name, arguments: args }) } });
+  const calls = [
+    toolCall("failed", "web_fetch", { url: source.url, prompt: "Extract the heading." }),
+    toolCall("ok", "web_fetch", { url: "https://example.org/other" }),
+    toolCall("unrelated", "read_file", { url: source.url }),
+  ];
+  const results = [
+    { role: "tool", tool_call_id: "ok", content: "native page" },
+    { role: "tool", tool_call_id: "unrelated", content: "Error: file unavailable" },
+    { role: "tool", tool_call_id: "failed", content: "HTTP 403 Forbidden" },
+  ];
+  await complete({ messages: [{ role: "assistant", tool_calls: calls }, ...results] }, signal);
+  expect(results.map(result => result.content)).toEqual(["native page", "Error: file unavailable",
+    enabled ? "HTTP 403 Forbidden\nSupplementary web fetch: supplementary page" : "HTTP 403 Forbidden"]);
+  expect(fetch).toHaveBeenCalledTimes(enabled ? 1 : 0);
+  if (enabled) expect(JSON.parse(fetch.mock.calls[0][1].body).params).toEqual({ name: "web_fetch", arguments: { url: source.url } });
+});
