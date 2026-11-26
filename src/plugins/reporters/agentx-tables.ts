@@ -63,6 +63,41 @@ export function renderAgentXTables(value: JsonValue | undefined): string[] {
       }
       lines.push("", "修正值直接读取官方 Harness 导出，保留原始延迟；ITL、吞吐及上方性能对比表不做 RTT 扣减。平均 TCP RTT 只校准客户端到端点的往返估算，不能消除所有代理、传输或客户端开销。未导出的值显示 —，不补算。", "");
     }
+    const rawPoint = metric.points.find((p: Record<string, unknown>) => String(p.taskId) === taskId) as Record<string, unknown> | undefined;
+    const measurement = rawPoint?.measurement as Record<string, unknown> | undefined;
+    const msprof = measurement?.msprof as Record<string, unknown> | undefined;
+    const msprofAttempt = measurement?.msprofAttempt as Record<string, unknown> | undefined;
+    if (msprof) {
+      const agg = msprof.aggregate as Record<string, unknown> | undefined;
+      const devices = msprof.devices as Record<string, Record<string, unknown>> | undefined;
+      const mean = agg?.mac_fp16_ratio_mean;
+      const requested = Array.isArray(msprof.resolvedDevices) && msprof.resolvedDevices.length ? msprof.resolvedDevices
+        : Array.isArray(msprof.requestedDevices) ? msprof.requestedDevices.filter(v => typeof v === "number") : [];
+      const withSamples = devices ? Object.entries(devices).filter(([, d]) => typeof d.samples === "number" && d.samples > 0) : [];
+      const parseErrors = msprof.csv_parse_errors && Array.isArray(msprof.csv_parse_errors) ? msprof.csv_parse_errors.length : 0;
+      const status = withSamples.length === 0 ? "missing（无有效样本）"
+        : `partial${requested.length && withSamples.length < requested.length ? `（${withSamples.length}/${requested.length} 卡）` : ""}${parseErrors ? `（${parseErrors} 条解析告警）` : ""}`;
+      const complete = withSamples.length > 0 && (!requested.length || withSamples.length >= requested.length) && parseErrors === 0;
+      const statusText = complete ? "complete" : status;
+      lines.push("#### msprof 服务级 profiling", "",
+        `采集状态：${statusText}；`
+        + `设备数：${agg?.device_count ?? "—"}；mac_fp16_ratio 均值：${typeof mean === "number" ? mean.toFixed(4) : "—"}。`, "");
+      if (devices && Object.keys(devices).length) {
+        lines.push("| 设备 | mac_fp16_ratio | mac_int8_ratio | 样本数 |", "| --- | --- | --- | --- |");
+        for (const [id, dev] of Object.entries(devices)) {
+          const fp16 = typeof dev.mac_fp16_ratio === "number" ? dev.mac_fp16_ratio.toFixed(4) : "—";
+          const int8 = typeof dev.mac_int8_ratio === "number" ? dev.mac_int8_ratio.toFixed(4) : "—";
+          lines.push(`| ${id} | ${fp16} | ${int8} | ${dev.samples ?? "—"} |`);
+        }
+        lines.push("", "mac_fp16_ratio 是 msprof sample-based 采集的 AICore FP16 MAC 占空比真值，与 npu-smi AICore% 无对应关系。0.85 为 compute_bound 参考阈值（待标定）；低于该值且吞吐停滞时墙型为 host_overhead。", "");
+      }
+    } else if (msprofAttempt && msprofAttempt.status === "error") {
+      const requestedText = Array.isArray(msprofAttempt.requestedDevices)
+        ? (msprofAttempt.requestedDevices.join(", ") || "—")
+        : String(msprofAttempt.requestedDevices ?? "—");
+      lines.push("#### msprof 服务级 profiling", "",
+        `采集失败：${typeof msprofAttempt.code === "string" ? msprofAttempt.code : "unknown"}；请求设备：${requestedText}。证据见 msprof-telemetry.json。`, "");
+    }
     if (summary.replayCoverage) {
       const coverage = summary.replayCoverage;
       lines.push(`完整回放覆盖率：${coverage.completedTraces} / ${coverage.selectedTraces} 个 trace；${coverage.observedRequests} / ${coverage.expectedRequests} 次请求；成功 ${coverage.successfulRequests}，失败 ${coverage.failedRequests}，取消 ${coverage.cancelledRequests}；缺失 ${coverage.missingRequests}，重复 ${coverage.duplicateRequests}，未知 ${coverage.unexpectedRequests}。`, "");

@@ -215,6 +215,33 @@ Harness strips trailing slashes and appends `/metrics` when absent. Both sources
 
 vLLM uses `/metrics` for KV cache, running/waiting requests, preemptions, prefix queries/hits, and input/output tokens, matched explicitly by version. Counters show window deltas/rates rather than lifetime totals. Adjacent deltas accumulate in sample order, retaining restart resets. Model labels/endpoints/profiling/warmup are separate; the first in-window sample uses the previous sample as baseline.
 
+### msprof Service-Level Profiling (Opt-In)
+
+`telemetry.msprof` adds sample-based CANN duty-cycle collection alongside vLLM/Ascend telemetry. It requires `hardware: npu` and a host/toolbox with the `msprof` binary in PATH or a known CANN location; missing binaries mark the source failed without blocking request telemetry.
+
+```yaml
+telemetry:
+  vllm:
+    endpoint: http://127.0.0.1:18080/metrics
+  msprof:
+    devices:
+      - deviceId: 0
+      - deviceId: 1
+    freqHz: 10
+    metrics: ArithmeticUtilization
+    includeHbm: false
+```
+
+`freqHz` is an integer 1-100 (default 10); `metrics` selects the AICore metric set; `includeHbm` additionally samples HBM counters whose units are unverified and excluded from verdicts. Device IDs use the same `npu-smi` physical NPU IDs as Ascend telemetry; `msprof` receives the corresponding `Chip Logic ID` values, and the mapping is written to evidence.
+
+Device binding is required and accepts either the structured `devices` list or a compact `deviceIds` string: `deviceIds: "4,5,6,7"` samples physical cards 4, 5, 6, and 7, while `deviceIds: "all"` resolves every compute chip on the host via `npu-smi info -m` at collection time. Use "all" only on hosts where every device is authorized for sampling; otherwise pass the authorized list explicitly.
+
+Structured `devices` entries and a comma-separated `deviceIds` string are mutually exclusive alternatives with the same physical-card semantics; `deviceIds` exists so callers can drive device binding from environment substitution without embedding card identities in evaluator code. Binding correctness stays with the caller: the chosen devices must match the authorized window resources. Unresolved placeholders (for example an unset `"${MSPROF_DEVICES}"`) fail validation with the raw token in the error.
+
+When a metrics endpoint is configured or inferred and `waitForTraffic` is omitted, collection waits for sustained token traffic by default (up to a bounded wait; no traffic ends the attempt with `traffic_wait_timeout` instead of collecting idle devices). If the harness has already finished before traffic starts, the helper reports `harness_requested_before_collection` without collecting. Explicit `waitForTraffic: false` retains immediate collection. After the harness finishes, the helper is asked to close the collection window before evidence is exported; a harness-requested close exports the partial evidence already produced. The solver writes `msprof-telemetry.json` evidence plus `msprof/{window.json,summary.json,SHA256SUMS}`; completed summaries include requested physical IDs, resolved chip IDs, and their mapping, plus per-device `mac_fp16_ratio` and a `profiling-summary v1` contract with field-availability labels. Failures stay in the attempt record without blocking the benchmark.
+
+`mac_fp16_ratio` is the sample-based AICore FP16 MAC duty cycle (truth-caliber); it has no correspondence to `npu-smi` AICore%. `aic_mac_ratio_extra` from `MetricSummary.sqlite` stays source-specific-uncalibrated. Collection is mutually exclusive with `acl_task_time` and torch profiler in the same window; never run both.
+
 Raw upstream JSON/JSONL remains intact. Reports use ordered counters; rates divide by last in-window timestamp minus baseline, blank if nonpositive. Excluded boundary samples can make counter totals differ from request tokens; counts lost between scrapes cannot be restored. Request counts never substitute for device counters.
 
 Host samplers use existing Python 3/driver `npu-smi` without extra packages.
