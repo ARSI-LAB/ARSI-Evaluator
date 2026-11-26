@@ -181,6 +181,8 @@ run:
 
 Replay 使用未修改的 `problem.get_inputs()` 和配置中的第一个 seed，预热完成后仅在 MSTX 区间 `rsi_operator_profile` 内调用一次。SDK session 管理 profiler 子进程；取消信号传播至这些子进程，清理无法确认属于基础设施失败。
 
+Profiler 先从入口、再从已声明的 Python 辅助文件选择 Triton JIT 核。未找到时，支持入口内使用 `AscendCOp(...)` 的内联 AscendC 形式：所有 `LaunchSpec(...)` 调用均以同一个字面量名称开头（位置参数或 `name=`），且该名称与入口内的 `__global__` 设备函数声明相符。设备符号作为 `msprof --kernel-name`，scope 为 `declared-ascendc-entry-kernel`。动态或有歧义的 spec、调整了顺序的关键字参数、独立文件中的设备声明均不推断，仍沿用入口文件名兜底。可通过 `profiling.metadata.kernelSelection` 查看实际名称、来源及选择策略。这是静态源码启发式识别，不是通用 Python/C++ 解析器或多核执行分析。
+
 支持两个显式采集协议：
 
 - 默认 `PipeTimeline,Default` 要求 PipeUtilization、L2Cache、ResourceConflictRatio 三类 CSV 和可用 trace。

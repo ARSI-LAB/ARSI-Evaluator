@@ -62,6 +62,20 @@ export function findTritonKernelName(source: string): string | undefined {
   return undefined;
 }
 
+/** 仅识别入口内的静态 LaunchSpec 与设备声明，不执行候选代码或猜测动态核名。 */
+export function findAscendCKernelName(source: string): string | undefined {
+  if (!/\bAscendCOp\s*\(/.test(source)) return undefined;
+  const calls = [...source.matchAll(/\bLaunchSpec\s*\(/g)];
+  const specs = [...source.matchAll(/\bLaunchSpec\s*\(\s*(?:name\s*=\s*)?(["'])([A-Za-z_]\w*)\1\s*(?=[,)])/g)];
+  // 混有动态名称时不能仅挑出可解析的一项，否则可能把多核任务误认为单核。
+  if (calls.length === 0 || specs.length !== calls.length) return undefined;
+  const names = new Set(specs.map(match => match[2]));
+  const name = specs[0]?.[2];
+  if (names.size !== 1 || name === undefined) return undefined;
+  const declarations = [...source.matchAll(/\b__global__\s+(?:__aicore__\s+)?void\s+([A-Za-z_]\w*)\s*\(/g)];
+  return declarations.some(match => match[1] === name) ? name : undefined;
+}
+
 /** 在 Triton cache 里按名找编译元数据 json；只认精确文件名 `<kernel>.json`，
  * 按内容兜底扫会拿到别的内核的元数据让 ub_ratio 悄悄算错 —— 宁缺勿错。 */
 async function findCompileMetadata(tritonCacheDir: string, kernelName: string): Promise<string | null> {

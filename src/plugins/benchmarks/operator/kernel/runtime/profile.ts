@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } fr
 import { setTimeout as delay } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { KERNEL_PROFILE_OUTPUT_POLICY, parseMsprofMetricsTable, rowsToMetrics, metricsToCsv, type MetricRow } from "../msprof-csv.js";
-import { analyzeL2Cache, analyzeTraceEvents, findTritonKernelName } from "../msprof-analysis.js";
+import { analyzeL2Cache, analyzeTraceEvents, findTritonKernelName, findAscendCKernelName } from "../msprof-analysis.js";
 import { analyzeRoofline } from "../roofline.js";
 import { MsProfCache } from "../msprof-cache.js";
 import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions } from "./execution.js";
@@ -247,7 +247,8 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     if (context.hashes[resolve(args.problem)] !== sha256File(args.problem))
       throw new Error("Locked profile problem source changed or missing");
   }
-  const selectionPolicy = "entry-first-then-declared-python/v1";
+  let selectionPolicy = "entry-first-then-declared-python/v1";
+  let language = "triton-or-file-stem";
   let kernelName = findTritonKernelName(kernelBytes.toString("utf8"));
   let selectedSource = tree.entry;
   if (kernelName === undefined) {
@@ -257,6 +258,16 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       if (kernelName !== undefined) { selectedSource = file.path; break; }
     }
   }
+  if (kernelName === undefined) {
+    kernelName = findAscendCKernelName(kernelBytes.toString("utf8"));
+    if (kernelName !== undefined) {
+      language = "ascendc";
+      selectionPolicy = "unique-launchspec-matching-device-declaration/v1";
+      selectedSource = tree.entry;
+    }
+  }
+  const profileScope = language === "ascendc"
+    ? "declared-ascendc-entry-kernel" : "original-first-triton-kernel-or-file-stem";
   kernelName ??= basename(tree.entry, ".py");
   const candidate = resolve(args.kernel);
   const problem = resolve(args.problem);
@@ -278,10 +289,10 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
     status: "failed", error: "", kernels: [],
     metadata: {
       outputPolicy: KERNEL_PROFILE_OUTPUT_POLICY, upstreamCommit: UPSTREAM_COMMIT, artifactRoot: basename(root),
-      scope: "original-first-triton-kernel-or-file-stem",
+      scope: profileScope,
       collection, seed, roundNum: args.round, attempts: 0, cleanup: "confirmed",
       diagnosticProtocol: { caseId: args.caseId ?? "standalone", seeds: [seed], warmup, collection, inputUnmodified,
-        scope: "original-first-triton-kernel-or-file-stem", capture: "after-warmup-mstx-range", selectionPolicy: "last" },
+        scope: profileScope, capture: "after-warmup-mstx-range", selectionPolicy: "last" },
       trace: { status: "unavailable", reason: collection === "Default" ? "not-requested-by-default-protocol" : "collection-not-completed" },
       hardwareDerived: { ubRatio: "unavailable", coreUtilization: "unavailable", reason: "No explicit hardware denominators provided" },
       cacheRequested: cacheEnabled, cacheHit: false,
@@ -314,7 +325,7 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
       ? (logicalDevice === undefined ? undefined : `device-${logicalDevice}`)
       : `${visibleDevices}${logicalDevice === undefined ? "" : `:device-${logicalDevice}`}`;
     // Only evidence from the same post-warmup capture protocol can satisfy a cache hit.
-    metadata["kernelSelection"] = { policy: selectionPolicy, sourcePath: selectedSource, kernelName };
+    metadata["kernelSelection"] = { policy: selectionPolicy, sourcePath: selectedSource, kernelName, language };
     const cacheScope = deviceScope === undefined ? undefined : JSON.stringify({
       deviceScope, diagnosticProtocol: metadata["diagnosticProtocol"], problemHash, entry: tree.entry,
       candidateFiles: tree.files, selectionPolicy,
