@@ -135,6 +135,7 @@ def multimodal_configs(config, run, manifest):
 
     datasets = []
     abbr = config["native"].get("options", {}).get("dataset-abbr")
+    model_limit = config["native"].get("maxOutputTokens", manifest["output_tokens"])
     for name, dataset in manifest["datasets"].items():
         image = dataset["image"]
         path = run / f"dataset_{name}.py"
@@ -144,7 +145,13 @@ def multimodal_configs(config, run, manifest):
             inference_url=config["endpoint"], model=config["model"], work_dir=run / "outputs",
             image_ref=image["ref"], image_data_url=image["data_url"], output_tokens=manifest["output_tokens"],
         ), encoding="utf-8")
-        datasets.extend(Config.fromfile(str(path)).datasets)
+        dataset_config, = Config.fromfile(str(path)).datasets
+        if model_limit < manifest["output_tokens"]:
+            # The validated rows all use the manifest length. AISBench prioritizes
+            # that column over the model limit whenever the reader exposes it.
+            columns = dataset_config.reader_cfg.input_columns
+            dataset_config.reader_cfg.input_columns = [col for col in columns if col != "max_out_len"]
+        datasets.append(dataset_config)
     return datasets
 
 
