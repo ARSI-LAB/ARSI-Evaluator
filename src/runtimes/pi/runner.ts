@@ -1,5 +1,6 @@
-import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
-import { fetchWeb, searchWeb } from "../../infrastructure/network/web-search.mjs";
+import { pickSolverToolPolicy, PI_WEB_FETCH_TOOL_NAMES } from "../../core/validation/solver-tool-policy.js";
+import { searchWeb } from "../../infrastructure/network/web-search.mjs";
+import { fetchWebPage } from "../../infrastructure/network/web-fetch.mjs";
 import { requireInputModalities } from "../multimodal/input.js";
 import { externalizeMedia } from "../multimodal/evidence.js";
 import type { ErrorCode } from "../../core/errors/registry.js";
@@ -42,6 +43,7 @@ installEnvProxy();
 const SYSTEM_PROMPT =
   "You are an autonomous coding agent. Complete the user's task in the current working directory. Use the available tools when needed, then give a concise final answer.";
 const INPUT_LIMIT = 75 * 1024 * 1024;
+const [WEB_FETCH] = PI_WEB_FETCH_TOOL_NAMES;
 
 class RunnerFailure extends Error {
   constructor(
@@ -341,19 +343,24 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   const tools = noTools ? [] : [shell, "read", "write", "edit"];
   const useSearch = !noTools && access.webSearch !== "disabled" && !access.webSearchTools?.length;
   if (useSearch) tools.push("web_search");
+  const fetchNames = [...new Set([...PI_WEB_FETCH_TOOL_NAMES, ...(access.webFetchTools ?? [])])];
   const useFetch = !noTools && access.webFetch === "enabled" && input.supplementaryFetch !== undefined;
-  if (useFetch) tools.push("web_fetch");
-  const excluded: string[] = [];
-  const required: { option: string; tool: string }[] = [];
-  for (const [key, aliases, builtin] of [["webSearch", access.webSearchTools, "web_search"], ["webFetch", access.webFetchTools, "web_fetch"]] as const) {
-    const mode = access[key];
+  if (useFetch) tools.push(WEB_FETCH);
+  // The SDK gives customTools priority over extension tools with the same name.
+  const searchNames = access.webSearchTools ?? ["web_search"];
+  const excluded = useFetch
+    ? fetchNames.filter(name => name !== WEB_FETCH && (access.webSearch === "disabled" || !searchNames.includes(name)))
+    : [];
+  for (const [key, names, builtin] of [
+    ["webSearch", searchNames, "web_search"],
+    ["webFetch", fetchNames, WEB_FETCH],
+  ] as const) {
     if (noTools) {
       // Pi registers declared MCP tools in the mcp__ namespace.
-      excluded.push(builtin, ...(aliases ?? []).filter(name => !name.startsWith("mcp__") || access.mcp === "disabled" || mode === "disabled"));
-    } else if (mode === "enabled" && (key === "webSearch" ? !useSearch : !useFetch)) {
-      required.push(...(aliases ?? [builtin]).map(tool => ({ option: key, tool })));
-    } else if (mode === "disabled") excluded.push(...(aliases ?? [builtin]));
+      excluded.push(builtin, ...names.filter(name => !name.startsWith("mcp__") || access.mcp === "disabled" || access[key] === "disabled"));
+    } else if (access[key] === "disabled") excluded.push(...names);
   }
+  const requiredSearch = access.webSearch === "enabled" && !useSearch ? access.webSearchTools ?? ["web_search"] : [];
   const systemPrompt = noTools ? SYSTEM_PROMPT : `${SYSTEM_PROMPT} The command tool is ${shell}; use ${shell === "powershell" ? "PowerShell" : "Bash"} syntax for commands.`;
   await mkdir(input.outputDir, { recursive: true });
   const trajectory = (options.createTrajectoryWriter ?? ((path, key) => new TrajectoryWriter(path, key)))(
@@ -411,7 +418,7 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
     const defaults = settingsManager.getDefaultTools();
     const bundleTools = defaults?.map(name => name === "bash" ? shell : name);
     settingsManager.applyOverrides({ ...runtimeSettings,
-      ...(bundleTools && !noTools ? { defaultTools: [...new Set([...bundleTools, ...(useSearch ? ["web_search"] : [])])] } : {}) });
+      ...(bundleTools && !noTools ? { defaultTools: [...new Set([...bundleTools, ...(useSearch ? ["web_search"] : []), ...(useFetch ? [WEB_FETCH] : [])])] } : {}) });
   }
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -453,11 +460,12 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
           },
         })] : []),
         ...(useFetch ? [defineTool({
-          name: "web_fetch", label: "Web fetch", description: "Read the body of a public web page by URL.",
-          parameters: { type: "object" as const, properties: { url: { type: "string" as const } }, required: ["url"], additionalProperties: false },
-          async execute(_id, params: { url: string }, signal) {
-            const found = await fetchWeb(params.url, input.supplementaryFetch?.allowedHosts, signal ?? new AbortController().signal);
-            return { content: [{ type: "text" as const, text: JSON.stringify(found) }], details: { backend: found.backend } };
+          name: WEB_FETCH, label: "Web fetch", description: "Read the body of a public web page by URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"], additionalProperties: false },
+          async execute(_id, params, signal) {
+            const page = await fetchWebPage(params.url, input.supplementaryFetch?.allowedHosts, signal ?? new AbortController().signal);
+            const backend = "http-fetch";
+            return { content: [{ type: "text", text: JSON.stringify({ backend, ...page }) }], details: { backend } };
           },
         })] : []),
       ],
@@ -477,15 +485,17 @@ export async function run(input: RunnerInput, options: RunnerOptions = {}): Prom
   });
   // MCP finishes registration in before_agent_start, after bindExtensions returns.
   let webToolFailure: RunnerFailure | undefined;
-  if (required.length) {
+  if (requiredSearch.length || access.webFetch === "enabled") {
     const stream = session.agent.streamFunction;
     session.agent.streamFunction = (model, context, options) => {
       const names = new Set(session.getActiveToolNames());
-      const missing = required.filter(({ tool }) => !names.has(tool));
+      const missing = requiredSearch.filter(name => !names.has(name)).map(name => `webSearch: enabled requires tool ${name}`);
+      if (access.webFetch === "enabled" && !fetchNames.some(name => names.has(name))) {
+        missing.push(`webFetch: enabled requires an active tool from ${fetchNames.join(", ")}`);
+      }
       if (missing.length) {
         const harness = input.extensions || input.piConfigDir ? "Pi Bundle" : "simpleagent (Pi without Bundle)";
-        const details = missing.map(({ option, tool }) => `${option}: enabled requires tool ${tool}`).join(", ");
-        webToolFailure = new RunnerFailure("CONFIG_INVALID", `${harness}: ${details}, but no active extension registered it for this session.${access.mcp === "disabled" ? " With mcp: disabled, MCP-provided tools are unavailable." : ""}`);
+        webToolFailure = new RunnerFailure("CONFIG_INVALID", `${harness}: ${missing.join("; ")}.${access.mcp === "disabled" ? " With mcp: disabled, MCP-provided tools are unavailable." : ""}`);
         throw webToolFailure;
       }
       return stream(model, context, options);

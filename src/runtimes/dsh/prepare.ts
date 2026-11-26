@@ -148,8 +148,9 @@ export async function prepareDsh(
       await session.upload(permissions, patch, context.signal);
     }
     const overlays = [modelOverlay, patch];
+    const fallbackFetch = webFetch !== "disabled" && policy.mcp !== "disabled";
     const fallback = candidate.harness.actualVersion === DSH_VERSION && tools !== "none" &&
-      (webSearch !== "disabled" || webFetch !== "disabled");
+      (webSearch !== "disabled" || fallbackFetch);
     const network = session.solveNetwork;
     if (restricted || fallback) {
       const policyPatch = path(state, "tools.patch.yaml");
@@ -158,7 +159,7 @@ export async function prepareDsh(
       ] : [];
       if (fallback) {
         rows.push({ insert: [{ id: "evaluator-search", name: path(runtime.root, "runtimes", "dsh", "assets", "search.mjs"),
-          config: { search: webSearch !== "disabled", fetch: webFetch !== "disabled",
+          config: { search: webSearch !== "disabled", fetch: fallbackFetch,
             ...(typeof network === "object" ? { allowedHosts: normalizeAllowedHosts(network.allowedHosts) } : {}) } }] });
       }
       if (tools === "none") rows.unshift({ id: "tool-executor-native", disabled: false }, { id: "tool-executor-ptc", disabled: true });

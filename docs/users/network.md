@@ -47,6 +47,6 @@ This file changes Terminal-Bench task image acquisition only; the selected tasks
 
 ## Web tool network policy
 
-Use the Solver's `webSearch` and `webFetch` switches to control web tools. With unrestricted web access, Solvers with native tools use them first. Supplementary tools call public Exa MCP when a native call reports a detectable failure. Exa requests do not use the model API key.
+Use the Solver's `webSearch` and `webFetch` switches to control web tools. With unrestricted web access, Solvers with native tools use them first. Supplementary tools call public Exa MCP when a native call reports a detectable failure. Exa requests do not use the model API key. Pi and SimpleAgent use direct HTTP for Evaluator-provided fetch, including on unrestricted task networks. For harnesses with native fetch, `mcp: disabled` also suppresses Evaluator's supplementary fetch.
 
 `none` and `model-api` environments disable supplementary web tools. With a domain allowlist, supplementary fetch uses direct HTTP and checks each redirect, and supplementary search is disabled.

@@ -29,9 +29,9 @@ All rows accept the six fields and values listed above. “Yes” means the harn
 | MiniMax Code | Yes | Native or fallback MCP | Yes | Yes | Yes | Yes |
 | ZCode | Yes | Fallback MCP | Yes | Yes | Yes | Yes |
 | OpenCode | Yes | Native Exa | Yes | Yes | Yes | Yes |
-| SimpleAgent (no Bundle) | Yes | Pi / supplementary | Supplementary fetch when explicitly enabled | No built-in | Yes | Yes |
+| SimpleAgent (no Bundle) | Yes | Pi / supplementary | Direct HTTP when explicitly enabled | No built-in | Yes | Yes |
 | DSH (Bundle) | Yes | Native / supplementary | Yes | Yes | Yes | Yes |
-| Pi (Bundle) | Yes | Pi / supplementary | Bundle-provided | Bundle-provided | Yes | Yes |
+| Pi (Bundle) | Yes | Pi / supplementary | Direct HTTP when explicitly enabled | Bundle-provided | Yes | Yes |
 | JiuwenSwarm (Bundle) | Yes | Native or fallback MCP | Bundle default | Yes | Yes | Yes |
 | DeepAgents (Bundle) | Yes | Evaluator supplementary | Bundle or supplementary fetch when enabled | Yes | Yes | Yes |
 
@@ -43,7 +43,7 @@ Local file and shell operations run with the operating system user's permissions
 
 Evaluator prefers the harness's native web tools. Supplemental tools can help when native tools have no usable backend or require credentials the user has not provided. Hooks and model relays append supplemental evidence when a native failure can be paired with its call. With hosted tools or opaque results, the harness or model can select the supplemental tool.
 
-With unrestricted web access, supplementary search and fetch call the public Exa MCP tools `web_search_exa` and `web_fetch_exa` without model API keys. Search results require structured sources. Trajectories or web-tool logs record the backends and failed attempts. For a domain allowlist, supplementary fetch uses direct HTTP and checks every redirect. See [web tool network policy](network.md#web-tool-network-policy).
+With unrestricted web access, Exa-backed search and fetch call the public MCP tools `web_search_exa` and `web_fetch_exa` without model API keys. Search results require structured sources. Trajectories or web-tool logs record the backends and failed attempts. Pi and SimpleAgent use direct HTTP for their supplementary fetch. Supplementary fetch on a domain allowlist also uses direct HTTP and checks every redirect. See [web tool network policy](network.md#web-tool-network-policy).
 
 For Hermes or DeepAgents installation, use `--network network.yaml` to configure package sources and proxies. WSL local needs a host-accessible proxy. Docker needs container-accessible addresses for the `build` and `runtime` stages. Include the local model gateway hostname in `noProxy`. See the [network guide](network.md).
 
@@ -147,7 +147,7 @@ Add `maxTokens: 8192` to a service to limit replies. Configure model request ret
 
 ## SimpleAgent (Based on Pi)
 
-SimpleAgent without a Bundle provides supplementary search. Set `webFetch: enabled` to add supplementary fetch. Bundles can still declare their own tool names. Disabling subagents reports that no delegation tool is built in.
+SimpleAgent without a Bundle provides supplementary search. Set `webFetch: enabled` to read known URLs through the Evaluator's direct HTTP tool. The tool needs no Exa account or MCP and respects the task network policy. Keep `webSearch: disabled` to expose fetch without search. Disabling subagents reports that no delegation tool is built in.
 
 `simpleagent` is Evaluator's built-in solver, using the Pi SDK for the agent loop, model requests and tool calls. Without a bundle, it runs with Evaluator's default instructions and tools. For example, `benchmark: gsm8k` selects default SimpleAgent and requires no Pi Bundle preparation.
 
@@ -189,7 +189,7 @@ Provide both fields; the maximum must be at least the default. This fragment ret
 
 The service’s `reasoningEffort` maps to Codex’s native `model_reasoning_effort`.
 
-Codex still runs through `exec`. The evaluator provides a separate `web_fetch` tool through its local MCP server, so a solver can fetch a page with search disabled. Disabling fetch also removes Codex's combined native search and page-opening tool. The supplementary search tool then returns source URLs. With `mcp: disabled`, explicit fetch or explicit search with fetch disabled fails before startup. With `tools: none`, the evaluator removes both supplementary web tools and leaves independently declared MCP servers subject to the `mcp` setting.
+Codex still runs through `exec`. The evaluator provides a separate `web_fetch` tool through its local MCP server, so a solver can fetch a page with search disabled. Disabling fetch also removes Codex's combined native search and page-opening tool. The supplementary search tool then returns source URLs. Set `webSearch: enabled`, `webFetch: enabled`, and `mcp: disabled` together to expose the native combined tool only. The model endpoint determines whether that tool can return page bodies. With MCP disabled, enabling fetch requires explicitly enabling search as well. Enabling search while explicitly disabling fetch also fails before startup. With `tools: none`, the evaluator removes both supplementary web tools and leaves independently declared MCP servers subject to the `mcp` setting.
 
 `codex` runs Codex CLI in the task working directory on the local machine or in Docker. Evaluator installs CLI version `0.167.0` during environment preparation and authenticates with the selected model service. Save the following experiment YAML and set `CODEX_MODEL`, `CODEX_ENDPOINT`, and `CODEX_API_KEY` before running it.
 
@@ -421,7 +421,7 @@ Use the `harness.name` in the Bundle manifest to find its additional conditions.
 | Harness | Conditions |
 | --- | --- |
 | DSH | The six switches target the pinned 0.2.2-rc.1 runtime. Explicit search or fetch requires the selected profile and model service to expose `web_search` or `web_fetch`. The search plugin can fall back to supplementary search. |
-| Pi | Extensions supply fetch and delegation. `pi.webSearchTools` and `pi.webFetchTools` select exact tool names. If the lists share a tool, setting one feature to `enabled` and the other to `disabled` conflicts. With `mcp: disabled`, explicitly enabled web tools must still be registered in the session. The same rules apply to aliases in `simpleagent.bundle`. |
+| Pi | With `webFetch: enabled`, Pi prefers the Evaluator’s direct HTTP `web_fetch` tool, which works with `mcp: disabled`. It replaces common fetch-only tool names and tools named in `pi.webFetchTools`. Leaving `webFetch` at `default` keeps the Bundle's tools. `pi.webSearchTools` names search tools, and assigning a tool to opposing policies is a configuration error. The same rules apply to aliases in `simpleagent.bundle`. |
 | JiuwenSwarm | Fetch defaults to the Bundle configuration. Explicit fetch can activate the native fetch tool. With `mcp: disabled`, supplementary search is removed. Explicit search then requires a native search tool visible to the main session. A tool name in the config alone is insufficient. |
 | DeepAgents | The graph returned by `build_agent_for_run` controls built-ins, fetch, delegation, MCP and skills. The maintained example provides fetch. When explicitly enabled, Evaluator also provides a supplementary fetch tool to the graph. The evaluator's search and fetch tools can still run with MCP disabled. |
 

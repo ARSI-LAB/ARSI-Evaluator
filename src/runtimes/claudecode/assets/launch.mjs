@@ -30,7 +30,7 @@ try {
   // Fetch uses the task's network policy without a separate call to Anthropic's domain service.
   if (policy.tools !== "none" && policy.webFetch !== "disabled") settings.skipWebFetchPreflight = true;
   if (policy.tools !== "none") {
-    const allowed = [policy.webSearch !== "disabled" ? "WebSearch" : undefined, policy.webFetch !== "disabled" ? "WebFetch" : undefined].filter(Boolean);
+    const allowed = [policy.webSearch !== "disabled" ? "WebSearch" : undefined, policy.webFetch !== "disabled" && policy.mcp !== "disabled" ? "WebFetch" : undefined].filter(Boolean);
     if (allowed.length) {
       const handler = { type: "command", command: process.execPath,
         args: [fileURLToPath(new URL("./search-hook.mjs", import.meta.url)), input.outputDir ?? "",

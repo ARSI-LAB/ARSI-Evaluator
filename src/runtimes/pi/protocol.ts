@@ -4,6 +4,7 @@ import { parseEncodedAttachments, type EncodedAttachment } from "../multimodal/w
 import { normalizeAllowedHosts } from "../../core/policies/network-policy.js";
 import { isErrorCode, type ErrorCode } from "../../core/errors/registry.js";
 import type { ModelConfig, RuntimeAuth } from "../../core/contracts/config.js";
+import type { EnvironmentSpec } from "../../core/contracts/environment.js";
 import type { AttemptKey, SolveResult } from "../../core/contracts/result.js";
 import type { PublicTask } from "../../core/contracts/task.js";
 import type { JsonValue } from "../../core/contracts/task.js";
@@ -87,6 +88,14 @@ function taskResources(value: Record<string, unknown>): Pick<PublicTask, "skills
     if (new Set(resources.mcpServers.map(server => server.name)).size !== resources.mcpServers.length) throw new TypeError("Duplicate MCP server names");
   }
   return resources;
+}
+
+export function piFetchOptions(
+  policy: SolverToolPolicy,
+  network: EnvironmentSpec["network"],
+): Pick<RunnerInput, "supplementaryFetch"> {
+  if (policy.webFetch !== "enabled" || network === "none" || network === "model-api") return {};
+  return { supplementaryFetch: typeof network === "object" ? { allowedHosts: normalizeAllowedHosts(network.allowedHosts) } : {} };
 }
 
 export function projectRunnerInput(source: RunnerInputSource): RunnerInput {

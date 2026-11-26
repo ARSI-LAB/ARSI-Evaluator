@@ -23,8 +23,8 @@ export function parseCodexConfig(value: unknown): CodexConfig {
   if (shellTool !== undefined && shellTool !== "default" && shellTool !== "disabled") {
     throw new TypeError("codex config.shellTool must be default or disabled");
   }
-  if (policy.mcp === "disabled" && policy.webFetch === "enabled") {
-    unsupportedToolPolicy("codex", "webFetch: enabled cannot be combined with mcp: disabled because codex exec provides independent fetching through the evaluator MCP.");
+  if (policy.mcp === "disabled" && policy.webFetch === "enabled" && policy.webSearch !== "enabled") {
+    unsupportedToolPolicy("codex", "webFetch: enabled with mcp: disabled requires webSearch: enabled for the native combined tool. Independent fetching requires the evaluator MCP.");
   }
   if (policy.mcp === "disabled" && policy.webFetch === "disabled" && policy.webSearch === "enabled") {
     unsupportedToolPolicy("codex", "webSearch: enabled, webFetch: disabled and mcp: disabled cannot be combined because disabling fetch removes the native combined search/open tool and search-only mode requires the evaluator MCP.");
