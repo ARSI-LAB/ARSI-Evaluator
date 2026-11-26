@@ -4,6 +4,15 @@ import { fileURLToPath } from "node:url";
 
 export const MAX_KERNEL_TIMER_MS = 2147483647;
 
+/** Worker-boundary failures that are retryable infrastructure, never candidate quality. */
+export const KERNEL_INFRASTRUCTURE_CODES = ["WORKER_PROTOCOL_INVALID", "WORKER_TIMEOUT", "WORKER_EXIT", "WORKER_START"] as const;
+export type KernelInfrastructureCode = typeof KERNEL_INFRASTRUCTURE_CODES[number];
+export type KernelDiagnostic = { message: string };
+
+/** Capability-probe outcomes; an unavailable probe is evidence, not an exception. */
+export const KERNEL_PROFILE_PROBE_REASONS = ["msprof-missing", "permission-denied", "collection-empty", "timeout", "msprof-error"] as const;
+export type KernelProfileProbeReason = typeof KERNEL_PROFILE_PROBE_REASONS[number];
+
 /** Execution environment failures, including missing worker directories or interpreters. */
 export class KernelExecError extends Error {
   override readonly name = "KernelExecError";

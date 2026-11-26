@@ -1,10 +1,12 @@
 import { KERNEL_PROFILE_OUTPUT_POLICY } from "./msprof-csv.js";
-import { parseKernelTimingEvidence } from "./timing.js";
+import { parseKernelScopeTiming, parseKernelTimingEvidence } from "./timing.js";
 import { expectNonEmptyString, expectRecord } from "../../../../core/validation/input.js";
 import { VerificationError } from "../../../../core/errors/verification-error.js";
 import type { JsonValue } from "../../../../core/contracts/task.js";
 import type { VerifyResult } from "../../../../core/contracts/result.js";
 import { parseKernelAssessment, type KernelContract, type KernelEffectiveProtocol } from "./strict.js";
+import { parseKernelTolerance, resolveTolerance, type KernelToleranceConfig } from "./tolerance.js";
+import { KERNEL_INFRASTRUCTURE_CODES, KERNEL_PROFILE_PROBE_REASONS } from "./runtime/execution.js";
 import { isAbsolute, posix } from "node:path";
 
 function finiteJson(value: unknown, label: string): JsonValue {
@@ -24,6 +26,38 @@ function artifactPaths(value: unknown): string[] {
       throw new TypeError("Profiling artifact must be a verifier-relative file without traversal");
     return path;
   });
+}
+
+const ERROR_STAT_KEYS = new Set(["count", "maxAbs", "maxRel", "p50Abs", "p90Abs", "p99Abs"]);
+
+/** Validate the error distribution reported by the worker; unknown threshold keys stay allowed. */
+export function parseKernelErrorStats(value: unknown): Record<string, number> {
+  const r = expectRecord(value, "errorStats");
+  const out: Record<string, number> = {};
+  for (const [key, item] of Object.entries(r)) {
+    if (typeof item !== "number" || !Number.isFinite(item) || item < 0) throw new TypeError(`Invalid errorStats.${key}`);
+    if (key === "count" ? !Number.isSafeInteger(item) : !ERROR_STAT_KEYS.has(key) && !/^mismatch_gt_[0-9.eE+-]+$/u.test(key))
+      throw new TypeError(`Invalid errorStats.${key}`);
+    out[key] = item;
+  }
+  if (out.count === undefined) throw new TypeError("Missing errorStats.count");
+  return out;
+}
+
+/** Validate retryable infrastructure evidence without letting it masquerade as candidate data. */
+function infrastructureEvidence(r: Record<string, unknown>): { [key: string]: JsonValue } {
+  if (r.code === undefined && r.retryable === undefined && r.diagnostics === undefined) return {};
+  if (typeof r.code !== "string" || !(KERNEL_INFRASTRUCTURE_CODES as readonly string[]).includes(r.code))
+    throw new TypeError("Invalid infrastructure error code");
+  if (typeof r.retryable !== "boolean" || !Array.isArray(r.diagnostics) || !r.diagnostics.length)
+    throw new TypeError("Invalid infrastructure error classification");
+  return { code: r.code, retryable: r.retryable,
+    diagnostics: r.diagnostics.map((value, index) => {
+      const diagnostic = expectRecord(value, `diagnostics[${index}]`);
+      if (Object.keys(diagnostic).some(key => key !== "message"))
+        throw new TypeError("Invalid infrastructure diagnostic");
+      return { message: expectNonEmptyString(diagnostic.message, "diagnostic.message") };
+    }) };
 }
 
 export function assertKernelProfileOutputPolicy(profile: Record<string, unknown>): void {
@@ -64,21 +98,34 @@ export function parseKernelProfiling(value: unknown, candidateFiles: { path: str
 /** Accept only complete, finite positive timings; infrastructure errors do not become candidate zero scores. */
 export function kernelVerdict(value: unknown, candidateSha256: string, referenceKind: string,
   candidateFiles: { path: string; sha256: string }[], profilingRequested = false,
-  strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> },
+  strict?: { contract: KernelContract; protocol: Pick<KernelEffectiveProtocol, "seeds" | "rtol" | "atol" | "warmup" | "repeat"> & { tolerance?: KernelToleranceConfig } },
   operation: "evaluate" | "precision" = "evaluate"): VerifyResult {
   const contract = strict?.contract;
   const r = expectRecord(value, "kernel result");
   if (r.operation !== operation || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "all-device-kernels" || typeof r.error !== "string") throw new Error("Invalid kernel result identity");
+  if (r.errorOwnership !== undefined && r.errorOwnership !== "evaluation") throw new TypeError("Invalid kernel errorOwnership");
   const details: { [key: string]: JsonValue } = { protocol: "kernel-v1", operation, candidateSha256, referenceKind,
     timingScope: "all-device-kernels", status: typeof r.status === "string" ? r.status : "invalid", error: r.error,
     referenceMs: null, candidateMs: null, speedup: null,
+    ...infrastructureEvidence(r),
+    ...(r.errorOwnership === undefined ? {} : { errorOwnership: "evaluation" }),
     ...(profilingRequested ? { profilingRequested: true } : {}) };
-  if (strict) {
+  // Infrastructure failures short-circuit before assessment validation: a crashed worker
+  // cannot be expected to have emitted correctness evidence.
+  if (strict && r.status !== "infrastructure_error") {
     const assessment = parseKernelAssessment(r.assessment, strict.contract, strict.protocol.seeds);
-    for (const name of ["rtol", "atol", "warmup", "repeat"] as const)
+    for (const name of ["warmup", "repeat"] as const)
       if (assessment.effectiveProtocol[name] !== strict.protocol[name])
         throw new VerificationError(`Effective protocol mismatch: ${name}`, {});
+    if (strict.protocol.tolerance !== undefined) {
+      const expected = resolveTolerance(strict.contract.output.dtype, strict.protocol.tolerance);
+      for (const name of ["rtol", "atol"] as const)
+        if (assessment.effectiveProtocol[name] !== expected[name])
+          throw new VerificationError(`Effective tolerance mismatch: ${name}`, {});
+      if (assessment.effectiveProtocol.tolerance !== undefined && assessment.effectiveProtocol.tolerance.mode !== expected.mode)
+        throw new VerificationError("Effective tolerance mode mismatch", {});
+    }
     details.assessment = finiteJson(assessment, "assessment");
     if (r.status === "passed" && (assessment.errorOwnership !== null || assessment.checks.some(c => c.status !== "passed")))
       throw new VerificationError("Strict checks did not pass", details);
@@ -88,6 +135,16 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
       (assessment.errorOwnership !== "candidate" || !assessment.checks.some(c => c.status === "failed")))
       throw new VerificationError("Candidate failure lacks strict evidence", details);
   }
+  if (r.tolerance !== undefined) {
+    const tolerance = parseKernelTolerance(r.tolerance);
+    if (strict && details.assessment !== undefined) {
+      const assessed = (details.assessment as Record<string, any>).effectiveProtocol.tolerance;
+      if (JSON.stringify(tolerance) !== JSON.stringify(assessed))
+        throw new VerificationError("Tolerance provenance mismatch", details);
+    }
+    details.tolerance = finiteJson(tolerance, "tolerance");
+  }
+  if (r.errorStats !== undefined) details.errorStats = finiteJson(parseKernelErrorStats(r.errorStats), "errorStats");
   if (r.profiling !== undefined) {
     try { details.profiling = parseKernelProfiling(r.profiling, candidateFiles); }
     catch {
@@ -101,12 +158,14 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
   }
   if (r.status === "infrastructure_error") throw new VerificationError("Kernel evaluation infrastructure failed", details);
   if (r.status === "incorrect" || r.status === "candidate_error") {
-    if (r.referenceMs !== null || r.candidateMs !== null || r.speedup !== null) throw new Error("Failed kernel must not carry timing scores");
+    if (r.referenceMs !== null || r.candidateMs !== null || r.speedup !== null ||
+        r.timing !== undefined || r.launchCount !== undefined) throw new Error("Failed kernel must not carry timing scores");
     return { passed: false, score: 0, details };
   }
   if (r.status !== "passed") throw new Error("Unknown kernel evaluation status");
   if (operation === "precision") {
-    if (r.referenceMs !== null || r.candidateMs !== null || r.speedup !== null || r.timingEvidence !== undefined)
+    if (r.referenceMs !== null || r.candidateMs !== null || r.speedup !== null || r.timingEvidence !== undefined ||
+        r.timing !== undefined || r.launchCount !== undefined)
       throw new VerificationError("Precision result must not carry timing measurements", details);
     return { passed: true, score: 1, details };
   }
@@ -115,6 +174,17 @@ export function kernelVerdict(value: unknown, candidateSha256: string, reference
     if (typeof measured !== "number" || !Number.isFinite(measured) || measured <= 0)
       throw new VerificationError(`Invalid kernel measurement: ${name}`, details);
     details[name] = measured;
+  }
+  if (r.timing !== undefined) {
+    const timing = parseKernelScopeTiming(r.timing);
+    if (Math.abs(timing.device.meanMs - Number(r.candidateMs)) > Math.max(1e-12, timing.device.meanMs * 1e-9))
+      throw new VerificationError("Candidate scope timing disagrees with the measured candidate", details);
+    if (r.launchCount !== undefined && r.launchCount !== timing.launchCount)
+      throw new VerificationError("Candidate launchCount disagrees with timing evidence", details);
+    details.timing = finiteJson(timing, "scope timing");
+    details.launchCount = timing.launchCount;
+  } else if (r.launchCount !== undefined) {
+    throw new VerificationError("Candidate launchCount requires scope timing", details);
   }
   if (strict || r.timingEvidence !== undefined) {
     const timing = parseKernelTimingEvidence(r.timingEvidence, contract);
@@ -135,12 +205,50 @@ export function kernelBenchVerdict(value: unknown, candidateSha256: string, refe
   if (r.operation !== "bench" || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
       r.timingScope !== "triton-kernels" || typeof r.error !== "string")
     throw new VerificationError("Invalid kernel bench identity", {});
-  const details = { protocol: "kernel-bench/v1", operation: "bench", candidateSha256, referenceKind,
-    timingScope: "triton-kernels", status: "unavailable", error: r.error };
+  const details: { [key: string]: JsonValue } = { protocol: "kernel-bench/v1", operation: "bench", candidateSha256, referenceKind,
+    timingScope: "triton-kernels", status: "unavailable", error: r.error, ...infrastructureEvidence(r) };
+  if (r.status === "infrastructure_error")
+    throw new VerificationError("Kernel bench infrastructure failed", details);
   if (r.status !== "completed" || typeof r.candidateMs !== "number" || !Number.isFinite(r.candidateMs) || r.candidateMs <= 0 ||
       r.referenceMs !== null || r.speedup !== null)
     throw new VerificationError("Invalid kernel bench measurement", details);
-  return { passed: null, details: { ...details, status: "completed", candidateMs: r.candidateMs, referenceMs: null, speedup: null } };
+  const completed: { [key: string]: JsonValue } = { ...details, status: "completed", candidateMs: r.candidateMs, referenceMs: null, speedup: null };
+  if (r.timing !== undefined) {
+    const timing = parseKernelScopeTiming(r.timing);
+    if (Math.abs(timing.device.meanMs - r.candidateMs) > Math.max(1e-12, timing.device.meanMs * 1e-9))
+      throw new VerificationError("Bench scope timing disagrees with the measured candidate", details);
+    if (r.launchCount !== undefined && r.launchCount !== timing.launchCount)
+      throw new VerificationError("Bench launchCount disagrees with timing evidence", details);
+    completed.timing = finiteJson(timing, "scope timing");
+    completed.launchCount = timing.launchCount;
+  } else if (r.launchCount !== undefined) {
+    throw new VerificationError("Bench launchCount requires scope timing", details);
+  }
+  return { passed: null, details: completed };
+}
+
+/** Publish profiler capability as diagnostic evidence, never as a candidate score. */
+export function kernelProbeVerdict(value: unknown, candidateSha256: string, referenceKind: string,
+  collection: "Default" | "PipeTimeline,Default"): VerifyResult {
+  const r = expectRecord(value, "kernel probe result");
+  if (r.operation !== "probe-profile" || r.candidateSha256 !== candidateSha256 || r.referenceKind !== referenceKind ||
+      r.timingScope !== "all-device-kernels" || typeof r.error !== "string")
+    throw new VerificationError("Invalid kernel profile probe identity", {});
+  if (r.collection !== collection) throw new VerificationError("Kernel profile probe collection mismatch", {});
+  if (r.status !== "available" && r.status !== "unavailable") throw new TypeError("Invalid kernel profile probe status");
+  if (r.status === "available") {
+    if (r.reason !== null || typeof r.msprofVersion !== "string" || !r.msprofVersion || r.error !== "")
+      throw new TypeError("Invalid available kernel profile probe");
+  } else if (!(KERNEL_PROFILE_PROBE_REASONS as readonly string[]).includes(String(r.reason)) || !r.error || r.msprofVersion !== null)
+    throw new TypeError("Invalid unavailable kernel profile probe");
+  if (r.durationSeconds !== undefined && (typeof r.durationSeconds !== "number" || !Number.isFinite(r.durationSeconds) || r.durationSeconds < 0))
+    throw new TypeError("Invalid kernel profile probe duration");
+  return { passed: null, details: { protocol: "kernel-probe/v1", operation: "probe-profile", candidateSha256,
+    referenceKind, timingScope: "all-device-kernels", status: r.status, reason: r.reason as JsonValue, collection,
+    msprofVersion: r.msprofVersion as JsonValue,
+    msprofPath: r.msprofPath === undefined || r.msprofPath === null ? null : expectNonEmptyString(r.msprofPath, "probe msprofPath"),
+    error: r.error,
+    ...(r.durationSeconds === undefined ? {} : { durationSeconds: r.durationSeconds }) } };
 }
 
 /** Validate independent capture receipts at the Benchmark boundary before publishing a diagnostic verdict. */

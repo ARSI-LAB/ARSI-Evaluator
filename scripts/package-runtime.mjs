@@ -119,7 +119,7 @@ for (const name of ["reward.py", "LICENSE-APACHE", "NOTICE"]) {
 // kernel verification and profiling assets ride with the compiled protocol.
 const kernelKernelAssets = new URL("../dist/plugins/benchmarks/operator/kernel/runtime/", import.meta.url);
 await mkdir(kernelKernelAssets, { recursive: true });
-for (const name of ["precision.py", "timing.py", "msprof_replay.py", "strict.py", "timing_evidence.py"]) {
+for (const name of ["precision.py", "timing.py", "msprof_replay.py", "strict.py", "timing_evidence.py", "tolerance.py"]) {
   await cp(new URL(`../src/plugins/benchmarks/operator/kernel/runtime/${name}`, import.meta.url), new URL(name, kernelKernelAssets));
   await normalizeRuntimeFile(new URL(name, kernelKernelAssets));
 }

@@ -82,7 +82,14 @@ def evaluate(request, profile_root, api):
     device = api['npu_device_id']()
     torch.npu.set_device(device)
     assessment['environment'] = observe_environment(torch, torch_npu, device)
+    resolve_tolerance = api.get('request_tolerance')
+    tolerance = resolve_tolerance(request) if resolve_tolerance is not None else {
+        'mode': 'explicit', 'rtol': request['rtol'], 'atol': request['atol'], 'source': 'explicit'}
+    assessment['effectiveProtocol']['rtol'] = tolerance['rtol']
+    assessment['effectiveProtocol']['atol'] = tolerance['atol']
+    assessment['effectiveProtocol']['tolerance'] = tolerance
     problem = api['load_task_module'](request['problem'], request['dataRoot'])
+    error_evidence = None
     # new_assessment emits checks in seed, call, CHECKS order, including unattempted calls.
     check_offset = 0
     call_failed = False
@@ -151,7 +158,10 @@ def evaluate(request, profile_root, api):
                     mark('input-unmodified')
                 except (AssertionError, ValueError) as exc: mark('input-unmodified', str(exc))
                 try:
-                    api['compare_tree'](expected, actual, torch, request['rtol'], request['atol'])
+                    collect_errors = api.get('error_stats')
+                    if collect_errors is not None:
+                        error_evidence = collect_errors(expected, actual, torch)
+                    api['compare_tree'](expected, actual, torch, tolerance['rtol'], tolerance['atol'])
                     mark('numerical')
                 except (AssertionError, ValueError) as exc: mark('numerical', str(exc))
                 if call_failed:
@@ -161,23 +171,37 @@ def evaluate(request, profile_root, api):
 
         if request.get('operation', 'evaluate') == 'precision':
             api['verify_hashes'](request['hashes'])
-            return {'status': 'passed', 'error': ''}
+            return {'status': 'passed', 'error': '', 'tolerance': tolerance, 'errorStats': error_evidence}
         timer = api['load_module'](Path(__file__).with_name('timing.py'), 'kernel_strict_timer')
+        timing_config = api.get('timing_config')
+        scopes, statistics, launch_count = (None, None, None) if timing_config is None else timing_config(request)
 
-        def measure(name, run):
+        def measure(name, run, scoped=False):
             audit = {}
             options = dict(warmup=request['warmup'], active=request['repeat'], prof_dir=str(profile_root / f'profile-{name}'),
                            keep_res=True, triton_only=False, audit=audit)
+            if scoped and scopes is not None:
+                options.update(scopes=scopes, statistics=statistics, launch_count=launch_count)
+                if contract['inputUnmodified']:
+                    measured = timer.bench_kernel_scopes(lambda: run(inputs), **options)
+                else:
+                    measured = timer.bench_prepared_kernel_scopes(run, lambda: api['clone_tree'](inputs, torch), **options)
+                    if audit.get('stepLayout') != 'prepare-then-run':
+                        raise RuntimeError('Mutable-input timer must emit prepare-then-run timing evidence')
+                return api['positive_measurement'](measured['timing']['device']['meanMs']), audit, measured['timing']
             if contract['inputUnmodified']:
                 ms = timer.bench_kernel_ms(lambda: run(inputs), **options)
             else:
                 ms = timer.bench_prepared_kernel_ms(run, lambda: api['clone_tree'](inputs, torch), **options)
                 if audit.get('stepLayout') != 'prepare-then-run':
                     raise RuntimeError('Mutable-input timer must emit prepare-then-run timing evidence')
-            return api['positive_measurement'](ms), audit
+            return api['positive_measurement'](ms), audit, None
 
-        reference_ms, reference_audit = measure('reference', lambda trial: reference(*trial))
-        candidate_ms, candidate_audit = measure('candidate', lambda trial: invoke(candidate, trial, synchronize=False))
+        reference_ms, reference_audit, _ = measure('reference', lambda trial: reference(*trial))
+        candidate_ms, candidate_audit, candidate_timing = measure('candidate', lambda trial: invoke(candidate, trial, synchronize=False), scoped=True)
     api['verify_hashes'](request['hashes'])
     return {'status': 'passed', 'error': '', 'referenceMs': reference_ms, 'candidateMs': candidate_ms, 'speedup': reference_ms / candidate_ms,
-            'timingEvidence': {'schemaVersion': 2, 'method': 'profiler-flow/v1', 'reference': reference_audit, 'candidate': candidate_audit}}
+            'tolerance': tolerance, 'errorStats': error_evidence,
+            'timingEvidence': {'schemaVersion': 2, 'method': 'profiler-flow/v1', 'reference': reference_audit, 'candidate': candidate_audit},
+            **({} if candidate_timing is None else {'timing': candidate_timing, 'timingScope': 'all-device-kernels',
+                                                     'launchCount': candidate_timing['launchCount']})}

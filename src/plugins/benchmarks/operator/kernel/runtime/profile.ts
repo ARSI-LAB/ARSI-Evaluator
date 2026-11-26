@@ -7,7 +7,7 @@ import { KERNEL_PROFILE_OUTPUT_POLICY, parseMsprofMetricsTable, rowsToMetrics, m
 import { analyzeL2Cache, analyzeTraceEvents, findTritonKernelName } from "../msprof-analysis.js";
 import { analyzeRoofline } from "../roofline.js";
 import { MsProfCache } from "../msprof-cache.js";
-import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions } from "./execution.js";
+import { KernelExecError, MAX_KERNEL_TIMER_MS, validateKernelExecOptions, resolveAtomDir, type KernelExecOptions, type KernelProfileProbeReason } from "./execution.js";
 
 import type { CommandSpec, EnvironmentSession } from "../../../../../core/contracts/environment.js";
 import { startLocalProcess } from "../../../../../infrastructure/process/local.js";
@@ -21,13 +21,15 @@ export type KernelProfileExecution = {
   /** SDK-only source context, including reference dependencies and locked runtime files. */
   sourceContext?: { dataRoot: string; hashes: Record<string, string> };
 };
-async function runProfileProcess(command: CommandSpec, signal: AbortSignal, options: KernelExecOptions, consolePath: string, execution?: KernelProfileExecution): Promise<void> {
+async function runProfileProcess(command: CommandSpec, signal: AbortSignal, options: KernelExecOptions,
+  consolePath?: string, execution?: KernelProfileExecution): Promise<{ stdout: string; stderr: string }> {
   const handle = execution ? await execution.session.start({ ...command, cwd: execution.session.workdir }, signal)
     : await startLocalProcess(command, signal);
   try {
     const result = await readProcess(handle, signal, options.outputLimitBytes ?? null, options.cleanupGraceMs);
-    await appendFileSafe(consolePath, `${result.stdout}${result.stderr}`);
+    if (consolePath !== undefined) await appendFileSafe(consolePath, `${result.stdout}${result.stderr}`);
     if (result.code !== 0) throw new ProfileStepError(`msprof exited with ${result.code}: ${result.stderr.slice(-4000)}`, true);
+    return { stdout: result.stdout, stderr: result.stderr };
   } finally {
     let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -140,6 +142,81 @@ function resolveMsprofBin(explicit?: string): string {
   }
   if (existsSync(DEFAULT_MSPROF_BIN)) return DEFAULT_MSPROF_BIN;
   return "msprof";
+}
+
+/** Classify a capture or probe failure without letting a missing profiler look like a bad candidate. */
+export function classifyProfileFailure(message: string, timedOut = false): KernelProfileProbeReason {
+  if (timedOut) return "timeout";
+  if (/permission denied|eacces|eperm|not permitted/iu.test(message)) return "permission-denied";
+  if (/msprof binary not found|enoent|no such file|command not found/iu.test(message)) return "msprof-missing";
+  if (/no valid core pipe metrics|no pipeutilization|no l2cache|no resourceconflictratio|no trace\.json|no hash found|did not create opprof/iu.test(message))
+    return "collection-empty";
+  return "msprof-error";
+}
+
+/** Extract a version token from `msprof --version`, falling back to its first informative line. */
+export function parseMsprofVersion(output: string): string | null {
+  const text = output.replace(/\r/gu, "");
+  const labeled = text.match(/(?:version|ver)\s*[:=]?\s*v?([0-9]+(?:\.[0-9]+)+(?:[-.][0-9A-Za-z]+)?)/iu);
+  if (labeled?.[1]) return labeled[1];
+  const generic = text.match(/\bv?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[-.][0-9A-Za-z]+)?)\b/u);
+  if (generic?.[1]) return generic[1];
+  const line = text.split("\n").map(value => value.trim()).find(value => value !== "");
+  return line === undefined ? null : line.slice(0, 200);
+}
+
+export interface KernelProfileProbe {
+  status: "available" | "unavailable";
+  reason: KernelProfileProbeReason | null;
+  collection: "Default" | "PipeTimeline,Default";
+  msprofVersion: string | null;
+  msprofPath: string | null;
+  durationSeconds: number;
+  error: string;
+}
+
+function probeEnvironment(options: KernelExecOptions, execution?: KernelProfileExecution): Record<string, string> {
+  try { return kernelProcessEnvironment(execution?.atomDirectory ?? resolveAtomDir("probe", options), options); }
+  catch { return kernelProcessEnvironment("", options); }
+}
+
+/**
+ * Capability probe for the profiling pipeline. Success proves the profiler binary is
+ * executable and reports its version; every failure is returned as evidence so a
+ * preflight can downgrade rather than abort the experiment.
+ */
+export async function probeKernelProfile(args: { collection?: "Default" | "PipeTimeline,Default";
+  msprofBin?: string; attemptTimeoutSeconds?: number }, options: KernelExecOptions = {},
+  execution?: KernelProfileExecution): Promise<KernelProfileProbe> {
+  const collection = args.collection ?? "PipeTimeline,Default";
+  if (collection !== "Default" && collection !== "PipeTimeline,Default")
+    throw new TypeError("profiling.collection must be Default or PipeTimeline,Default");
+  const timeoutSeconds = args.attemptTimeoutSeconds ?? 30;
+  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds <= 0) throw new TypeError("probe timeout must be a positive integer");
+  if (timeoutSeconds * 1000 > MAX_KERNEL_TIMER_MS) throw new TypeError("probe timeout exceeds the Node timer range");
+  const started = Date.now();
+  const unavailable = (reason: KernelProfileProbeReason, error: string, msprofPath: string | null): KernelProfileProbe =>
+    ({ status: "unavailable", reason, collection, msprofVersion: null, msprofPath, durationSeconds: (Date.now() - started) / 1000, error });
+  let msprofBin: string;
+  try { msprofBin = resolveMsprofBin(args.msprofBin); }
+  catch (error) { return unavailable("msprof-missing", error instanceof Error ? error.message : String(error), args.msprofBin ?? null); }
+  const active = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(timeoutSeconds * 1000)]);
+  try {
+    const result = await runProfileProcess({ executable: msprofBin, args: ["--version"],
+      cwd: execution?.session.workdir ?? process.cwd(), env: probeEnvironment(options, execution),
+      inheritEnv: false, input: null, outputBufferBytes: 1024 * 1024 }, active, { ...options, signal: active }, undefined, execution);
+    const version = parseMsprofVersion(`${result.stdout}\n${result.stderr}`);
+    if (version === null)
+      return unavailable("msprof-error", "msprof --version produced no version information", msprofBin);
+    return { status: "available", reason: null, collection, msprofVersion: version,
+      msprofPath: msprofBin, durationSeconds: (Date.now() - started) / 1000, error: "" };
+  } catch (error) {
+    // External cancellation aborts the run; only the probe's own timeout becomes evidence.
+    if (options.signal?.aborted && options.signal.reason?.name !== "TimeoutError") throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    const timedOut = (error as { killed?: boolean }).killed === true || active.reason?.name === "TimeoutError";
+    return unavailable(classifyProfileFailure(message, timedOut), message.slice(-4000), msprofBin);
+  }
 }
 
 async function listArtifacts(root: string, directory: string): Promise<string[]> {
@@ -455,8 +532,9 @@ export async function kernelProfile(args: KernelProfileArgs, options: KernelExec
   } catch (error) {
     if (error instanceof KernelExecError) throw error;
     options.signal?.throwIfAborted();
-    result["error"] = `${error instanceof Error ? error.name : "Error"}: ${
-      error instanceof Error ? error.message : String(error)}`;
+    const message = error instanceof Error ? error.message : String(error);
+    metadata["failureReason"] = classifyProfileFailure(message, (error as { killed?: boolean }).killed === true);
+    result["error"] = `${error instanceof Error ? error.name : "Error"}: ${message}`;
     log(`profiling failed: ${result["error"]}`);
   }
   metadata["durationSeconds"] = (Date.now() - started) / 1000;

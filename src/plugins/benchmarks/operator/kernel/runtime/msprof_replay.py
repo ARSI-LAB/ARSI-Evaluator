@@ -111,12 +111,31 @@ def replay(request):
             "environment": observe_environment(torch, torch_npu, observed_device)}
 
 
+def failure_reason(error):
+    """Name the replay failure class so capture diagnostics do not depend on traceback text."""
+    message = f"{type(error).__name__}: {error}".lower()
+    if "mstx" in message:
+        return "mstx-unavailable"
+    if "permission" in message:
+        return "permission-denied"
+    if "npu is required" in message or "npu" in message:
+        return "npu-unavailable"
+    return "replay-error"
+
+
 def main():
     parser = argparse.ArgumentParser(prog="msprof_replay")
     parser.add_argument("--request", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    result = replay(json.loads(Path(args.request).read_text(encoding="utf-8")))
+    try:
+        result = replay(json.loads(Path(args.request).read_text(encoding="utf-8")))
+    except Exception as error:
+        # Keep the structured failure beside the traceback for the capture orchestrator.
+        Path(args.output).write_text(
+            json.dumps({"error": f"{type(error).__name__}: {error}", "reason": failure_reason(error)},
+                       allow_nan=False), encoding="utf-8")
+        raise
     Path(args.output).write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
     return 0
 

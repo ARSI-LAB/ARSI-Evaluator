@@ -1,0 +1,27 @@
+{
+  "timingScope": "all-device-kernels",
+  "timing": {
+    "device": {
+      "count": 5,
+      "samples": [0.0044, 0.0044, 0.0052, 0.0044, 0.0048],
+      "meanMs": 0.00464,
+      "p50Ms": 0.0044,
+      "p95Ms": 0.0052
+    },
+    "host": {
+      "count": 5,
+      "samples": [0.112, 0.1138, 0.135, 0.111, 0.114],
+      "meanMs": 0.11716,
+      "p50Ms": 0.1138,
+      "p95Ms": 0.135
+    },
+    "endToEnd": {
+      "count": 5,
+      "samples": [0.112, 0.1353, 0.116, 0.1125, 0.1182],
+      "meanMs": 0.1188,
+      "p50Ms": 0.116,
+      "p95Ms": 0.1353
+    },
+    "launchCount": 122
+  }
+}

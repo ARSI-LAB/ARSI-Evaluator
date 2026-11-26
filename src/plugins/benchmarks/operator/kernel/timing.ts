@@ -71,6 +71,38 @@ export function parseKernelTimingEvidence(value: unknown, contract?: Pick<Kernel
   return {schemaVersion:2,method:"profiler-flow/v1",reference,candidate};
 }
 
+export type KernelScopeStats = { count: number; samples: number[]; meanMs: number; p50Ms?: number; p95Ms?: number };
+export type KernelScopeTiming = { device: KernelScopeStats; host?: KernelScopeStats; endToEnd?: KernelScopeStats; launchCount: number };
+
+function positive(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new TypeError(`Invalid timing ${name}`);
+  return value;
+}
+
+/** Validate the worker's device/host/end-to-end timing payload; device timing is mandatory. */
+export function parseKernelScopeTiming(value: unknown): KernelScopeTiming {
+  const r = expectRecord(value, "kernel scope timing");
+  if (Object.keys(r).some(key => !["device", "host", "endToEnd", "launchCount"].includes(key)))
+    throw new TypeError("Unknown kernel scope timing field");
+  const launchCount = count(r.launchCount, "launchCount");
+  const stats = (name: string): KernelScopeStats => {
+    const scope = expectRecord(r[name], name);
+    if (Object.keys(scope).some(key => !["count", "samples", "meanMs", "p50Ms", "p95Ms"].includes(key)))
+      throw new TypeError(`Unknown ${name} timing field`);
+    const sampleCount = count(scope.count, `${name}.count`);
+    if (!Array.isArray(scope.samples) || !scope.samples.length || scope.samples.length !== sampleCount)
+      throw new TypeError(`Invalid ${name}.samples`);
+    const samples = scope.samples.map(item => positive(item, `${name}.samples`));
+    const parsed: KernelScopeStats = { count: sampleCount, samples, meanMs: positive(scope.meanMs, `${name}.meanMs`) };
+    if (scope.p50Ms !== undefined) parsed.p50Ms = positive(scope.p50Ms, `${name}.p50Ms`);
+    if (scope.p95Ms !== undefined) parsed.p95Ms = positive(scope.p95Ms, `${name}.p95Ms`);
+    return parsed;
+  };
+  if (r.device === undefined) throw new TypeError("Missing device timing scope");
+  return { device: stats("device"), ...(r.host === undefined ? {} : { host: stats("host") }),
+    ...(r.endToEnd === undefined ? {} : { endToEnd: stats("endToEnd") }), launchCount };
+}
+
 // Only used at the raw profiler-file boundary. Handles quoted CSV fields and CRLF.
 function csvRecords(text: string): string[][] {
   const records: string[][] = []; let row: string[] = [], field = "", quoted = false, closed = false;
