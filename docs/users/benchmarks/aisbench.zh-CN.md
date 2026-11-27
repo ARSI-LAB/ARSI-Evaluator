@@ -18,6 +18,20 @@ SSH solver 检查成功请求数、零失败、实际输入输出 token 总量�
 
 ## 用 YAML 运行原生压测
 
+### 在压测机上准备 MMMU 图片
+
+同时跑单图 1080p 和五图 720p 时，只需从 MMMU 官方数据集下载两个测试分片，合计约 193 MB。Sociology 分片含 1920×1080 原图，Literature 分片含 1280×720 原图。在运行 AISBench 的 Linux 压测机上，用 Hugging Face CLI 执行以下命令。[MMMU 官方数据集](https://huggingface.co/datasets/MMMU/MMMU) · [Hugging Face CLI 安装说明](https://huggingface.co/docs/huggingface_hub/guides/cli)
+
+```bash
+hf download MMMU/MMMU \
+  Sociology/test-00000-of-00001.parquet \
+  Literature/test-00000-of-00001.parquet \
+  --repo-type dataset \
+  --local-dir /data/MMMU
+```
+
+在 YAML 中填写 `multimodalGeneration.mmmuParquetDir: /data/MMMU`。AISBench 会递归读取该目录下的 Parquet 文件。如果下载到其他位置，将这个字段改为压测机上的实际绝对路径。
+
 ### 按图片规格生成数据
 
 在压测机运行 AISBench 的 Python 环境中，从匹配版本的 AISBench 源码根目录执行 `python -m pip install -e ./plugins/prefix_cache`。已验证 AISBench 3.1.0 与官方插件 0.5.0。若宿主 wheel 缺少 `ais_bench.benchmark.datasets.utils`，在同一源码根目录执行 `python -m pip install -e .` 以使用完整源码。准备含目标尺寸原图的 MMMU Parquet 目录和模型 tokenizer。复制[完整制数与压测 YAML](../../../plugins/aisbench/playbook/03-generated-multimodal.yaml)，填写模型服务、SSH 和远端路径。生成模式的核心字段如下。

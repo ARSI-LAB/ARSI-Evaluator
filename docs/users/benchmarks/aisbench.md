@@ -18,6 +18,20 @@ The existing `aisbench-performance` metrics result includes each point’s `work
 
 ## Configure native performance runs in YAML
 
+### Download the MMMU images on the benchmark host
+
+Two test shards from the official MMMU dataset cover both image presets and total about 193 MB. The Sociology shard contains a native 1920×1080 image, and the Literature shard contains a native 1280×720 image. Run the following command with the Hugging Face CLI on the Linux host that runs AISBench. [Official MMMU dataset](https://huggingface.co/datasets/MMMU/MMMU) · [Hugging Face CLI installation](https://huggingface.co/docs/huggingface_hub/guides/cli)
+
+```bash
+hf download MMMU/MMMU \
+  Sociology/test-00000-of-00001.parquet \
+  Literature/test-00000-of-00001.parquet \
+  --repo-type dataset \
+  --local-dir /data/MMMU
+```
+
+Set `multimodalGeneration.mmmuParquetDir` to `/data/MMMU` in the YAML. AISBench searches its subdirectories for Parquet files. If you download the shards elsewhere, use that directory's absolute path on the benchmark host.
+
 ### Generate multimodal requests
 
 Install the matching upstream generator in the load generator's AISBench Python environment with `python -m pip install -e ./plugins/prefix_cache` from the AISBench source tree. AISBench 3.1.0 and plugin 0.5.0 have been verified together. If the host wheel omits `ais_bench.benchmark.datasets.utils`, run `python -m pip install -e .` from the same source tree. Prepare the MMMU Parquet files and the model tokenizer there. The [generated multimodal playbook](../../../plugins/aisbench/playbook/03-generated-multimodal.yaml) uses `multimodalGeneration` in place of `datasets`. Set `imageScenario` to `single_1080p` for one native 1920×1080 image or `multi_720p_5` for five copies of a native 1280×720 image. Set `mmmuParquetDir` to the remote directory containing the matching image.
