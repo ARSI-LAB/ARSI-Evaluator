@@ -7,6 +7,7 @@ import { AgentBundleSolver, parseAgentBundleConfig } from "./agentbundle.js";
 import { expectRecord, rejectUnknown } from "../../core/validation/input.js";
 import { bindSolverService, type PluginFactoryContext } from "../../core/contracts/plugin.js";
 import { AgentXReplaySolver, parseAgentXReplayConfig } from "./agentx-replay.js";
+import { registerTelemetryMsprof } from "./telemetry-msprof.js";
 import { KernelReplaySolver } from "./kernel-replay.js";
 import { CodexSolver, parseCodexConfig } from "./codex.js";
 import { ClaudeCodeSolver, parseClaudeCodeConfig } from "./claudecode.js";
@@ -22,6 +23,7 @@ function solverArgs<T extends AgentLimits>(runtime: PluginFactoryContext, config
 }
 
 export function apply(ctx: Context): void {
+  registerTelemetryMsprof(ctx);
   for (const name of ["qwencode", "kimicode", "minimaxcode", "opencode"] as const) {
     ctx.evaluator.register("solver", name, value => parseNativeCodeConfig(name, value),
       (config, runtime) => new NativeCodeSolver(name, ...solverArgs(runtime, config)));
@@ -56,7 +58,7 @@ export function apply(ctx: Context): void {
         environmentName: runtime.environmentName ?? "local",
         ...pickSolverToolPolicy(config),
         ...(config.dshhome === undefined ? {} : { dshhome: runtime.resolvePath(config.dshhome) }),
-        ...(config.dshprofile === undefined ? {} : { dshprofile: config.dshprofile }),
+        ...(config.dshprofile === undefined ? {} : { dshprofile: runtime.resolvePath(config.dshprofile) }),
         ...(config.hermeshome === undefined ? {} : { hermeshome: runtime.resolvePath(config.hermeshome) }),
         ...(config.jiuwenswarmTimeoutSeconds === undefined ? {} : { jiuwenswarmTimeoutSeconds: config.jiuwenswarmTimeoutSeconds }),
         ...(config.pi === undefined ? {} : { pi: config.pi }),

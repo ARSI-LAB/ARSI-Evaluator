@@ -119,5 +119,8 @@ test("msprof summary validates requestedDevices when present", () => {
     expect(() => parseMsprofSummary({ ...valid, requestedDevices: bad })).toThrow();
   for (const badMapping of [{}, { "0": [] }, { "0": ["1"] }, { "-1": [0] }, { "0": [0, 0] }])
     expect(() => parseMsprofSummary({ ...valid, deviceMapping: badMapping })).toThrow();
-  expect(() => parseMsprofSummary({ ...valid, resolvedDevices: [0, 2], deviceMapping: { "0": [0], "1": [1] } })).toThrow();
+  // Full host mapping is valid when only a subset of devices was requested.
+  expect(() => parseMsprofSummary({ ...valid, resolvedDevices: [0], deviceMapping: { "0": [0], "1": [1] } })).not.toThrow();
+  // Mapping must match resolved devices when requestedDevices is "all".
+  expect(() => parseMsprofSummary({ ...valid, requestedDevices: ["all"], resolvedDevices: [0, 2], deviceMapping: { "0": [0], "1": [1] } })).toThrow();
 });

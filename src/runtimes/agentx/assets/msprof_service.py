@@ -22,6 +22,7 @@ from pathlib import Path
 import signal
 import sqlite3
 import subprocess
+import shutil
 import sys
 from datetime import datetime, timezone
 import time
@@ -286,7 +287,21 @@ def resolve_device_binding(devices, run=None):
     return requested, resolved, mapping
 
 
+def ensure_no_existing_collector():
+    """Guard against overlapping sys-period sampling before binding devices."""
+    pgrep = shutil.which("pgrep")
+    if not pgrep:
+        return
+    result = subprocess.run([pgrep, "-f", "[m]sprof --sys-period"],
+                           capture_output=True, text=True, timeout=10)
+    if result.returncode == 0:
+        raise MsprofError("msprof_already_running", result.stdout[-200:])
+    if result.returncode != 1:
+        raise MsprofError("preflight_failed", result.stderr[-200:] or f"pgrep exit {result.returncode}")
+
+
 def main(argv=None):
+    ensure_no_existing_collector()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="JSON config string")
     parser.add_argument("--artifacts", required=True, help="output directory")

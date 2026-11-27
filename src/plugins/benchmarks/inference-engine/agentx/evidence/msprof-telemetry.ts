@@ -133,12 +133,13 @@ export function parseMsprofSummary(value: unknown): MsprofSummary {
       Object.values(mapping).some(chips => !Array.isArray(chips) || !chips.length ||
         chips.some(entry => typeof entry !== "number" || !Number.isSafeInteger(entry) || entry < 0)) ||
       new Set(mappedChips).size !== mappedChips.length;
+    const requestedAll = Array.isArray(raw.requestedDevices) && raw.requestedDevices[0] === "all";
     const resolved = raw.resolvedDevices;
-    const mappingMatchesResolved = !Array.isArray(resolved) ||
-      (mappedChips.length === resolved.length &&
-       [...mappedChips].sort((left, right) => left - right)
-         .every((entry, index) => entry === resolved[index]));
-    if (invalidMapping || !mappingMatchesResolved)
+    const mappingMismatchesResolved = requestedAll && Array.isArray(resolved) &&
+      (mappedChips.length !== resolved.length ||
+        ![...mappedChips].sort((left, right) => left - right)
+          .every((entry, index) => entry === resolved[index]));
+    if (invalidMapping || mappingMismatchesResolved)
       throw new TypeError("Invalid msprof deviceMapping");
   }
   const aggregate = expectRecord(raw.aggregate, "msprof summary aggregate");

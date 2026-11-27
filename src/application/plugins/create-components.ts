@@ -8,6 +8,8 @@ import type { Metrics } from "../../core/contracts/metrics.js";
 import type { RunComponents } from "../../core/contracts/components.js";
 import type { PluginRegistry } from "./open-registry.js";
 import type { PluginFactoryContext } from "../../core/contracts/plugin.js";
+import type { Selection } from "../../core/contracts/config.js";
+import type { Solver } from "../../core/contracts/solver.js";
 import type { PluginActivation } from "../../core/contracts/plugin-extension.js";
 import { fingerprintImageConfig } from "../../core/policies/image-config.js";
 import type { ConfigTransportLookup } from "../../core/contracts/config-transport.js";
@@ -95,13 +97,22 @@ export async function createRunComponents(
   const createStore = ctx.evaluator.prepare("store", config.experiment.store);
   const createScheduler = ctx.evaluator.prepare("scheduler", config.experiment.scheduler);
 
-  const runtime = { ...createPluginRuntime(config, experimentDir, patch.patchPath ?? undefined, onWarning, (role, name) => ctx.evaluator.configTransport(role, name)),
+  const runtime = {
+    ...createPluginRuntime(config, experimentDir, patch.patchPath ?? undefined, onWarning, (role, name) => ctx.evaluator.configTransport(role, name)),
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(imageConfigFingerprint ? { imageConfigFingerprint } : {}) };
+    ...(imageConfigFingerprint ? { imageConfigFingerprint } : {}),
+  };
+  (runtime as PluginFactoryContext).prepareSolver = async (selection: Selection): Promise<Solver> => {
+    const createInner = ctx.evaluator.prepare("solver", selection);
+    const innerRuntime = { ...runtime } as PluginFactoryContext;
+    delete (innerRuntime as { prepareSolver?: unknown }).prepareSolver;
+    return await createInner(innerRuntime);
+  };
+  const solverRuntime = runtime as PluginFactoryContext;
   registry.ctx.effect(() => () => runtime.network.dispose(), "Network client lifecycle");
-  const benchmark = await instantiateBenchmark(registry, config, runtime);
-  const environment = await createEnvironment(runtime);
-  const solver = await createSolver(runtime);
+  const benchmark = await instantiateBenchmark(registry, config, solverRuntime);
+  const environment = await createEnvironment(solverRuntime);
+  const solver = await createSolver(solverRuntime);
   const reportingRuntime = { configDirectory: runtime.configDirectory, resolvePath: runtime.resolvePath };
   const metrics: Metrics[] = [];
   for (const createMetric of createMetrics) metrics.push(await createMetric(reportingRuntime));

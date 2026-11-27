@@ -69,7 +69,10 @@ export class AgentXBenchmark implements Benchmark {
   }
 
   validateRun(config: EffectiveConfig): void {
-    if (config.solver.name !== "agentx-replay" || config.verifier !== undefined)
+    const innerName = (config.solver.config as Record<string, unknown> | undefined)?.inner;
+    const isWrappedAgentx = typeof innerName === "object" && innerName !== null &&
+      (innerName as Record<string, unknown>).name === "agentx-replay";
+    if (config.solver.name !== "agentx-replay" && !isWrappedAgentx || config.verifier !== undefined)
       throw new TypeError("AgentX requires agentx-replay and has no correctness verifier");
     if (!["local", "docker"].includes(config.environment.name) || config.scheduler.name !== "local" ||
       config.scheduler.config.concurrency !== 1) throw new TypeError("AgentX supports local/Docker with local scheduler concurrency=1");

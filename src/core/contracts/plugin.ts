@@ -57,6 +57,8 @@ export type PluginFactoryContext = {
   configDirectory: string;
   /** Local patch used to submit this run, when one was explicitly selected. */
   pluginPatchPath?: string;
+  /** Lets a decorator solver instantiate a nested solver from validated config. */
+  prepareSolver?: (selection: Selection) => Promise<Solver>;
   resolvePath(path: string): string;
 };
 

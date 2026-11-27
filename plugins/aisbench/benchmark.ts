@@ -16,7 +16,10 @@ export class AisbenchBenchmark implements Benchmark {
   constructor(readonly config: AisbenchConfig) {}
 
   validateRun(config: EffectiveConfig): void {
-    if (config.solver.name !== "aisbench-ssh" || config.verifier !== undefined)
+    const inner = (config.solver.config as Record<string, unknown> | undefined)?.inner;
+    const isWrappedAisbench = typeof inner === "object" && inner !== null &&
+      (inner as Record<string, unknown>).name === "aisbench-ssh";
+    if (config.solver.name !== "aisbench-ssh" && !isWrappedAisbench || config.verifier !== undefined)
       throw new TypeError("AISBench requires aisbench-ssh and has no correctness verifier");
     if (config.environment.name !== "local" || config.scheduler.name !== "local" || config.scheduler.config.concurrency !== 1)
       throw new TypeError("AISBench requires local environment and local scheduler concurrency=1");
