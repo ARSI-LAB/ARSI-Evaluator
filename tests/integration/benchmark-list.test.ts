@@ -7,6 +7,7 @@ test("benchmark list displays versions, defaults and scenarios as a table", asyn
   expect(errors).toEqual([]);
   expect(out.join("\n")).toContain("Benchmark");
   expect(out.join("\n")).toMatch(/terminalbench\s+2\.0, 4\.0 \(4\.0\.0\)\s+2\.0/);
+  expect(out.join("\n")).toMatch(/terminalbench-science\s+0\.1 \(0\.1\.0\)\s+0\.1/);
   expect(out.join("\n")).toMatch(/workbuddy.*code/);
 });
 
@@ -22,6 +23,15 @@ test("benchmark list JSON retains version aliases and matches info", async () =>
   const info = JSON.parse(out.at(-1) ?? "");
   expect(info.versions).toEqual(terminalbench.versions);
   expect(info.versionDetails["4.0"].benchmark.config.dataset).toBe("terminal-bench@4.0.0");
+  expect(rows.find((row: { name: string }) => row.name === "terminalbench-science")).toMatchObject({
+    versions: ["0.1", "0.1.0"], defaultVersion: "0.1", versionGroups: [{ version: "0.1", aliases: ["0.1.0"] }],
+  });
+  expect(await runCli(["benchmark", "info", "terminalbench-science"], io)).toBe(0);
+  expect(JSON.parse(out.at(-1) ?? "").versionDetails["0.1"].benchmark.config).toMatchObject({
+    dataset: "terminal-bench-science/terminal-bench-science@v0.1",
+    source: { kind: "github", repository: "harbor-framework/terminal-bench-science", revision: "f81afac4f11048e77a15dfc8fb1dbfb897fea0ce", path: "tasks" },
+    tasks: { root: ".", id: "task.name", depth: 3, expectedCount: 70 },
+  });
   expect(errors).toEqual([]);
 });
 

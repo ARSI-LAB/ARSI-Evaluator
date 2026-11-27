@@ -70,6 +70,34 @@ test.each([
   } finally { await registry.dispose(); }
 });
 
+test("nested Harbor layouts are scanned to tasks.depth and keep declared task IDs", async () => {
+  const directory = await root();
+  for (const [domain, field, slug] of [["life-sciences", "biology", "alpha"], ["life-sciences", "genomics", "beta"], ["earth-sciences", "atmospheric-sciences", "gamma"]])
+    await put(directory, `repo/tasks/${domain}/${field}/${slug}/task.toml`, `schema_version = "1.0"\n[task]\nname = "terminal-bench-science/${slug}"\n`);
+  const writeConfig = async (name: string, taskOptions: object) => {
+    const file = join(directory, name);
+    await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://model.invalid/v1", api_key: "${TEST_KEY}" } },
+      benchmark: { name: "terminalbench-science", config: { source: { kind: "local", path: "./repo/tasks" }, tasks: taskOptions } } }));
+    return loadConfig(file, {}, { TEST_KEY: "fixture" });
+  };
+  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected download"));
+  const registry = await openPluginRegistry();
+  try {
+    const config = await writeConfig("nested.yaml", { expectedCount: 3 });
+    expect(config.experiment.benchmark.config.tasks).toMatchObject({ root: ".", id: "task.name", depth: 3, expectedCount: 3 });
+    const benchmark = await createBenchmark(registry, config, directory);
+    const lock = await benchmark.resolveSource(null, signal());
+    expect(await collect(benchmark.enumerate(lock, signal()))).toEqual([
+      { id: "terminal-bench-science/gamma", recordKey: "earth-sciences/atmospheric-sciences/gamma" },
+      { id: "terminal-bench-science/alpha", recordKey: "life-sciences/biology/alpha" },
+      { id: "terminal-bench-science/beta", recordKey: "life-sciences/genomics/beta" },
+    ]);
+    expect(fetch).not.toHaveBeenCalled();
+    const shallow = await createBenchmark(registry, await writeConfig("shallow.yaml", { depth: 1, expectedCount: 1 }), directory);
+    await expect(shallow.resolveSource(null, signal())).rejects.toThrow("Expected 1 tasks, found 0");
+  } finally { fetch.mockRestore(); await registry.dispose(); }
+});
+
 test.each([
   { format: "jsonl" as const, path: "test.jsonl", content: '{"question":"hello","answer":"42"}\n' },
   { format: "csv" as const, path: "test.csv", content: 'question,answer\nhello,42\n' },

@@ -1,0 +1,31 @@
+id: terminalbench-science
+role: benchmark
+extends: harbor
+defaultVersion: "0.1"
+versions:
+  "0.1": &terminalbenchScience01
+    plugin:
+      name: harbor
+      config:
+        dataset: terminal-bench-science/terminal-bench-science@v0.1
+        source:
+          # Official v0.1.0 task package for source commit f81afac4f11048e77a15dfc8fb1dbfb897fea0ce.
+          # Tasks are nested as tasks/<domain>/<field>/<task>/.
+          kind: github
+          repository: harbor-framework/terminal-bench-science
+          revision: f81afac4f11048e77a15dfc8fb1dbfb897fea0ce
+          path: tasks
+        tasks:
+          root: .
+          id: task.name
+          depth: 3
+          expectedCount: 70
+    defaults:
+      benchmark:
+        verifier: harbor-shell
+      run:
+        timeoutSeconds: 86400
+  "0.1.0": *terminalbenchScience01
+defaults:
+  run:
+    timeoutSeconds: 900

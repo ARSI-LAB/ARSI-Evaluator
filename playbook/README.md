@@ -15,6 +15,7 @@
 | DeepSWE | [deepswe](deepswe) | [最简配置](deepswe/deepswe.yaml)、[单机 SimpleAgent](deepswe/deepswe-simpleagent.yaml)、[Ray + AgentBundle](deepswe/deepswe-agentbundle-ray.yaml) |
 | WorkBuddy | [workbuddy](workbuddy) | [Office 最简配置](workbuddy/workbuddy-office.yaml)、[Code](workbuddy/workbuddy-code.yaml)、[Web](workbuddy/workbuddy-web.yaml)、[Security](workbuddy/workbuddy-security.yaml) |
 | Terminal-Bench | [terminalbench](terminalbench) | [4.0 全量](terminalbench/terminalbench-4.0.yaml)、[2.0 SimpleAgent](terminalbench/terminalbench-simpleagent.yaml)、[AgentBundle](terminalbench/terminalbench-agentbundle.yaml) |
+| Terminal-Bench Science | [terminalbench-science](terminalbench-science) | [0.1 SimpleAgent 全量](terminalbench-science/terminalbench-science-simpleagent.yaml)；官方 v0.1.0 共 70 题 |
 | SWE-bench Verified | [swebench](swebench) | [AgentBundle](swebench/swebench-agentbundle.yaml) |
 | GSM8K | [gsm8k](gsm8k) | [两题快速入门](gsm8k/gsm8k-quick-start.yaml)、[SimpleAgent 全量](gsm8k/gsm8k-simpleagent.yaml)、[deepagents + Docker](gsm8k/gsm8k-deepagents-docker.yaml) |
 | HumanEval | [humaneval](humaneval) | [SimpleAgent](humaneval/humaneval-simpleagent.yaml) |

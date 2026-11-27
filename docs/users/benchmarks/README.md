@@ -14,6 +14,7 @@ Choose a task guide, then an executable YAML. Profiles and source locks determin
 | Full-document retrieval and fiscal QA | [OfficeQA Pro V2](officeqa-pro-v2.md) | [Two questions with parsed JSON](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleagent.yaml), [original PDF](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-original-pdf.yaml), [parsed JSON + Ray](../../../playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-ray.yaml); excludes image-only protocol |
 | Software engineering code edits | [DeepSWE](deepswe.md) | [Single-machine configuration](../../../playbook/deepswe/deepswe-simpleagent.yaml) |
 | Terminal operations | [Terminal-Bench](terminalbench.md) | [4.0 quick start](../quick-start/terminalbench.md) |
+| Scientific research tasks | [Terminal-Bench Science](terminalbench-science.md) | [SimpleAgent configuration](../../../playbook/terminalbench-science/terminalbench-science-simpleagent.yaml) |
 | SWE-bench Verified | [Harbor execution rules](harbor.md) | [AgentBundle configuration](../../../playbook/swebench/swebench-agentbundle.yaml) |
 | Model service throughput and latency | [AgentX](agentx.md) | [Performance quick start](../quick-start/agentx.md) |
 | Remote SSH load testing and prefix cache | [AISBench plugin](../../../plugins/aisbench/README.md) | [SSH configuration](../../../plugins/aisbench/playbook/01-ssh.yaml) |
