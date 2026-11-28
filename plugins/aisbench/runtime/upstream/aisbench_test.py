@@ -22,6 +22,7 @@ def parse_arguments():
     parser.add_argument("--request_rate", type=str, default="0", help="request rate")
     parser.add_argument("--test_type", type=str, default="stream", help="text or stream")
     parser.add_argument("--dataset", type=str, default="none", help="dataset path")
+    parser.add_argument("--warmups", type=int, default=0, help="AISBench warmup request count")
     parser.add_argument("--repeat", type=int, default=1, help="number of test repeat times")
     parser.add_argument("--enable_think", action='store_true', default=False, help="enable thinking for ds v3.1")
     parser.add_argument("--test_accuracy", action='store_true', default=False, help="test accuracy")
@@ -87,8 +88,8 @@ def create_gsm8k_dataset(dataset_type, input_len, data_num, model_path, dataset_
             logging.info(f"Dataset {dataset_name} exist.")
     return prefix_jsonl_path, dataset_jsonl_path
 
-def generate_aisbench_command(DEFAULT_PERFORMANCE_TEST):
-    return ["ais_bench", "--models", "vllm_api_chat_temp", "--datasets", "gsm8k_gen_0_shot_cot_str_perf", "--mode", "perf", "--summarizer", DEFAULT_PERFORMANCE_TEST, "--work-dir", OUTPUT_DIR, "--debug", "--num-warmups", "0"]
+def generate_aisbench_command(DEFAULT_PERFORMANCE_TEST, warmups=0):
+    return ["ais_bench", "--models", "vllm_api_chat_temp", "--datasets", "gsm8k_gen_0_shot_cot_str_perf", "--mode", "perf", "--summarizer", DEFAULT_PERFORMANCE_TEST, "--work-dir", OUTPUT_DIR, "--debug", "--num-warmups", str(warmups)]
 
 
 def run_aisbench(command):
@@ -300,6 +301,7 @@ if __name__ == '__main__':
     request_rate = args.request_rate
     test_type = args.test_type
     dataset_path_input = args.dataset
+    warmups = args.warmups
     test_times = args.repeat
     enable_think = args.enable_think
     test_accuracy = args.test_accuracy
@@ -401,7 +403,7 @@ if __name__ == '__main__':
         logging.info("train dataset created.")    
     
     # 生成 aisbench 命令
-    ais_bench_cmd = generate_aisbench_command(DEFAULT_PERFORMANCE_TEST)
+    ais_bench_cmd = generate_aisbench_command(DEFAULT_PERFORMANCE_TEST, warmups)
     logging.info(f"test start, use command: {ais_bench_cmd}")
     
     # 执行命令    

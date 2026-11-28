@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, appendFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { bindSolverService, fingerprintConfig, redactDiagnostic } from "arsi-evaluator";
+import { bindSolverService, fingerprintConfig, redactDiagnostic, TrajectoryWriter } from "arsi-evaluator";
 import type { Solver, AttemptContext, EnvironmentSession, PublicTask, SolveResult, PluginFactoryContext } from "arsi-evaluator";
 import { expectNonEmptyString, expectRecord } from "./validation.js";
 import { AisbenchRemoteClient, aisbenchBaseUrl } from "./ssh/client.js";
@@ -33,6 +33,10 @@ export class AisbenchSshSolver implements Solver {
     await mkdir(root, { recursive: true });
     await mkdir(context.paths.agent, { recursive: true });
     await writeFile(join(context.paths.agent, "remote-job.json"), JSON.stringify({ jobDir, fingerprint, bundleDigest: digest }) + "\n");
+    const trajectory = new TrajectoryWriter(join(context.paths.agent, "trajectory.jsonl"), context.key);
+    const session = join(context.paths.agent, "session.jsonl");
+    await writeFile(session, JSON.stringify({ schemaVersion: 1, kind: "aisbench-ssh", state: "started", workload }) + "\n", { mode: 0o600 });
+    await trajectory.append("start", { solver: "aisbench-ssh" });
     let started = false, terminal = false, collected = false;
     const log = async (text: string) => {
       const safe = redactDiagnostic(text, [auth.value]);
@@ -61,8 +65,14 @@ export class AisbenchSshSolver implements Solver {
       const rows = parseCsv(await readFile(join(root, "aisbench_result.csv"), "utf8"));
       const observations = parseAisbenchSummary({ schemaVersion: 1, kind: "aisbench", workload, bundleDigest: digest, aisbenchVersion: this.config.remote.aisbenchVersion, rows });
       await writeFile(join(context.paths.agent, "aisbench-summary.json"), JSON.stringify(observations, null, 2) + "\n");
-      return { finalText: `AISBench completed ${workload.dataCount} requests at concurrency ${workload.concurrency}`, usage: { inputTokens: null, outputTokens: null, totalTokens: null }, observations };
+      const finalText = `AISBench completed ${workload.dataCount} requests at concurrency ${workload.concurrency}`;
+      await appendFile(session, JSON.stringify({ schemaVersion: 1, kind: "aisbench-ssh", state: "completed", rowCount: rows.length }) + "\n");
+      await trajectory.append("end", { status: "completed", finalText }, true);
+      return { finalText, usage: { inputTokens: null, outputTokens: null, totalTokens: null }, observations };
     } catch (error) {
+      const message = redactDiagnostic(error instanceof Error ? error.message : String(error), [auth.value]);
+      await appendFile(session, JSON.stringify({ schemaVersion: 1, kind: "aisbench-ssh", state: "failed", error: message }) + "\n").catch(() => {});
+      await trajectory.append("error", { message }, true).catch(() => {});
       if (started && !terminal) {
         try {
           await client.call("cancel", jobDir, fingerprint, {}, AbortSignal.timeout(30000));
@@ -78,6 +88,8 @@ export class AisbenchSshSolver implements Solver {
         catch { await log("\nRemote artifact collection incomplete; remote job retained for recovery.\n"); }
       }
       throw error;
+    } finally {
+      await trajectory.close();
     }
   }
 }
