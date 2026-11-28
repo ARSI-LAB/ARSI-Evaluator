@@ -1,8 +1,12 @@
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,11 +25,14 @@ class E1Tests(unittest.TestCase):
     def test_config_preserves_historical_protocol(self):
         config = e1.render_config(dict(endpoint='http://127.0.0.1:18080/v1', tokenizerPath='/models/fixed', model='served', apiKey="quote'\\", workload=WORKLOAD))
         compile(config, '<config>', 'exec')
-        for required in ('VLLMCustomAPI', 'SyntheticDataset', 'batch_size=330', 'RequestCount=1320', 'temperature=0.01', 'ignore_eos=True', 'MaxValue=4097'):
+        for required in ('VLLMCustomAPI', 'SyntheticDataset', 'batch_size=330', 'RequestCount=1320', 'temperature=0.01', 'ignore_eos=True', 'MaxValue=4097', 'host_port=18080'):
             self.assertIn(required, config)
         self.assertNotIn('Chat', config)
         other = e1.render_config(dict(endpoint='https://example.org', tokenizerPath='/model', model='served', workload={**WORKLOAD, 'concurrency': 7}))
         self.assertIn('batch_size=7', other)
+        self.assertIn('host_port=443', other)
+        plain = e1.render_config(dict(endpoint='http://example.org/v1', tokenizerPath='/model', model='served', workload=WORKLOAD))
+        self.assertIn('host_port=80', plain)
 
     def test_complete_summary_and_reject_partial_or_wrong_units(self):
         with tempfile.TemporaryDirectory() as root:
@@ -46,6 +53,53 @@ class E1Tests(unittest.TestCase):
             rows[1][2] = '0.012 s'
             with path.open('w') as output: csv.writer(output).writerows(rows)
             with self.assertRaisesRegex(ValueError, 'unit'): e1.parse_results(root, WORKLOAD)
+
+    def test_aisbench_exit_code_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with (Path(temp) / 'client.log').open('w') as log:
+                code = e1.run_aisbench([sys.executable, '-c', 'raise SystemExit(7)'], log)
+            self.assertEqual(code, 7)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX signal semantics are required')
+    def test_cancel_is_forwarded_to_aisbench_child(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ready, stopped, log = root / 'ready', root / 'stopped', root / 'client.log'
+            child = root / 'child.py'
+            child.write_text(
+                'import pathlib, signal, sys, time\n'
+                'signal.signal(signal.SIGTERM, lambda *_: (pathlib.Path(sys.argv[2]).write_text("stopped"), sys.exit(0)))\n'
+                'pathlib.Path(sys.argv[1]).write_text("ready")\n'
+                'while True: time.sleep(1)\n'
+            )
+            wrapper = (
+                'import importlib.util, signal, sys\n'
+                'signal.signal(signal.SIGTERM, signal.SIG_DFL)\n'
+                'spec = importlib.util.spec_from_file_location("synthetic", sys.argv[1])\n'
+                'module = importlib.util.module_from_spec(spec)\n'
+                'spec.loader.exec_module(module)\n'
+                'with open(sys.argv[5], "w") as output:\n'
+                '    raise SystemExit(module.run_aisbench([sys.executable, sys.argv[2], sys.argv[3], sys.argv[4]], output))\n'
+            )
+            process = subprocess.Popen(
+                [sys.executable, '-c', wrapper, str(ROOT / 'runtime/synthetic.py'),
+                 str(child), str(ready), str(stopped), str(log)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+            try:
+                for _ in range(100):
+                    if ready.exists():
+                        break
+                    time.sleep(.05)
+                else:
+                    self.fail('AISBench child did not start')
+                process.terminate()
+                process.wait(timeout=5)
+                self.assertTrue(stopped.exists(), process.stdout.read())
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
 
 
 

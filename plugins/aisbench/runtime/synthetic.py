@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -74,6 +75,7 @@ def render_config(config):
     endpoint = urlsplit(config["endpoint"])
     if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
         raise ValueError("Invalid inference endpoint")
+    port = endpoint.port or (443 if endpoint.scheme == "https" else 80)
     # Uses AISBench native VLLMCustomAPI/SyntheticDataset configuration;
     # Endpoint and credential are supplied by the instance owner.
     w = config["workload"]
@@ -86,7 +88,7 @@ from ais_bench.benchmark.summarizers import DefaultPerfSummarizer
 from ais_bench.benchmark.calculators import DefaultPerfMetricCalculator
 models = [dict(attr='service', type=VLLMCustomAPI, abbr='synthetic', path={config['tokenizerPath']!r},
     model={config['model']!r}, stream=True, request_rate={w['requestRate']}, use_timestamp=False, retry=2,
-    api_key={config.get('apiKey', '')!r}, host_ip={endpoint.hostname!r}, host_port={endpoint.port},
+    api_key={config.get('apiKey', '')!r}, host_ip={endpoint.hostname!r}, host_port={port},
     url={config['endpoint']!r}, max_out_len={w['outputLength']}, batch_size={w['concurrency']},
     trust_remote_code=False, generation_kwargs=dict(temperature=0.01, ignore_eos=True))]
 synthetic_config = dict(Type='string', RequestCount={w['dataCount']}, TrustRemoteCode=False,
@@ -112,6 +114,44 @@ def prepare_run(root, config):
     return run, [config["pythonExecutable"], "-u", str(Path(__file__).resolve()), str(run)], {**os.environ, "PATH": str(Path(config["pythonExecutable"]).parent) + os.pathsep + os.environ.get("PATH", ""), "PYTHONUNBUFFERED": "1", "PYTHONHASHSEED": "0"}
 
 
+def run_aisbench(args, log):
+    process_group = os.name == "posix"
+    child = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, start_new_session=process_group)
+
+    def signal_child(force=False):
+        if child.poll() is not None:
+            return
+        try:
+            if process_group:
+                os.killpg(child.pid, signal.SIGKILL if force else signal.SIGTERM)
+            elif force:
+                child.kill()
+            else:
+                child.terminate()
+        except ProcessLookupError:
+            pass
+
+    def stop(signum, _frame):
+        signal_child()
+        raise SystemExit(128 + signum)
+
+    previous = {}
+    for signum in [signal.SIGTERM, signal.SIGINT]:
+        previous[signum] = signal.signal(signum, stop)
+    try:
+        return child.wait()
+    finally:
+        if child.poll() is None:
+            signal_child()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                signal_child(force=True)
+                child.wait()
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def main(directory):
     config = json.loads((directory / "settings.json").read_text())
     cli = shutil.which("ais_bench")
@@ -121,9 +161,9 @@ def main(directory):
     configuration.write_text(render_config(config))
     os.chmod(configuration, 0o600)
     with (directory / "aisbench_client.log").open("w") as log:
-        result = subprocess.run([cli, "--mode", "perf", "--num-warmups", str(config["workload"]["warmups"]), "--work-dir", str(directory / "outputs"), str(configuration)], stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode:
-        raise RuntimeError(f"AISBench exited {result.returncode}; see aisbench_client.log")
+        code = run_aisbench([cli, "--mode", "perf", "--num-warmups", str(config["workload"]["warmups"]), "--work-dir", str(directory / "outputs"), str(configuration)], log)
+    if code:
+        raise RuntimeError(f"AISBench exited {code}; see aisbench_client.log")
     summary = parse_results(directory, config["workload"])
     metrics, aggregate = summary["metrics"], summary["aggregate"]
     row = {

@@ -5,6 +5,10 @@ import { parseWorkload } from "../../config.js";
 import { parseAisbenchSummary } from "../../evidence.js";
 import { AisbenchBenchmark } from "../../benchmark.js";
 
+const configuredPython = process.env.AISBENCH_TEST_PYTHON;
+const python = configuredPython ?? (process.platform === "win32" ? "python" : "python3");
+const pythonAvailable = spawnSync(python, ["-c", "import sys; raise SystemExit(sys.version_info < (3, 10))"]).status === 0;
+
 test("synthetic workload identifies its source and requires full measured token counts", async () => {
   const workload = parseWorkload({ dataset: "synthetic", inputLength: 4096, outputLength: 2048, dataCount: 1320, concurrency: 330, warmups: 8 });
   const benchmark = new AisbenchBenchmark({ workload });
@@ -19,7 +23,7 @@ test("synthetic workload identifies its source and requires full measured token 
   expect(() => parseWorkload({ warmups: 8 })).toThrow();
 });
 
-test("native synthetic configuration and CSV parsing without AISBench or a model", () => {
-  const result = spawnSync("python3", ["-B", fileURLToPath(new URL("../fixtures/check-synthetic.py", import.meta.url))], { encoding: "utf8" });
+test.skipIf(configuredPython === undefined && !pythonAvailable)("native synthetic configuration and CSV parsing without AISBench or a model", () => {
+  const result = spawnSync(python, ["-B", fileURLToPath(new URL("../fixtures/check-synthetic.py", import.meta.url))], { encoding: "utf8" });
   expect(result.status, result.stdout + result.stderr).toBe(0);
 });

@@ -95,7 +95,7 @@ plugins/aisbench/
 └── README.md
 ```
 
-`pnpm --dir plugins/aisbench check` 执行独立构建和测试。Python supervisor 测试需将 `AISBENCH_TEST_PYTHON` 设为支持 POSIX 进程组的 Python 3；未设置时明确跳过。Windows 可在 WSL 内执行 `tests/fixtures/check-remote.py dist/runtime/remote.py`，不连接真实服务器。
+`pnpm --dir plugins/aisbench check` 执行独立构建和测试。Python fixture 测试可通过 `AISBENCH_TEST_PYTHON` 指定 Python 3；未设置时使用当前平台的默认解释器，不可用时明确跳过。需要 POSIX 进程组语义的测试在 Windows 上跳过，可在 WSL 内执行 `tests/fixtures/check-remote.py dist/runtime/remote.py` 和 `tests/fixtures/check-synthetic.py`，不连接真实服务器。
 
 `pnpm --dir plugins/aisbench check:package` 打包已构建的宿主和插件，在源码目录外新建消费者安装 tarball，验证加载隔离、doctor、dry-run、provider 版本和无凭据离线报告。需能安装宿主依赖；私有依赖不可访问时可用 `--dependency-overrides <json-file>` 显式提供本地 `.tgz`，结果会记录替代项。
 
