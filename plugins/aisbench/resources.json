@@ -3,6 +3,7 @@
   "runtime": [
     "remote.py",
     "native.py",
+    "service_collections.py",
     "synthetic.py",
     "upstream/aisbench_test.py",
     "upstream/cal_prefix_hit_rate.py",
