@@ -1,7 +1,9 @@
 import { assertJsonValue, expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown } from "../../../../../core/validation/input.js";
 import type { Usage } from "../../../../../core/contracts/result.js";
+import { collectionEvidence, parseCollection, type AgentXCollection } from "./service-collections.js";
+import type { JsonValue } from "../../../../../core/contracts/task.js";
 import { parseTelemetry, type AgentXTelemetry } from "./telemetry.js";
-import { parseMsprofSummary, type MsprofSummary } from "./msprof-telemetry.js";
+import { parseMsprofSummary, type MsprofSummary } from "./legacy-msprof.js";
 import { parseNetworkLatencyConfig, parseNetworkLatencyProbes, type AgentXNetworkLatencyConfig, type AgentXNetworkLatencyProbes } from "./network-latency.js";
 
 import { AGENTX_VERSION } from "../../../../../runtimes/agentx/versions.js";
@@ -12,6 +14,7 @@ export type AgentXMode = "standard" | "smoke" | "replay";
 export type AgentXWorkload = {
   schemaVersion: 1;
   kind: "agentx";
+  collection?: AgentXCollection;
   variant: AgentXVariant;
   mode: AgentXMode;
   concurrency: number;
@@ -27,7 +30,7 @@ export type AgentXWorkload = {
 
 export function parseWorkload(value: unknown): AgentXWorkload {
   const v = expectRecord(value, "AgentX workload");
-  rejectUnknown(v, ["schemaVersion", "kind", "variant", "mode", "concurrency", "durationSeconds", "seed", "dataset", "loader", "revision", "sha256", "tracePath", "traceCount"], "AgentX workload");
+  rejectUnknown(v, ["schemaVersion", "kind", "variant", "mode", "concurrency", "durationSeconds", "seed", "dataset", "loader", "revision", "sha256", "tracePath", "traceCount", "collection"], "AgentX workload");
   if (v.schemaVersion !== 1 || v.kind !== "agentx" || !["256k", "full"].includes(String(v.variant)) ||
     !["standard", "smoke", "replay"].includes(String(v.mode)) || !Number.isSafeInteger(v.seed) ||
     !/^(?:[a-f0-9]{40}|local:[a-f0-9]{64})$/u.test(String(v.revision)) || !/^[a-f0-9]{64}$/u.test(String(v.sha256)) ||
@@ -47,6 +50,7 @@ export function parseWorkload(value: unknown): AgentXWorkload {
   if (v.mode === "replay") mode = "replay";
   else if (v.mode === "standard") mode = "standard";
   return { schemaVersion: 1, kind: "agentx", variant, mode,
+    ...(v.collection === undefined ? {} : { collection: parseCollection(v.collection) }),
     concurrency, durationSeconds, seed: Number(v.seed),
     dataset, loader, revision: String(v.revision), sha256: String(v.sha256), tracePath: "input/traces.jsonl",
     ...(traceCount === undefined ? {} : { traceCount }) };
@@ -118,6 +122,10 @@ export type AgentXSummary = {
   incomparableReasons: string[];
   replayCoverage?: AgentXReplayCoverage;
   telemetry?: AgentXTelemetry;
+  engine?: Record<string, JsonValue>;
+  deviceProfile?: Record<string, JsonValue>;
+  /** Attempt-relative public evidence directory. Historical runs used per-task point directories. */
+  artifactDirectory?: "performance" | "profiling";
   msprof?: MsprofSummary;
   /** Persisted even when collection failed, to distinguish failure from not-enabled. */
   msprofAttempt?: AgentXMsprofAttempt;
@@ -146,6 +154,8 @@ function parseMsprofAttempt(value: unknown): AgentXMsprofAttempt {
 const fields: Record<string, { tag: string; unit: string }> = {
   ttft: { tag: "time_to_first_token", unit: "ms" },
   ttfo: { tag: "time_to_first_output_token", unit: "ms" },
+  requestThroughput: { tag: "request_throughput", unit: "requests/sec" },
+  tpot: { tag: "time_per_output_token", unit: "ms" },
   itl: { tag: "inter_token_latency", unit: "ms" },
   requestLatency: { tag: "request_latency", unit: "ms" },
   inputThroughput: { tag: "input_token_throughput", unit: "tokens/sec" },
@@ -190,7 +200,7 @@ function savedStatistics(value: unknown, definitions = fields): AgentXStatistics
   return Object.fromEntries(Object.entries(definitions).map(([name, { unit }]) => {
     const item = stats[name];
     // TTFO was added after the initial persisted summary format.
-    if (item === null || (name === "ttfo" && item === undefined)) return [name, null];
+    if (item === null || (["ttfo", "requestThroughput", "tpot"].includes(name) && item === undefined)) return [name, null];
     const stat = expectRecord(item, `AgentX statistic ${name}`);
     if (stat.unit !== unit) throw new TypeError(`Invalid AgentX statistic unit: ${name}`);
     const count = nullableNumber(stat.count);
@@ -256,6 +266,9 @@ export function parseAgentXSummary(value: unknown): AgentXSummary {
     typeof raw.comparable !== "boolean" || (raw.upstreamSubmissionValid !== null && typeof raw.upstreamSubmissionValid !== "boolean"))
     throw new TypeError("Invalid AgentX summary");
   const workload = parseWorkload(raw.workload);
+  const directory = raw.artifactDirectory;
+  if (directory !== undefined && (directory !== (workload.collection?.type ?? "performance") || (directory !== "performance" && directory !== "profiling")))
+    throw new TypeError("Invalid AgentX artifact directory");
   const lexicon = expectRecord(raw.lexicon, "AgentX lexicon");
   for (const key of ["source", "revision", "digest"]) expectNonEmptyString(lexicon[key], `AgentX lexicon.${key}`);
   if (!/^[a-f0-9]{64}$/u.test(String(lexicon.digest)) ||
@@ -283,15 +296,26 @@ export function parseAgentXSummary(value: unknown): AgentXSummary {
   if (raw.comparable && (workload.mode !== "standard" || workload.durationSeconds !== 3600 || raw.upstreamSubmissionValid !== true || incomparableReasons.length))
     throw new TypeError("Invalid AgentX comparability");
   return { schemaVersion: 1, kind: "agentx", harnessVersion: AGENTX_VERSION, workload,
+    ...(directory === undefined ? {} : { artifactDirectory: directory }),
     lexicon: { source: String(lexicon.source), revision: String(lexicon.revision), digest: String(lexicon.digest) },
     profiling, warmup: savedStatistics(raw.warmup),
     upstreamSubmissionValid: raw.upstreamSubmissionValid, upstreamInvalidReasons: strings(raw.upstreamInvalidReasons),
     comparable: raw.comparable, incomparableReasons,
     ...(workload.mode === "replay" ? { replayCoverage: parseReplayCoverage(raw.replayCoverage, workload) } : {}),
+    ...(raw.engine === undefined ? {} : { engine: collectionEvidence(raw.engine, "engine") }),
+    ...(raw.deviceProfile === undefined ? {} : { deviceProfile: collectionEvidence(raw.deviceProfile, "profiling") }),
     ...(raw.telemetry === undefined ? {} : { telemetry: parseTelemetry(raw.telemetry) }),
     ...(raw.msprof === undefined ? {} : { msprof: parseMsprofSummary(raw.msprof) }),
     ...(raw.msprofAttempt === undefined ? {} : { msprofAttempt: parseMsprofAttempt(raw.msprofAttempt) }),
     ...(networkLatency === undefined ? {} : { networkLatency }) };
+}
+
+export function successfulAgentXWindow(summary: AgentXSummary): boolean {
+  const coverage = summary.replayCoverage;
+  return (summary.profiling.requests?.mean ?? 0) > 0 &&
+    (coverage ? coverage.complete && coverage.successfulRequests === coverage.expectedRequests &&
+      coverage.successfulRequests === summary.profiling.requests?.mean && !(summary.profiling.errors?.mean ?? 0)
+      : summary.profiling.errors?.mean === 0);
 }
 
 export function agentXUsage(summary: AgentXSummary): Usage {
