@@ -1,5 +1,7 @@
 # 本地数据集
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](local-datasets.md) | 中文
 
 提前下载数据后，可让 Evaluator 直接读取本地文件。指定本地来源后不请求远端题库；文件缺失、格式错误或内容变化会报错，不回退下载。未指定时继续使用题库默认下载地址。CLI 和 SDK 使用同一份实验 YAML。

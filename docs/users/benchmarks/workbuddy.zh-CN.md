@@ -1,5 +1,7 @@
 # WorkBuddy 评测
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./workbuddy.md) | 中文
 
 WorkBuddy 包含 Code、Office、Web 和 Security 四种场景，通过 Harbor 任务协议执行。使用 `benchmark.name: workbuddy` 和 `benchmark.scenario` 选择场景，默认 `code`、版本 `1.0`。
@@ -57,7 +59,7 @@ judge:
   model: ${JUDGE_MODEL_NAME}
   base_url: ${JUDGE_MODEL_ENDPOINT}
   api: openai-completions
-  api_key: ${JUDGE_MODEL_API_KEY}
+  apiKeyEnv: JUDGE_MODEL_API_KEY
 ```
 
 在 `benchmark.verifier` 绑定裁判服务。保留当前 Benchmark 名称和其他配置；用户 YAML 不接受顶层 `verifier`：

@@ -1,3 +1,4 @@
+import { nativeResourceTransport } from "arsi-evaluator";
 import { cp, mkdir, mkdtemp, rm, writeFile, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,8 +8,9 @@ import { LocalFileSource, LocalRecordSource } from "../../src/infrastructure/dat
 import { LocalZipJsonSource } from "../../src/infrastructure/datasets/sources/local/zip-json-source.js";
 import { DEFINED_BENCHMARKS } from "../../src/plugins/benchmarks/agent-harness/definitions/index.js";
 import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
-import { createBenchmark } from "../../src/application/plugins/create-components.js";
-import { loadConfig } from "../../src/application/config.js";
+import { createNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { stringify } from "yaml";
 import { projectPortableSelection } from "../../src/infrastructure/ray/protocol.js";
 import { OfficeQAProV2Benchmark, parseOfficeQAProV2Config } from "../../src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/index.js";
@@ -31,12 +33,12 @@ test.each(DEFINED_BENCHMARKS)("$definition.name uses a YAML-relative local datas
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected download"));
   for (const selection of source.selections) await put(path, `dataset/${selection.path ?? `${selection.prefix}000.${selection.format}`}`, "fixture content");
   const file = join(path, "experiment.yaml");
-  await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://model.invalid/v1", api_key: "${TEST_KEY}" }, judge: { model: "fixture", base_url: "https://model.invalid/v1", api_key: "${TEST_KEY}" } },
-    benchmark: { name: definition.name, config: { localPath: "./dataset" } } }));
-  const config = await loadConfig(file, {}, { TEST_KEY: "fixture" });
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "https://model.invalid/v1", apiKeyEnv: "TEST_KEY" }, judge: { model: "fixture", base_url: "https://model.invalid/v1", apiKeyEnv: "TEST_KEY" } },
+    benchmark: { name: definition.name, config: { localPath: "./dataset" } } } }));
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file, env: {} }));
   const registry = await openPluginRegistry();
   try {
-    const benchmark = await createBenchmark(registry, config, path);
+    const benchmark = await createNativeResource(registry.ctx, "benchmark", experiment.benchmark, { configDirectory: path, resolvePath: name => join(path, name), services: { judge: { model: { name: "fixture", endpoint: "https://model.invalid/v1", api: "openai-completions", provider: null }, auth: { value: "fixture", reference: null } } }, solverService: "default" });
     const lock = await benchmark.resolveSource(null, signal());
     expect(lock.source).toBe(`local:${source.dataset}`);
     expect(lock.files).toHaveLength(source.selections.length);
@@ -55,15 +57,15 @@ test.each([
   const directory = await root();
   await cp(fileURLToPath(new URL("../fixtures/benchmark-examples/harbor/", import.meta.url)), join(directory, "data"), { recursive: true });
   const file = join(directory, "experiment.yaml");
-  await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://model.invalid/v1", api_key: "${TEST_KEY}" } },
-    benchmark: { ...selection, config: { source: { kind: "local", path: localPath }, tasks: { expectedCount: 2 } } } }));
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "https://model.invalid/v1", apiKeyEnv: "TEST_KEY" } },
+    benchmark: { ...selection, config: { source: { kind: "local", path: localPath }, tasks: { expectedCount: 2 } } } } }));
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected download"));
-  const config = await loadConfig(file, {}, { TEST_KEY: "fixture" });
-  expect(config.experiment.benchmark.config.source).toEqual({ kind: "local", path: localPath });
-  expect(config.experiment.benchmark.config.tasks).toMatchObject({ root: tasksRoot, expectedCount: 2 });
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file, env: {} }));
+  expect(experiment.benchmark.config.source).toEqual({ kind: "local", path: localPath });
+  expect(experiment.benchmark.config.tasks).toMatchObject({ root: tasksRoot, expectedCount: 2 });
   const registry = await openPluginRegistry();
   try {
-    const benchmark = await createBenchmark(registry, config, directory);
+    const benchmark = await createNativeResource(registry.ctx, "benchmark", experiment.benchmark, { configDirectory: directory, resolvePath: name => join(directory, name), services: { judge: { model: { name: "fixture", endpoint: "https://model.invalid/v1", api: "openai-completions", provider: null }, auth: { value: "fixture", reference: null } } }, solverService: "default" });
     const lock = await benchmark.resolveSource(null, signal());
     expect(await collect(benchmark.enumerate(lock, signal()))).toHaveLength(2);
     expect(fetch).not.toHaveBeenCalled();
@@ -143,7 +145,7 @@ test("DROP reads extracted local JSON selections", async () => {
 test("Ray rejects local dataset paths before dispatch for every new local-data component", async () => {
   const registry = await openPluginRegistry();
   try {
-    const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+    const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
     for (const name of [...DEFINED_BENCHMARKS.map(entry => entry.definition.name), "drop", "officeqa-pro-v2", "agentx"])
       expect(() => projectPortableSelection({ name, config: { localPath: "/private/data" } }, "benchmark", lookup)).toThrow(/localPath/);
   } finally { await registry.dispose(); }

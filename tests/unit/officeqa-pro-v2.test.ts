@@ -1,3 +1,4 @@
+import { nativeResourceTransport } from "arsi-evaluator";
 import "../fixtures/network-fetch.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,10 +10,12 @@ import { officeQAScoringProgram } from "../../src/plugins/benchmarks/agent-harne
 import { HuggingFaceSnapshotSource } from "../../src/infrastructure/datasets/sources/huggingface/snapshot-source.js";
 import { OFFICEQA_DATASET_REVISION } from "../../src/plugins/benchmarks/agent-harness/definitions/officeqa-pro-v2/config.js";
 import { officeQAFiles, officeQAHub, fixtureCSV } from "../fixtures/officeqa.js";
-import { loadConfig, loadSavedConfig } from "../../src/application/config.js";
-import { exportConfig } from "../../src/config/export.js";
+import { inspectWorkflow, exportWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
+import { NetworkRuntime } from "../../src/infrastructure/network/runtime.js";
+import { networkDocument } from "../../src/config/network-schema.js";
 import { stringify } from "yaml";
-import { createBenchmark } from "../../src/application/plugins/create-components.js";
+import { openNativeResource } from "../../src/plugins/workflows/benchmark/component-resource.js";
 import { runCli } from "../../src/cli/main.js";
 import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
 import { localizePortableSelection, validatePortableSelection } from "../../src/infrastructure/ray/protocol.js";
@@ -53,11 +56,12 @@ test.each([
   ["officeqa-pro-v2-original-pdf.yaml", "pdf", "local"],
 ] as const)("%s loads its document format and all tasks", async (file, format, scheduler) => {
   const env = { MODEL_NAME: "fixture/model", MODEL_ENDPOINT: "https://model.invalid", MODEL_API_KEY: "fixture-model-key", HF_TOKEN: "fixture-dataset-token" };
-  const { experiment } = await loadConfig(resolve("playbook/officeqa-pro-v2", file), {}, env);
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: resolve("playbook/officeqa-pro-v2", file), env }));
   expect(experiment.benchmark.config.corpusFormat).toBe(format);
   expect(experiment.run).toMatchObject({ maxTasks: null, taskIds: null });
   expect(experiment.scheduler.name).toBe(scheduler);
-  expect(experiment.output.directory).toContain(format === "pdf" ? "original-pdf" : "parsed-json");
+  if (scheduler === "ray") expect(experiment.output.directory).toBe("results");
+  else expect(experiment.output.directory).toContain(format === "pdf" ? "original-pdf" : "parsed-json");
 });
 
 test("YAML hfToken uses SDK env and preserves references across save, export and credential rotation", async () => {
@@ -66,32 +70,30 @@ test("YAML hfToken uses SDK env and preserves references across save, export and
   const fixture = await officeQAFiles(join(directory, "source"), "parsed-json");
   const hub = await officeQAHub(fixture.bytes); hubs.push(hub);
   vi.stubEnv("HF_ENDPOINT", hub.endpoint); vi.stubEnv("HF_TOKEN", "unrelated-host-token");
-  await writeFile(file, stringify({ services: { default: { model: "fixture", base_url: "https://fixture.invalid", api_key: "${MODEL_KEY}" } },
-    benchmark: { name: "officeqa-pro-v2", config: { hfToken: "${SDK_HF_TOKEN}", cacheDir: join(directory, "cache") } } }));
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "MODEL_KEY" } },
+    benchmark: { name: "officeqa-pro-v2", config: { hfToken: { credential: "SDK_HF_TOKEN" }, cacheDir: join(directory, "cache") } } } }));
   const networkConfigPath = join(directory, "network.yaml");
   await writeFile(networkConfigPath, stringify({ sources: { huggingface: hub.endpoint } }));
   const env = { EVALUATOR_NETWORK_CONFIG: networkConfigPath, MODEL_KEY: "model-secret", SDK_HF_TOKEN: "sdk-dataset-secret" };
-  const loaded = await loadConfig(file, {}, env);
-  expect(loaded.experiment.benchmark.config.hfToken).toBe("sdk-dataset-secret");
-  expect(JSON.stringify(loaded.persisted)).toContain("${SDK_HF_TOKEN}");
-  expect(JSON.stringify(loaded.persisted)).not.toContain("sdk-dataset-secret");
-  const exported = exportConfig(loaded);
-  expect(JSON.stringify(exported)).toContain("${SDK_HF_TOKEN}");
-  expect(JSON.stringify(exported)).not.toContain("sdk-dataset-secret");
-  const saved = join(directory, "saved.yaml"); await writeFile(saved, stringify(loaded.persisted));
-  const rotated = await loadSavedConfig(saved, { ...env, SDK_HF_TOKEN: "rotated-secret" });
-  expect(rotated.experiment.benchmark.config.hfToken).toBe("rotated-secret");
-  expect(rotated.persisted).toEqual(loaded.persisted);
-  await expect(loadConfig(file, {}, { MODEL_KEY: "model-secret" })).rejects.toThrow(/SDK_HF_TOKEN/);
-  await expect(loadConfig(file, {}, { ...env, SDK_HF_TOKEN: "" })).rejects.toThrow(/hfToken/);
+  const plan = await inspectWorkflow({ configPath: file, env });
+  expect(benchmarkExperiment(plan).benchmark.config.hfToken).toEqual({ credential: "SDK_HF_TOKEN" });
+  expect(JSON.stringify(plan)).not.toContain("sdk-dataset-secret");
+  const saved = join(directory, "saved.yaml"); await exportWorkflow({ configPath: file, env }, saved);
+  expect(await readFile(saved, "utf8")).not.toContain("sdk-dataset-secret");
+  expect((await inspectWorkflow({ configPath: saved, env: { ...env, SDK_HF_TOKEN: "rotated-secret" } })).document).toEqual(plan.document);
   const registry = await openPluginRegistry();
+  const network = new NetworkRuntime(networkDocument({ sources: { huggingface: hub.endpoint } }, {}));
+  const runtime = { configDirectory: directory, resolvePath: (path: string) => resolve(directory, path), services: {}, solverService: "default", network };
   try {
-    const benchmark = await createBenchmark(registry, loaded, directory);
+    for (const token of [undefined, ""]) await expect(openNativeResource(registry.ctx, "benchmark", benchmarkExperiment(plan).benchmark, runtime, async () => token)).rejects.toThrow(/SDK_HF_TOKEN/);
+    const resource = await openNativeResource(registry.ctx, "benchmark", benchmarkExperiment(plan).benchmark, runtime, async () => env.SDK_HF_TOKEN);
+    const benchmark = resource.value;
     // The tiny Hub has two documents rather than 1,435. Only authentication is under test.
     await expect(benchmark.resolveSource(null, signal())).rejects.toThrow(/file count/);
     expect(hub.authorizations.length).toBeGreaterThan(0);
     expect(hub.authorizations.every(value => value === "Bearer sdk-dataset-secret")).toBe(true);
-  } finally { await registry.dispose(); }
+    await resource.dispose();
+  } finally { await network.dispose(); await registry.dispose(); }
 });
 
 test("Ray nodes authenticate with their own fixed HF_TOKEN after explicit credentials are stripped", async () => {
@@ -100,7 +102,7 @@ test("Ray nodes authenticate with their own fixed HF_TOKEN after explicit creden
   vi.stubEnv("HF_ENDPOINT", hub.endpoint); vi.stubEnv("HF_TOKEN", "node-dataset-token");
   const registry = await openPluginRegistry();
   try {
-    const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+    const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
     const { projectPortableSelection } = await import("../../src/infrastructure/ray/protocol.js");
     const portable = projectPortableSelection({ name: "officeqa-pro-v2", config: { hfToken: "coordinator-token" } }, "benchmark", lookup);
     const selection = localizePortableSelection(portable, "benchmark", { outputRoot: directory }, lookup);
@@ -186,14 +188,14 @@ test.each(["parsed-json", "pdf"] as const)("HF snapshot %s locks bytes, restores
 test("OfficeQA is discoverable without network and Ray localizes node paths", async () => {
   const directory = await root(); const file = join(directory, "experiment.yaml");
   vi.stubEnv("OFFICEQA_TEST_KEY", "fixture");
-  await writeFile(file, "services:\n  default:\n    model: fixture\n    base_url: https://fixture.invalid\n    api_key: ${OFFICEQA_TEST_KEY}\nbenchmark: officeqa-pro-v2\n");
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: { services: { default: { model: "fixture", base_url: "https://fixture.invalid", apiKeyEnv: "OFFICEQA_TEST_KEY" } }, benchmark: "officeqa-pro-v2" } }));
   const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected network"));
   const output: string[] = []; const errors: string[] = [];
   const io = { out: (value: string) => { output.push(value); }, error: (value: string) => { errors.push(value); } };
   for (const args of [["benchmark", "list"], ["benchmark", "info", "officeqa-pro-v2"], ["init", "--benchmark", "officeqa-pro-v2", "--output", join(directory, "init.yaml")]])
     expect(await runCli(args, io), errors.join("\n")).toBe(0);
   expect(output.join("\n")).toContain("officeqa-pro-v2");
-  const config = await loadConfig(file, {}, process.env); expect(config.experiment.run.timeoutSeconds).toBe(3600);
+  const experiment = benchmarkExperiment(await inspectWorkflow({ configPath: file })); expect(experiment.run.timeoutSeconds).toBe(3600);
   const fixture = await officeQAFiles(join(directory, "source"), "parsed-json", "uid,question,answer,source_docs,source_files\n" +
     Array.from({ length: 90 }, (_, i) => `qid_${i},Question ${i},42,private-page,private-file\n`).join(""));
   const csv = fixture.lock.files[0]!; const doc = fixture.lock.files[1]!;
@@ -205,10 +207,9 @@ test("OfficeQA is discoverable without network and Ray localizes node paths", as
   });
   expect(await runCli(["run", file, "--dry-run"], io), errors.join("\n")).toBe(0);
   expect(files).toHaveBeenCalledOnce();
-  const bad = structuredClone(config); bad.experiment.environment = { name: "local", config: {} };
   const registry = await openPluginRegistry();
   try {
-    const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+    const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
     const selection = { name: "officeqa-pro-v2", config: { cacheDir: "/coordinator/cache", dockerExecutable: "/coordinator/docker", corpusFormat: "pdf", hfToken: "coordinator-secret" } };
     // Node-local fields are removed by projection before validation.
     const { projectPortableSelection } = await import("../../src/infrastructure/ray/protocol.js");

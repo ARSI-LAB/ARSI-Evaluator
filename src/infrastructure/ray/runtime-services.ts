@@ -5,7 +5,7 @@ import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/va
 /** Runtime credentials have one wire shape; no single-model fallback is accepted. */
 export function parseRuntimeServices(value: unknown, options: { preparation?: boolean } = {}): Record<string, ServiceBinding> {
   const root = expectRecord(value, "Ray runtime");
-  rejectUnknown(root, ["services"], "Ray runtime");
+  rejectUnknown(root, ["services", "credentialNames"], "Ray runtime");
   const services = expectRecord(root.services, "Ray runtime.services");
   if (!Object.keys(services).length) throw new TypeError("Ray runtime requires services");
   return Object.fromEntries(Object.entries(services).map(([name, value]) => {

@@ -1,5 +1,7 @@
 # Scoring Rules and References
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./scoring.zh-CN.md)
 
 Completion, score, binary correctness, and cleanup describe different facts. Quality score may be absent; passed:null means binary correctness was not measured and can coexist with continuous scores. Performance must use passed:null without score. Missing scores are not zeros; absent correctness does not justify invented pass thresholds.
@@ -101,19 +103,22 @@ Prompts request `Answer:` with JSON string arrays for multiple spans and trainin
 ## Independent Judges
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-  judge:
-    model: ${JUDGE_NAME}
-    base_url: ${JUDGE_ENDPOINT}
-    api_key: ${JUDGE_API_KEY}
-benchmark:
-  name: healthbench
-  config:
-    judgeService: judge
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+    judge:
+      model: ${JUDGE_NAME}
+      base_url: ${JUDGE_ENDPOINT}
+      apiKeyEnv: JUDGE_API_KEY
+  benchmark:
+    name: healthbench
+    config:
+      judgeService: judge
 ```
 
 Judges never bind automatically to evaluated models. Explicit default reuse is saved in configuration/evidence. Authentication is excluded; verdict.details keeps judge/protocol identity, prompt hashes, and explanations.

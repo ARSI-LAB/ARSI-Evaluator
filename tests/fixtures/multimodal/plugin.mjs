@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -5,7 +6,7 @@ import { parseTaskAttachments } from "arsi-evaluator";
 
 export const inject = ["evaluator"];
 export function apply(ctx) {
-  ctx.evaluator.register("benchmark", "multimodal-example", value => {
+  registerNativeResource(ctx, "benchmark", "multimodal-example", value => {
     if (!value || typeof value !== "object" || Array.isArray(value) ||
         Object.keys(value).some(key => !["mode", "rendererVersion"].includes(key)) ||
         !["image", "native", "pages"].includes(value.mode)) throw new TypeError("mode must be image, native, or pages");

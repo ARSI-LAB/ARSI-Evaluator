@@ -1,26 +1,27 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { consumeDsh } from "../../src/runtimes/dsh/protocol.js";
 import { consumeJiuwenswarm } from "../../src/runtimes/jiuwenswarm/protocol.js";
 import type { ProcessHandle } from "../../src/core/contracts/environment.js";
-import { runEngine } from "../../src/application/run-engine.js";
-import { runTask } from "../../src/core/execution/run-task.js";
-import { onDemand } from "../../src/core/preparation/task-preparation.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
 import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
-import { harness, source } from "../fixtures/engine/fakes.js";
+import { harness } from "../fixtures/engine/fakes.js";
 import { EvaluatorError } from "../../src/core/errors/evaluator-error.js";
 import { computeSuccessRate } from "../../src/plugins/metrics/success-rate.js";
 import { dshStream, interruptedResponse } from "../fixtures/engine/dsh-stream.js";
 
 const fixtures: { root: string; value: ReturnType<typeof harness> }[] = [];
+// Retry scenarios persist multiple real attempts; their duration depends on filesystem load.
+vi.setConfig({ testTimeout: 30_000 });
 async function fixture(errorFor: (task: string, count: number) => string | undefined) {
   const root = await mkdtemp(join(tmpdir(), "evaluator-retry-"));
   const value = harness(root);
   fixtures.push({ root, value });
   value.components.scheduler = new LocalScheduler(1);
+  value.config.experiment.scheduler.config.concurrency = 1;
   const calls = new Map<string, number>();
   value.components.solver.solve = async (input, _session, context) => {
     const count = (calls.get(input.id) ?? 0) + 1;
@@ -66,6 +67,7 @@ const emptyLengthFailure = "EMPTY_TRUNCATED_MODEL_RESPONSE: recovery-exhausted; 
 test("Local parallel architecture failures are unscored without retry and preserve other completed tasks", async () => {
   const value = await fixture(() => undefined);
   value.components.scheduler = new LocalScheduler(2);
+  value.config.experiment.scheduler.config.concurrency = 2;
   value.config.experiment.run.onError = "continue";
   const prepareTask = value.components.benchmark.prepare.bind(value.components.benchmark);
   value.components.benchmark.prepare = async (...args) => {
@@ -78,7 +80,7 @@ test("Local parallel architecture failures are unscored without retry and preser
     if (args[0].image === "b") throw new EvaluatorError("ENV_ARCH_UNSUPPORTED", "QEMU/binfmt unavailable");
     return prepareEnvironment(...args);
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   const records = new Map(result.records.map(record => [record.key.taskId, record]));
   expect(records.get("b")).toMatchObject({ scoreStatus: "invalid", verdict: null,
     errors: [expect.objectContaining({ code: "ENV_ARCH_UNSUPPORTED", category: "infrastructure", retryable: false })] });
@@ -89,7 +91,7 @@ test("Local parallel architecture failures are unscored without retry and preser
 
 test("typed truncation is not eligible for network recovery", async () => {
   const value = await jiuwenswarmFixture(() => emptyLengthFailure, true);
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
   expect(await value.components.store.listAttempts()).toHaveLength(1);
@@ -104,7 +106,7 @@ test("cleanup failure after typed truncation remains authoritative and prevents 
     session.dispose = async signal => { await dispose(signal); throw new Error("cleanup failed"); };
     return session;
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records[0]?.errors).toContainEqual(expect.objectContaining({ phase: "cleanup", code: "CLEANUP_FAILED" }));
@@ -114,7 +116,7 @@ test("cleanup failure after typed truncation remains authoritative and prevents 
 test("DSH truncation creates a fresh attempt before honoring run.onError=abort", async () => {
   const value = await fixture((task, count) => task === "a" && count === 1 ? interruptedResponse + " fixture-key" : undefined);
   const progress: string[] = [];
-  const result = await runEngine({ ...value, signal: new AbortController().signal,
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal,
     onProgress: event => { if (event.phase === "retry") progress.push(event.message); } });
   expect(result.run.status).toBe("completed");
   expect([...value.calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
@@ -138,7 +140,7 @@ test("only truncated tasks repeat while continue mode executes other tasks", asy
   const value = await fixture((task, count) => task === "a" && count === 1 ? interruptedResponse
     : task === "b" ? "HTTP 400 Bad Request: invalid model parameter" : undefined);
   value.config.experiment.run.onError = "continue";
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect([...value.calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
   expect(result.records.map(record => record.executionStatus)).toEqual(["completed", "failed", "completed"]);
@@ -147,7 +149,7 @@ test("only truncated tasks repeat while continue mode executes other tasks", asy
 test("persistent truncation stops after three invalid attempts", async () => {
   const value = await fixture(() => interruptedResponse);
   value.config.experiment.run.taskIds = ["a"];
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(3);
   const attempts = await value.components.store.listAttempts();
@@ -159,28 +161,10 @@ test("persistent truncation stops after three invalid attempts", async () => {
 
 test("Swarm truncation retries the entire task and succeeds on the third attempt", async () => {
   const value = await jiuwenswarmFixture(count => count < 3 ? "peer closed connection without sending complete message body (incomplete chunked read)" : undefined);
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(value.calls.get("a")).toBe(3);
   expect((await value.components.store.listAttempts()).map(attempt => attempt.record?.scoreStatus)).toEqual(["invalid", "invalid", "valid"]);
-});
-
-test("coordinator retries persisted scheduler results without relying on its local executor", async () => {
-  const value = await fixture((_task, count) => count === 1 ? interruptedResponse : undefined);
-  value.config.experiment.run.taskIds = ["a"];
-  const scheduler = new LocalScheduler(1);
-  value.components.scheduler = {
-    executionLocation: "remote",
-    executeReady(jobs, _executor, signal) {
-      // Like Ray, execute outside the coordinator's executor and return the
-      // persisted result. This tests admission, not Ray transport or deployment.
-      return scheduler.executeReady(jobs, (job, taskSignal) => runTask(onDemand(job), value.components, source, taskSignal), signal);
-    },
-  };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
-  expect(result.run.status).toBe("completed");
-  expect(value.calls.get("a")).toBe(2);
-  expect(await value.components.store.listAttempts()).toHaveLength(2);
 });
 
 test("DeepAgents protocol truncation restarts in fresh workspaces and repeats earlier tools", async () => {
@@ -195,7 +179,7 @@ test("DeepAgents protocol truncation restarts in fresh workspaces and repeats ea
     await writeFile(marker, String(++tools));
     return consumeDsh(dshStream(tools < 3 ? "incomplete chunked read" : undefined), context, "fixture-key", undefined, "DEEPAGENTS");
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(tools).toBe(3);
   expect(new Set(workspaces).size).toBe(3);
@@ -212,7 +196,7 @@ test("cleanup failure prevents whole-task stream recovery", async () => {
     session.dispose = async signal => { await dispose(signal); throw new Error("cleanup failed"); };
     return session;
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records[0]?.cleanupStatus).toBe("unconfirmed");
@@ -222,14 +206,14 @@ test("cancellation stops a queued automatic retry and resume retains the consume
   const value = await fixture(() => interruptedResponse);
   value.config.experiment.run.taskIds = ["a"];
   const controller = new AbortController();
-  const first = await runEngine({ ...value, signal: controller.signal, onProgress: event => {
+  const first = await runBenchmarkFixture({ ...value, signal: controller.signal, onProgress: event => {
     if (event.phase === "retry") controller.abort(new Error("user cancelled"));
   } });
   expect(first.run.status).toBe("cancelled");
   expect(value.calls.get("a")).toBe(1);
   const resumeDirectory = join(value.config.experiment.output.directory, first.run.runId);
   await value.components.store.close();
-  const resumed = await runEngine({ ...value, resumeDirectory, signal: new AbortController().signal });
+  const resumed = await runBenchmarkFixture({ ...value, resumeDirectory, signal: new AbortController().signal });
   expect(resumed.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(3);
   expect(await value.components.store.listAttempts()).toHaveLength(3);
@@ -238,7 +222,7 @@ test("cancellation stops a queued automatic retry and resume retains the consume
 test("stream idle timeout ends the attempt when the harness exhausts its request retries", async () => {
   const value = await fixture((_task, count) => count === 1 ? "pi-ai stream idle timeout after 300000ms" : undefined);
   value.config.experiment.run.taskIds = ["a"];
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
 });
@@ -249,13 +233,13 @@ test("a missing final with explicit truncation restarts the task", async () => {
   let count = 0;
   value.components.solver.solve = (_input, _session, context) =>
     consumeDsh(dshStream(++count === 1 ? interruptedResponse : undefined, count !== 1), context, "fixture-key");
-  expect((await runEngine({ ...value, signal: new AbortController().signal })).run.status).toBe("completed");
+  expect((await runBenchmarkFixture({ ...value, signal: new AbortController().signal })).run.status).toBe("completed");
   expect(count).toBe(2);
 });
 
 test("a process CLI Agent deadline keeps the verifier score and preserves partial artifacts", async () => {
   const value = await jiuwenswarmFixture(count => count === 1 ? "process CLI execution timed out" : undefined);
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("completed");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records).toHaveLength(1);
@@ -266,7 +250,7 @@ test("a process CLI Agent deadline keeps the verifier score and preserves partia
     errors: [{ phase: "solve", code: "SOLVER_AGENT_TIMEOUT", message: expect.stringContaining("process CLI execution timed out") }],
     warnings: [{ phase: "collect", code: "ARTIFACT_COLLECTION_INCOMPLETE" }] });
   for (const attempt of attempts) {
-    const agent = join(value.config.experiment.output.directory, result.run.runId, "tasks",
+    const agent = join(result.nativeDirectory, "tasks",
       safeTaskKey(attempt.key.taskId), "attempts", attempt.key.attemptId, "agent");
     expect(await readFile(join(agent, "stderr.log"), "utf8")).toContain("[redacted]");
     expect(await readFile(join(agent, "trajectory.jsonl"), "utf8")).toContain("Collected partial evidence");
@@ -276,7 +260,7 @@ test("a process CLI Agent deadline keeps the verifier score and preserves partia
 
 test("process CLI permanent errors do not retry", async () => {
   const value = await jiuwenswarmFixture(() => "AuthenticationError: invalid api key");
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records[0]?.errors[0]?.code).toBe("MODEL_AUTH_FAILED");
@@ -291,7 +275,7 @@ test("a cleanup failure accompanying a process CLI deadline prevents automatic r
     session.dispose = async signal => { await dispose(signal); throw new Error("cleanup failed"); };
     return session;
   };
-  const result = await runEngine({ ...value, signal: new AbortController().signal });
+  const result = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   expect(result.run.status).toBe("error");
   expect(value.calls.get("a")).toBe(1);
   expect(result.records[0]?.errors).toContainEqual(expect.objectContaining({ phase: "cleanup", code: "CLEANUP_FAILED" }));

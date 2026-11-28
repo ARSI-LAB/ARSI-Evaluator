@@ -1,5 +1,7 @@
 # OfficeQA Pro V2
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./officeqa-pro-v2.zh-CN.md)
 
 `officeqa-pro-v2` evaluates evidence retrieval, calculation, and answering across a full corpus: Databricks' official 90 questions and 1,435 US Treasury documents. Tasks use original `uid`; the first two IDs in the pinned CSV are strings `"0"` and `"1"`.
@@ -54,7 +56,7 @@ For a small check, add `run.maxTasks: 2`. Select an ID with `run.taskIds: ["0"]`
 benchmark:
   name: officeqa-pro-v2
   config:
-    hfToken: ${HF_TOKEN}
+    hfToken: {credential: HF_TOKEN}
     corpusFormat: parsed-json
     tolerance: 0
 ```
@@ -91,7 +93,7 @@ arsi-evaluator run playbook/officeqa-pro-v2/officeqa-pro-v2-parsed-json-simpleag
 arsi-evaluator report /absolute/path/to/run-directory
 ```
 
-Resume pins the original commit, file manifest, and SHA-256. Complete valid caches require no HF access; missing/corrupt caches redownload original URLs/digests. Explicit YAML `hfToken: ${HF_TOKEN}` still requires that variable at configuration load. Modified public build directories fail explicitly rather than using changed documents. Scoring script/package changes retain plugin-version checks. Offline reporting requires no model key, HF token, or scoring rerun.
+Resume pins the original commit, file manifest, and SHA-256. Complete valid caches require no HF access; missing/corrupt caches redownload original URLs/digests. The `hfToken: {credential: HF_TOKEN}` binding is validated without credentials during inspect/export and resolved when evaluation resources open. Modified public build directories fail explicitly rather than using changed documents. Scoring script/package changes retain plugin-version checks. Offline reporting requires no model key, HF token, or scoring rerun.
 
 ## Ray and Acceptance Boundaries
 

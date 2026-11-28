@@ -1,3 +1,4 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -36,13 +37,12 @@ process.stdin.on("end", () => {
   await writeFile(join(root, "tasks.json"), JSON.stringify({ tasks: [{ id: "candidate", problem: "problem.py", candidateRoot: "candidate",
     candidate: "candidate/kernel.py", files: ["candidate/helper.py"], referenceKind: "pytorch" }] }));
   const configPath = join(root, "experiment.yaml");
-  await writeFile(configPath, JSON.stringify({
-    services: { default: { model: "unused", base_url: "http://localhost:1/v1", api_key: "${TEST_API_KEY}" } },
+  await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+    services: { default: { model: "unused", base_url: "http://localhost:1/v1", apiKeyEnv: "TEST_API_KEY" } },
     benchmark: { name: "kernel", config: { operation, manifest: "tasks.json", python: worker, seeds: [42], warmup: 7, repeat: 11 } },
-    output: { directory: "./results" },
+  }
   }));
-  const result = await new Evaluator().run({ configPath, env: { TEST_API_KEY: "unused" } });
-  if (result.kind !== "local") throw new Error("expected local run");
+  const result = await readBenchmarkResult(await new Evaluator().run({ configPath, env: { TEST_API_KEY: "unused" } }));
   const native = JSON.parse(await readFile(join(result.runDirectory, `tasks/${safeTaskKey("candidate")}/attempts/${result.snapshot.records[0]!.key.attemptId}/verifier/kernel-result.json`), "utf8"));
   return { ...result, native };
 }

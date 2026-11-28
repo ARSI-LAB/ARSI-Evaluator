@@ -61,7 +61,8 @@ import { createFixedAnswerSolver, parseFixedAnswerConfig } from "./fixed-answer.
 Add this line inside the existing `apply(ctx)` function in the same file. The second argument, `fixed-answer`, is the name you will use in YAML.
 
 ```ts
-ctx.evaluator.register("solver", "fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
+import { registerNativeResource } from "../workflows/benchmark/component-resource.js";
+registerNativeResource(ctx, "solver", "fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
 ```
 
 ### 3. Add one local question and an experiment file
@@ -76,23 +77,27 @@ What is 6 times 7?,42,36,40,49
 Create `experiment.yaml` in the same directory. `benchmark.config.localPath` points to the CSV. `benchmark.solver.name` selects the Solver you registered, and `benchmark.solver.config.answer` is the text it will return.
 
 ```yaml
-services:
-  default:
-    model: unused-example
-    base_url: http://127.0.0.1:1/v1
-    api_key: ${EXAMPLE_SOLVER_KEY}
-benchmark:
-  name: gpqa
-  config:
-    localPath: ./gpqa.csv
-  solver:
-    name: fixed-answer
-    service: default
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: unused-example
+      base_url: http://127.0.0.1:1/v1
+      apiKeyEnv: EXAMPLE_SOLVER_KEY
+  benchmark:
+    name: gpqa
     config:
-      answer: "Answer: A"
-environment: local
-run:
-  maxTasks: 1
+      localPath: ./gpqa.csv
+    solver:
+      name: fixed-answer
+      service: default
+      config:
+        answer: "Answer: A"
+  environment: local
+  run:
+    maxTasks: 1
+
 output:
   directory: ./results
 ```

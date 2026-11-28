@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 const fixtureState = () => globalThis.__t02FixtureState ??= {
   created: [], disposed: [], factoryInputs: [],
 };
@@ -7,7 +8,7 @@ export const inject = ["evaluator"];
 export function apply(ctx) {
   ctx.effect(() => () => fixtureState().disposed.push("factory-failing"));
   const register = (role, name, factory) =>
-    ctx.evaluator.register(role, name, config => config, factory);
+    registerNativeResource(ctx, role, name, config => config, factory);
   register("benchmark", "fixture-benchmark", () => {
     fixtureState().created.push("benchmark");
     return {};

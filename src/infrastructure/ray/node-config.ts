@@ -4,6 +4,7 @@ import { expectNonEmptyString, expectRecord, rejectUnknown } from "../../core/va
 export type NodeConfig = {
   nodeExecutable: string;
   workerEntry: string;
+  workflowWorkerEntry?: string;
   configDirectory: string;
   outputRoot: string;
   caFile: string;
@@ -21,7 +22,7 @@ export function parseNodeConfig(value: unknown, directory: string): NodeConfig {
   const config = expectRecord(value, "Ray node config");
   rejectUnknown(
     config,
-    ["nodeExecutable", "workerEntry", "configDirectory", "outputRoot", "caFile", "tokenEnv", "pluginPatchPath", "dockerExecutable"],
+    ["nodeExecutable", "workerEntry", "workflowWorkerEntry", "configDirectory", "outputRoot", "caFile", "tokenEnv", "pluginPatchPath", "dockerExecutable"],
     "Ray node config",
   );
   const tokenEnv = config.tokenEnv ?? "EVALUATOR_TRANSFER_TOKEN";
@@ -32,6 +33,7 @@ export function parseNodeConfig(value: unknown, directory: string): NodeConfig {
   return {
     nodeExecutable: path("nodeExecutable"),
     workerEntry: path("workerEntry"),
+    ...(config.workflowWorkerEntry === undefined ? {} : { workflowWorkerEntry: path("workflowWorkerEntry") }),
     configDirectory: path("configDirectory"),
     outputRoot: path("outputRoot"),
     caFile: path("caFile"),

@@ -1,10 +1,11 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const inject = ["evaluator"];
 export function apply(ctx) {
   const config = value => value;
-  ctx.evaluator.register("benchmark", "cli-fixture", config, options => ({
+  registerNativeResource(ctx, "benchmark", "cli-fixture", config, options => ({
     async resolveSource() {
       if (options.mode === "python-file-error") throw new Error("FileNotFoundError: [Errno 2] No such file or directory: reward.json");
       if (options.mode === "source-error") throw new TypeError("fetch failed", {
@@ -24,7 +25,7 @@ export function apply(ctx) {
     },
     async verify(_task, result) { const passed = result.finalText === "42"; return { score: Number(passed), passed, details: {} }; },
   }));
-  ctx.evaluator.register("solver", "cli-fixture", config, (options, runtime) => {
+  registerNativeResource(ctx, "solver", "cli-fixture", config, (options, runtime) => {
     globalThis.__cliOnSolverFactory?.();
     const attempts = new Map();
     return {
@@ -56,7 +57,7 @@ export function apply(ctx) {
       },
     };
   });
-  ctx.evaluator.register("reporter", "cli-error", config, () => ({
+  registerNativeResource(ctx, "reporter", "cli-error", config, () => ({
     async render() { globalThis.__cliReportCalls = (globalThis.__cliReportCalls ?? 0) + 1; throw new Error("fixture report failure"); },
   }));
 }

@@ -61,7 +61,8 @@ import { createFixedAnswerSolver, parseFixedAnswerConfig } from "./fixed-answer.
 在同一个文件已有的 `apply(ctx)` 函数里加上这一行。第二个参数 `fixed-answer` 就是下一步写进 YAML 的名字。
 
 ```ts
-ctx.evaluator.register("solver", "fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
+import { registerNativeResource } from "../workflows/benchmark/component-resource.js";
+registerNativeResource(ctx, "solver", "fixed-answer", parseFixedAnswerConfig, createFixedAnswerSolver);
 ```
 
 ### 3. 准备一道本地题和实验配置
@@ -76,23 +77,27 @@ What is 6 times 7?,42,36,40,49
 在同一目录创建 `experiment.yaml`。`benchmark.config.localPath` 指向刚才的 CSV。`benchmark.solver.name` 选中第 2 步注册的 Solver，`benchmark.solver.config.answer` 是它会返回的文字。
 
 ```yaml
-services:
-  default:
-    model: unused-example
-    base_url: http://127.0.0.1:1/v1
-    api_key: ${EXAMPLE_SOLVER_KEY}
-benchmark:
-  name: gpqa
-  config:
-    localPath: ./gpqa.csv
-  solver:
-    name: fixed-answer
-    service: default
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: unused-example
+      base_url: http://127.0.0.1:1/v1
+      apiKeyEnv: EXAMPLE_SOLVER_KEY
+  benchmark:
+    name: gpqa
     config:
-      answer: "Answer: A"
-environment: local
-run:
-  maxTasks: 1
+      localPath: ./gpqa.csv
+    solver:
+      name: fixed-answer
+      service: default
+      config:
+        answer: "Answer: A"
+  environment: local
+  run:
+    maxTasks: 1
+
 output:
   directory: ./results
 ```

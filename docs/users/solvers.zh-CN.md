@@ -1,5 +1,7 @@
 # 选择 Solver 和模型服务
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./solvers.md) | 中文
 
 Benchmark 决定任务和评分，Solver 决定模型请求或 Agent 怎样执行。普通 Agent 任务可先用默认 SimpleAgent 跑通；MMLU 和 AgentX 使用各自的默认 Solver。修改后先做配置检查，并开始新的 run。
@@ -117,22 +119,26 @@ Claude Code 的窗口范围是 100,000–1,000,000 token。Codex 和 TRAE 的 `e
 这是同时声明被测模型和 Judge 的完整两题示例：
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-  judge:
-    model: ${JUDGE_NAME}
-    base_url: ${JUDGE_ENDPOINT}
-    api_key: ${JUDGE_API_KEY}
-benchmark:
-  name: simpleqa
-  config:
-    judgeService: judge
-environment: local
-run:
-  maxTasks: 2
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+    judge:
+      model: ${JUDGE_NAME}
+      base_url: ${JUDGE_ENDPOINT}
+      apiKeyEnv: JUDGE_API_KEY
+  benchmark:
+    name: simpleqa
+    config:
+      judgeService: judge
+  environment: local
+  run:
+    maxTasks: 2
+
 output:
   directory: ./results/simpleqa
 ```
@@ -424,21 +430,25 @@ JiuwenSwarm 关闭内层沙箱和审批。主 Agent 和三个默认子 Agent（`
 先按[源码安装](installation.zh-CN.md#直接安装)准备 Evaluator；pnpm 会自动安装 AgentBundle SDK，无需同级源码仓库。下面的 `AGENT_BUNDLE_PATH` 指向已制作好的 **Agent Bundle 目录**，需要另行准备，不是 SDK 安装路径。Bundle 的概念、CLI 和示例见 [AgentBundle 项目](https://github.com/ARSI-LAB/agentbundle)，各 Harness 的目录结构、清单及校验方法见 [Bundle 编写指南](https://github.com/ARSI-LAB/agentbundle/blob/master/docs/bundle-formats.zh-CN.md)。
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: agentbundle
-    config:
-      path: ${AGENT_BUNDLE_PATH}
-environment: local
-run:
-  maxTasks: 2
-  timeoutSeconds: 900
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: agentbundle
+      config:
+        path: ${AGENT_BUNDLE_PATH}
+  environment: local
+  run:
+    maxTasks: 2
+    timeoutSeconds: 900
+
 output:
   directory: ./results/gsm8k-agentbundle
 ```
@@ -475,24 +485,28 @@ Solver 决定 Agent 怎样执行；任务环境决定使用现成镜像还是构
 Dify 是 AgentBundle 的 Harness。准备声明 `harness.name: dify` 的 Bundle，使用下面的文本题示例：
 
 ```yaml
-services:
-  default:
-    model: dify-internal-binding
-    base_url: http://127.0.0.1:9/v1
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: gsm8k
-  solver:
-    name: agentbundle
-    config:
-      path: ${DIFY_BUNDLE_PATH}
-      dify:
-        baseUrl: ${DIFY_BASE_URL}
-        registryPath: ${DIFY_REGISTRY_PATH}  # 可选
-environment: local
-run:
-  maxTasks: 2
-  timeoutSeconds: 900
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: dify-internal-binding
+      base_url: http://127.0.0.1:9/v1
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: gsm8k
+    solver:
+      name: agentbundle
+      config:
+        path: ${DIFY_BUNDLE_PATH}
+        dify:
+          baseUrl: ${DIFY_BASE_URL}
+          registryPath: ${DIFY_REGISTRY_PATH}  # 可选
+  environment: local
+  run:
+    maxTasks: 2
+    timeoutSeconds: 900
+
 output:
   directory: ./results/gsm8k-dify
 ```

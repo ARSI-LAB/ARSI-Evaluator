@@ -1,9 +1,7 @@
-import { loadedConfigSecrets } from "../application/config.js";
+import type { WorkflowEvent } from "../core/contracts/workflow.js";
 import { CommandUsageError, parseCommand as parseArgs } from "./commands.js";
 import { readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import type { LoadedExecution } from "../application/run.js";
-import { rebuildReport } from "../application/report/index.js";
 import { formatError, redactDiagnostic, summarizeDiagnostic } from "../core/errors/diagnostics.js";
 import type { ProgressEvent } from "../core/progress/progress.js";
 import { openPluginRegistry, type PluginRegistry } from "../application/plugins/open-registry.js";
@@ -55,7 +53,6 @@ export async function runCli(
   argv: string[],
   io: CliIO = defaultIO,
   signal: AbortSignal = new AbortController().signal,
-  execution?: LoadedExecution,
   observers?: { onProgress?: ProgressListener },
 ): Promise<number> {
   let extensions: CliExtensions;
@@ -77,7 +74,7 @@ export async function runCli(
   const wrapped: CliIO = { out: text => live ? live.write(() => io.out(text)) : io.out(text),
     error: text => live ? live.write(() => io.error(text)) : io.error(text) };
   try {
-    return await runCliCommand(args, extensions, wrapped, signal, execution, event => {
+    return await runCliCommand(args, extensions, wrapped, signal, event => {
       live?.observe(event);
       observers?.onProgress?.(event);
     });
@@ -86,7 +83,6 @@ export async function runCli(
 
 async function runCliCommand(
   argv: string[], extensions: CliExtensions, io: CliIO, signal: AbortSignal,
-  execution: LoadedExecution | undefined,
   onProgress: ProgressListener,
 ): Promise<number> {
   const started = performance.now();
@@ -211,14 +207,86 @@ async function runCliCommand(
     report(`running the ${label} plugin`, result.error);
     return signal.aborted ? 130 : 1;
   }
+  if (command.kind === "workflow-list") {
+    try {
+      const { listWorkflows } = await import("../application/workflow.js");
+      const templates = await listWorkflows(command.patchPath);
+      io.out(command.json ? JSON.stringify(templates, null, 2) : templates.map(template => `${template.name}\t${template.version}`).join("\n"));
+      return 0;
+    } catch (error) { failure(error); return 2; }
+  }
+  if (command.kind === "run" || command.kind === "inspect" || command.kind === "dry-run" || command.kind === "warmup" || command.kind === "doctor") {
+    try {
+      phase = "config"; detail = `Loading ${command.file}`;
+      const { inspectWorkflow, exportWorkflow } = await import("../application/workflow.js");
+      const { maintainWorkflow } = await import("../application/workflow-maintenance.js");
+      const { apiKey, plugins, ...parameterOverrides } = command.overrides;
+      const env = { ...process.env };
+      if (apiKey !== undefined) {
+        if (!apiKey.trim()) throw new TypeError("API key must not be empty");
+        env.EVALUATOR_CLI_API_KEY = apiKey;
+        parameterOverrides.apiKeyEnv = "EVALUATOR_CLI_API_KEY";
+      }
+      secrets.push(...Object.entries(env).filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
+      const taskIds = "taskIdsFile" in command ? await readTaskIds(command.taskIdsFile) : undefined;
+      const options = { configPath: command.file, ...(plugins ? { plugins } : {}), ...networkOptions, env, signal,
+        parameterOverrides: { ...parameterOverrides, ...(taskIds ? { taskIds } : {}) },
+        ...(command.patchPath ? { patchPath: command.patchPath } : {}),
+        onEvent: (event: WorkflowEvent) => progress(event.progress ?? { phase: event.status === "running" ? "workflow" : "execute", message: `${event.path}: ${event.message}`, error: event.status === "failed" }),
+      };
+      if (command.kind === "doctor" || command.kind === "dry-run") {
+        const operation = command.kind === "doctor" ? "doctor" : "preview";
+        const results = await maintainWorkflow({ ...options,
+          ...(command.kind === "doctor" ? { onEvent: (event: WorkflowEvent) => io.error(event.message) } : {}),
+        }, { operation, options: {} });
+        if (command.kind === "dry-run" && results.every(item => item.status === "not-required"))
+          throw new TypeError("This workflow does not provide a preview operation; use inspect to view its plan");
+        io.out(JSON.stringify(results, null, 2));
+        return signal.aborted ? 130 : results.some(item => ["failed", "incomplete", "deferred"].includes(item.status)) ? 1 : 0;
+      }
+      if (command.kind === "inspect") {
+        if (command.output) { await exportWorkflow(options, command.output); io.out(command.output); }
+        else io.out(JSON.stringify(await inspectWorkflow(options), null, 2));
+        return 0;
+      }
+      if (command.kind === "warmup") {
+        const { warmupWorkflow } = await import("../application/workflow-warmup.js");
+        const results = await warmupWorkflow(options);
+        const active = results.filter(item => item.status !== "not-required");
+        if (!active.length) io.out("No warmup required");
+        for (const result of active) {
+          io.out("summary" in result && result.summary !== undefined ? result.summary : `${result.provider}: ${result.status}`);
+          if ("details" in result) for (const line of result.details ?? []) io.out(line);
+        }
+        return signal.aborted ? 130 : active.some(item => item.status !== "passed") ? 1 : 0;
+      }
+      const { Evaluator, EvaluatorRunError } = await import("../application/evaluator.js");
+      try {
+        const result = await new Evaluator().run({ ...options,
+          ...(command.resume === undefined ? {} : { resume: command.resume === null ? true : command.resume }) });
+        io.out(result.runDirectory);
+        return result.exitCode;
+      } catch (error) {
+        if (error instanceof EvaluatorRunError) { phase = error.phase; failure(error); if (error.result) io.out(error.result.runDirectory); return error.exitCode; }
+        throw error;
+      }
+    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
+  }
   if (command.kind === "cleanup-images") {
     try {
       phase = "cleanup";
       detail = command.execute ? "Removing evaluator image references" : "Previewing evaluator image references";
       secrets.push(...Object.entries(process.env).filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
+      if (command.file) {
+        const { maintainWorkflow } = await import("../application/workflow-maintenance.js");
+        const results = await maintainWorkflow({ configPath: command.file, signal, ...networkOptions,
+          ...(command.patchPath ? { patchPath: command.patchPath } : {}), onEvent: event => io.error(event.message) },
+          { operation: "cleanup-images", options: { all: command.all, execute: command.execute } });
+        io.out(JSON.stringify(results, null, 2));
+        return results.some(item => item.status === "failed" || item.status === "incomplete" || item.status === "deferred") ? 1 : 0;
+      }
       const { cleanupImages } = await import("../application/cleanup.js");
-      const result = await cleanupImages({ ...command, signal, ...(execution ? { execution } : {}),
-        onLoaded: config => secrets.push(...loadedConfigSecrets(config)) });
+      const result = await cleanupImages({ execute: command.execute, signal });
       io.out(JSON.stringify(result, null, 2));
       if (signal.aborted) return 130;
       return result.nodes.some(node => node.error || node.items.some(item => item.status === "failed")) ? 1 : 0;
@@ -226,9 +294,23 @@ async function runCliCommand(
   }
   if (command.kind === "retry") {
     try {
-      const { retryRun } = await import("../application/retry.js");
-      return await retryRun(command, signal, io.out, progress);
+      if (command.networkConfigPath) throw new TypeError("Workflow retry uses the network settings from the original run");
+      const { retryWorkflow } = await import("../application/workflow.js");
+      const result = await retryWorkflow(command.run, { signal, taskIds: command.taskIds,
+        ...(command.requestId ? { requestId: command.requestId } : {}), ...(command.reason ? { reason: command.reason } : {}),
+        ...(command.patchPath ? { patchPath: command.patchPath } : {}), onEvent: event => progress(event.progress ?? { phase: "retry", message: `${event.path}: ${event.message}`, error: event.status === "failed" }) });
+      if (result.request.status === "rejected") { io.error(`Retry request ${result.request.requestId}: ${result.request.message ?? "rejected"}`); return 2; }
+      if (result.queued) { io.out(`Retry request ${result.request.requestId}: ${result.request.status}; ${result.directory}`); return 0; }
+      io.out(`Workflow ${result.record.status}: ${result.directory}`);
+      return result.record.status === "completed" ? 0 : result.record.status === "cancelled" ? 130 : 1;
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
+  }
+  if (command.kind === "init-workflow") {
+    try {
+      const { initializeWorkflow } = await import("../application/workflow.js");
+      await initializeWorkflow(command.name, command.output, command.patchPath);
+      io.out(command.output); return 0;
+    } catch (error) { failure(error); return 2; }
   }
   if (command.kind === "init" || command.kind === "benchmark-list" || command.kind === "benchmark-info") {
     let registry: PluginRegistry | undefined;
@@ -244,19 +326,11 @@ async function runCliCommand(
     } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
     finally { await registry?.dispose(); }
   }
-  if (command.kind === "doctor") {
-    secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
-    try {
-      const { diagnoseExperiment } = await import("../application/inspection.js");
-      const result = await diagnoseExperiment({ ...command, onLoaded: config => secrets.push(...loadedConfigSecrets(config)) }, signal, io.error);
-      io.out(JSON.stringify(result, null, 2));
-      return signal.aborted ? 130 : result.checks.some(check => check.status === "failed") || result.network.status !== "passed" ? 1 : 0;
-    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  }
   if (command.kind === "report") {
     progress({ phase: "report", message: `Computing metrics and generating a report from saved results: ${resolve(command.directory)}` });
     try {
-      await rebuildReport(command.directory);
+      const { rebuildWorkflowReport } = await import("../application/workflow-report.js");
+      await rebuildWorkflowReport(command.directory);
       io.out(join(resolve(command.directory), "report.md"));
       return 0;
     } catch (error) {
@@ -264,63 +338,5 @@ async function runCliCommand(
       return 1;
     }
   }
-  if (command.kind === "inspect") {
-    secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "");
-    try {
-      const { inspectExperiment } = await import("../application/inspection.js");
-      const result = await inspectExperiment({ ...command, onLoaded: config => secrets.push(...loadedConfigSecrets(config)) });
-      io.out(JSON.stringify(result.document, null, 2));
-      if (result.runtimeCredentials)
-        io.error("Runtime credentials were replaced with an EVALUATOR_API_KEY environment reference. Provide credentials through that variable or the CLI when running the exported configuration.");
-      return 0;
-    } catch (error) { failure(error); return 2; }
-  }
-  if (command.kind === "dry-run") {
-    secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "", process.env.MODEL_API_KEY ?? "", process.env.JUDGE_MODEL_API_KEY ?? "");
-    try {
-      const { previewExperiment } = await import("../application/inspection.js");
-      const taskIds = await readTaskIds(command.taskIdsFile);
-      const result = await previewExperiment({ ...command, ...(taskIds === undefined ? {} : { taskIds }), onProgress: progress,
-        onLoaded: config => secrets.push(...loadedConfigSecrets(config)),
-        onDiagnostic: (current, error) => { phase = current; failure(error); } }, signal);
-      if (result.taskIds !== null) io.out(JSON.stringify({ taskIds: result.taskIds }));
-      return result.exitCode;
-    } catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  }
-  if (command.kind === "warmup") {
-    const { executeWarmup } = await import("../application/warmup.js");
-    secrets.push(command.overrides.apiKey ?? "", ...Object.entries(process.env)
-      .filter(([name]) => /(?:KEY|TOKEN|PASSWORD|SECRET)$/iu.test(name)).flatMap(([, value]) => value ? [value] : []));
-    try {
-      const taskIds = await readTaskIds(command.taskIdsFile);
-      const result = await executeWarmup({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal, onProgress: progress,
-        ...(execution ? { execution } : {}),
-        ...(command.patchPath ? { patchPath: command.patchPath } : {}), ...(taskIds ? { taskIds } : {}),
-        onLoaded: config => { secrets.push(...loadedConfigSecrets(config)); } });
-      io.out(`Image warmup: ${result.readyTaskIds.length}/${result.taskIds.length} tasks ready; ${result.failures.length} failed`);
-      for (const { taskId, failure } of result.failures) {
-        io.out(`${taskId}: [${failure.code}] ${failure.message}`);
-      }
-      return result.status === "ready" ? 0 : 1;
-    } catch (error) { failure(error); return signal.aborted ? 130 : ["arguments", "config", "bootstrap"].includes(phase) ? 2 : 1; }
-  }
-  // Keep full experiment imports outside the offline report path.
-  const { executeExperiment } = await import("../application/run.js");
-  secrets.push(command.overrides.apiKey ?? "", process.env[command.overrides.apiKeyEnv ?? ""] ?? "",
-    process.env.MODEL_API_KEY ?? "", process.env.JUDGE_MODEL_API_KEY ?? "");
-  let taskIds: string[] | undefined;
-  try { taskIds = await readTaskIds(command.taskIdsFile); }
-  catch (error) { failure(error); return signal.aborted ? 130 : 2; }
-  const outcome = await executeExperiment({ ...networkOptions, configPath: command.file, overrides: command.overrides, signal,
-    ...(command.patchPath === undefined ? {} : { patchPath: command.patchPath }),
-    ...(command.resume === undefined ? {} : { resume: command.resume === null ? true : command.resume }),
-    ...(taskIds === undefined ? {} : { taskIds }),
-    ...(execution === undefined ? {} : { execution }),
-    onProgress: progress,
-    onLoaded: config => { secrets.push(...loadedConfigSecrets(config)); },
-    onDiagnostic: diagnostic => { phase = diagnostic.phase; failure(diagnostic.error); },
-    onDeploymentLog: io.out,
-  });
-  if (outcome.result?.kind === "local" && outcome.diagnostics.length === 0) io.out(outcome.result.runDirectory);
-  return outcome.exitCode;
+  throw new Error("Unhandled CLI command");
 }

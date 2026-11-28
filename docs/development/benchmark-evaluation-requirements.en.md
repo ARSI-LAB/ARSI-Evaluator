@@ -1,5 +1,7 @@
 # Benchmark Requirements and Acceptance Guide
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./benchmark-evaluation-requirements.md)
 
 For dataset integrators and experiment reviewers: prerequisites, configuration, and verifying official requirements. Deliverables are task specifications, experiment YAML, and real-run acceptance results.
@@ -315,50 +317,54 @@ Without dedicated verify images, omit `verifier.environment.docker_image` and us
 `experiment.yaml` beside `my-benchmark/`:
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: harbor
-  config:
-    dataset: my-benchmark@1.0
-    source:
-      kind: local
-      path: ./my-benchmark
-    tasks:
-      root: tasks
-      id: task.name
-      expectedCount: 1
-    defaults:
-      workdir: /workspace
-      buildTimeoutSeconds: 1200
-    scoring:
-      primary: reward
-      passThreshold: 1
-      errorValues: [-1]
-  solver:
-    name: simpleagent
-    service: default
-  verifier:
-    name: harbor-shell
+  benchmark:
+    name: harbor
+    config:
+      dataset: my-benchmark@1.0
+      source:
+        kind: local
+        path: ./my-benchmark
+      tasks:
+        root: tasks
+        id: task.name
+        expectedCount: 1
+      defaults:
+        workdir: /workspace
+        buildTimeoutSeconds: 1200
+      scoring:
+        primary: reward
+        passThreshold: 1
+        errorValues: [-1]
+    solver:
+      name: simpleagent
+      service: default
+    verifier:
+      name: harbor-shell
 
-environment:
-  name: docker
-  platform: linux/amd64
-  config:
-    allowEmulation: false
+  environment:
+    name: docker
+    platform: linux/amd64
+    config:
+      allowEmulation: false
 
-scheduler:
-  name: local
-  concurrency: 1
+  scheduler:
+    name: local
+    concurrency: 1
 
-run:
-  timeoutSeconds: 2400
-  verifyTimeoutSeconds: 300
-  onError: continue
+  run:
+    timeoutSeconds: 2400
+    verifyTimeoutSeconds: 300
+    onError: continue
+
 
 output:
   directory: ./results/my-benchmark

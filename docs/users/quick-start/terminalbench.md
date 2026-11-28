@@ -1,5 +1,7 @@
 # Terminal-Bench 4.0 Quick Start
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [中文](./terminalbench.zh-CN.md)
 
 Run terminal tasks in Docker with the default SimpleAgent and inspect results from the task verifier. This page uses the repository's 4.0 configuration; `benchmark: terminalbench` alone defaults to 2.0.

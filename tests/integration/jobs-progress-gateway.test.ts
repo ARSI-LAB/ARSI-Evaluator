@@ -9,6 +9,8 @@ import { JobsClient } from "../../src/infrastructure/ray/jobs-client.js";
 import { ProgressPublisher, parseProgressSnapshot } from "../../src/core/progress/progress-wire.js";
 import { LiveOperation } from "../../src/core/progress/live-progress.js";
 import { createGatewayCertificate } from "../fixtures/ray/gateway-certificate.js";
+import { uploadJobsSeed } from "../../src/application/ray/jobs-seed-upload.js";
+import { JobsSeedUploads } from "../../src/infrastructure/ray/jobs-seed.js";
 
 const available = spawnSync("openssl", ["version"], { windowsHide: true }).status === 0;
 test.skipIf(!available)("authenticated Jobs gateway keeps previews in RAM and repopulates them after restart", async () => {
@@ -48,31 +50,50 @@ test.skipIf(!available)("authenticated Jobs gateway keeps previews in RAM and re
     const { port, client: activeClient } = await start();
     const denied = new JobsClient(`https://127.0.0.1:${port}`, await readFile(join(security, "cert.pem")), "incorrect-token");
     await expect(denied.call(`/jobs/${id}/progress`)).rejects.toMatchObject({ statusCode: 401 });
-    const submission = { config: { solver: { service: "default" } }, pluginVersions: {} };
+    const submission = { kind: "workflow", plan: {}, credentialValues: {} };
+    const seedJob = randomUUID(), seedRun = randomUUID(), seedSource = join(root, "seed-source");
+    await mkdir(seedSource);
+    const seedBytes = Buffer.alloc(1_048_593, 127);
+    await writeFile(join(seedSource, "binary.bin"), seedBytes);
+    const seedDigest = await uploadJobsSeed(activeClient, seedJob, seedRun, seedSource, AbortSignal.timeout(10_000));
+    const seedRestored = join(root, "restored-seed");
+    await new JobsSeedUploads(join(jobs, ".seeds")).materialize(seedJob, seedRun, seedDigest, seedRestored);
+    expect(await readFile(join(seedRestored, "binary.bin"))).toEqual(seedBytes);
     for (const invalid of [
       { ...submission, auth: "old-single-key" },
       { ...submission, auth: "old-single-key", serviceAuth: { default: "current-key" } },
-      { ...submission, serviceAuth: { judge: "missing-solver-key" } },
+      { ...submission, kind: "legacy", config: {} },
     ]) await expect(activeClient.call(`/jobs/${id}/submit`, invalid)).rejects.toMatchObject({ statusCode: 409 });
     const warmupId = randomUUID();
-    await activeClient.call(`/jobs/${warmupId}/submit`, { ...submission, operation: "warmup", serviceAuth: {} });
+    await activeClient.call(`/jobs/${warmupId}/submit`, { ...submission, operation: "maintenance", maintenance: { operation: "warmup", options: {} } });
     const staged = JSON.parse(await readFile(join(jobs, warmupId, "input.json"), "utf8"));
-    expect(staged).toMatchObject({ operation: "warmup", serviceAuth: {} });
-    const warmup = { status: "ready", taskIds: ["a"], readyTaskIds: ["a"], failures: [], preparationRounds: [],
-      placements: [{ taskId: "a", nodeId: "node-a" }], durationMs: 10 };
-    await writeFile(join(jobs, warmupId, "warmup.json"), JSON.stringify(warmup));
-    expect(await activeClient.call(`/jobs/${warmupId}/warmup`)).toEqual(warmup);
+    expect(staged).toMatchObject({ operation: "maintenance", maintenance: { operation: "warmup", options: {} }, credentialNames: [] });
+    expect(staged).not.toHaveProperty("credentialValues");
+    const credentialJob = randomUUID();
+    const secret = "memory-only-gateway-test-credential";
+    const credentialInput = { ...submission, requestedRunId: randomUUID(), credentialValues: { default: secret } };
+    await activeClient.call(`/jobs/${credentialJob}/submit`, credentialInput);
+    const stagedCredential = await readFile(join(jobs, credentialJob, "input.json"), "utf8");
+    expect(stagedCredential).not.toContain(secret);
+    expect(JSON.parse(stagedCredential)).toMatchObject({ credentialNames: ["default"] });
+    expect(await activeClient.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "default" })).toEqual({ value: secret });
+    await expect(activeClient.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "other" })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(denied.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "default" })).rejects.toMatchObject({ statusCode: 401 });
+    const warmup = [{ provider: "fixture", path: "fixture", status: "passed", output: {} }];
+    await writeFile(join(jobs, warmupId, "maintenance.json"), JSON.stringify(warmup));
+    expect(await activeClient.call(`/jobs/${warmupId}/maintenance`)).toEqual(warmup);
     const cleanupId = randomUUID();
-    await activeClient.call(`/jobs/${cleanupId}/submit`, { ...submission, operation: "cleanup-images", serviceAuth: {}, cleanup: { all: true, execute: false } });
-    const cleanup = { preview: true, nodes: [{ nodeId: "a", daemonId: "daemon-a", items: [] }] };
-    await writeFile(join(jobs, cleanupId, "image-cleanup.json"), JSON.stringify(cleanup));
-    expect(await activeClient.call(`/jobs/${cleanupId}/image-cleanup`)).toEqual(cleanup);
+    await activeClient.call(`/jobs/${cleanupId}/submit`, { ...submission, operation: "maintenance", maintenance: { operation: "cleanup-images", options: { all: true, execute: false } } });
+    const cleanup = [{ provider: "fixture", path: "fixture", status: "passed", output: { preview: true, nodes: [{ nodeId: "a", daemonId: "daemon-a", items: [] }] } }];
+    await writeFile(join(jobs, cleanupId, "maintenance.json"), JSON.stringify(cleanup));
+    expect(await activeClient.call(`/jobs/${cleanupId}/maintenance`)).toEqual(cleanup);
     for (const invalid of [
-      { ...submission, operation: "warmup", serviceAuth: { default: "not-allowed" } },
-      { ...submission, operation: "warmup", serviceAuth: {}, requestedRunId: randomUUID() },
-      { ...submission, operation: "unknown", serviceAuth: {} },
-      { ...submission, operation: "cleanup-images", serviceAuth: {}, cleanup: { all: true, execute: "yes" } },
-      { ...submission, operation: "cleanup-images", serviceAuth: { default: "forbidden" }, cleanup: { all: true, execute: true } },
+      { ...submission, operation: "warmup" },
+      { ...submission, operation: "maintenance", maintenance: { operation: "warmup", options: {} }, requestedRunId: randomUUID() },
+      { ...submission, operation: "unknown" },
+      { ...submission, operation: "maintenance", maintenance: { operation: "cleanup-images", options: false } },
+      { ...submission, operation: "maintenance", maintenance: { operation: "doctor", options: {} }, retry: {} },
+      { ...submission, requestedRunId: randomUUID(), config: { apiKey: "must-not-persist" } },
     ]) await expect(activeClient.call(`/jobs/${randomUUID()}/submit`, invalid)).rejects.toMatchObject({ statusCode: 409 });
     publisher = new ProgressPublisher((snapshot, signal) => client.call(`/jobs/${id}/progress`, snapshot, signal), ["fixture-secret"]);
     const operation = new LiveOperation(publisher.observe, { phase: "solve", message: "waiting", taskId: "task" }, ["fixture-secret"]);
@@ -83,6 +104,11 @@ test.skipIf(!available)("authenticated Jobs gateway keeps previews in RAM and re
     expect(JSON.stringify(await client!.call(`/jobs/${id}/logs`))).not.toContain("active tool output");
     expect(await readdir(join(jobs, id))).toEqual([]);
     await stop(); output = ""; await start();
+    await expect(client!.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "default" })).rejects.toMatchObject({ statusCode: 409 });
+    await client!.call(`/jobs/${credentialJob}/submit`, credentialInput);
+    expect(await client!.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "default" })).toEqual({ value: secret });
+    await client!.call(`/jobs/${credentialJob}/credential`, { scope: "run", release: true });
+    await expect(client!.call(`/jobs/${credentialJob}/credential`, { scope: "run", name: "default" })).rejects.toMatchObject({ statusCode: 409 });
     expect(parseProgressSnapshot(await client!.call(`/jobs/${id}/progress`)).publisherId).toBe("pending");
     await new Promise(done => setTimeout(done, 1200));
     const restored = parseProgressSnapshot(await client!.call(`/jobs/${id}/progress`));

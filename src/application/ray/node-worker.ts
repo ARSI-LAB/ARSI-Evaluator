@@ -1,35 +1,35 @@
-import { restoreNetworkTemplate, validateNetworkSnapshot } from "../../config/network-schema.js";
+import { parseNetworkProbePlan } from "../../infrastructure/network/probe-plan.js";
+import { resolveConfigurationCredentials } from "../../core/validation/credential.js";
+import { nativeResourceTransport } from "../../plugins/workflows/benchmark/component-resource.js";
+import { networkCredentialNames, restoreNetworkTemplate, validateNetworkSnapshot } from "../../config/network-schema.js";
 import { parseRuntimeServices } from "../../infrastructure/ray/runtime-services.js";
 import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { createRunComponents } from "../plugins/create-components.js";
+import { createPreparationComponents } from "./preparation-components.js";
 import { openPluginRegistry, type PluginRegistry } from "../plugins/open-registry.js";
 import { DEFAULT_METRICS } from "../../config/defaults.js";
-import { type LoadedConfig } from "../../config/loaded.js";
+import { type ExecutionConfig } from "../../core/contracts/config.js";
 import { PACKAGE_RUNTIME_ID } from "../../core/results/runtime-identity.js";
 import { loadPackageDigest } from "../../infrastructure/provenance/package.js";
 import { fingerprintConfig } from "../../core/results/run-manifest.js";
 import { assertSolverProvenance, resolveSolverProvenance } from "../../core/results/solver-provenance.js";
-import { runTask } from "../../core/execution/run-task.js";
 import { classifyError } from "../../core/errors/classify.js";
-import { redactDiagnostic } from "../../core/errors/diagnostics.js";
+import { credentialSecrets, redactDiagnostic } from "../../core/errors/diagnostics.js";
 import { EvaluatorError } from "../../core/errors/evaluator-error.js";
-import type { FileManifest, RunManifest, TaskPreparationTiming } from "../../core/contracts/result.js";
-import type { PreparedTask, JsonValue } from "../../core/contracts/task.js";
+import type { TaskPreparationTiming } from "../../core/contracts/result.js";
+import type { JsonValue } from "../../core/contracts/task.js";
 import { safeTaskKey } from "../../core/artifacts/artifacts.js";
 import { TransferClient } from "../../infrastructure/transfer/client.js";
-import { validateUploadManifest } from "../../infrastructure/transfer/protocol.js";
-import { assertWorkerVersions, localizePortableSelection, validateRemoteJob } from "../../infrastructure/ray/protocol.js";
+import { assertWorkerVersions, localizePortableSelection, portableCredentialNames, validateRemoteJob } from "../../infrastructure/ray/protocol.js";
 import { parseNodeConfig, type NodeConfig } from "../../infrastructure/ray/node-config.js";
 import { ProgressPublisher } from "../../core/progress/progress-wire.js";
 import { progressOperation } from "../../core/progress/progress-operation.js";
 import { assertEnvironmentTimeouts } from "../../core/preparation/preparation-validation.js";
 import { createTaskMaterializer } from "../../core/preparation/materialize-task.js";
-import type { TaskPreparation } from "../../core/preparation/task-preparation.js";
 
-export async function executeRemoteNode(input: unknown, node: NodeConfig, token: string, registry: PluginRegistry): Promise<unknown> {
+export async function executeRemotePreparation(input: unknown, node: NodeConfig, token: string, registry: PluginRegistry): Promise<unknown> {
   if (Number(process.versions.node.split(".")[0]) !== 24) throw new Error("Ray node requires Node 24");
   if (
     !input ||
@@ -44,9 +44,10 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
       throw new TypeError("Invalid Ray node identity");
   const nodeId = envelope.nodeId as string,
     hostname = envelope.hostname as string;
-  const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+  const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
   const remote = validateRemoteJob(envelope.remote, lookup);
-  if (remote.preparation && remote.preparation.nodeId !== nodeId)
+  if (remote.preparation?.mode !== "prepare") throw new TypeError("Native Ray worker accepts preparation only; evaluation requires a workflow dispatch");
+  if (remote.preparation.nodeId !== nodeId)
     throw new Error("Ray worker differs from prepared node placement");
   const key = { runId: remote.job.runId, taskId: remote.job.taskId, attemptId: remote.job.attemptId };
   await registry.loadRecordedPlugins(remote.pluginVersions);
@@ -60,12 +61,25 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
     timeoutMs: 5000,
     retries: 1,
   });
-  const bindings = parseRuntimeServices(await client.control(
+  const runtimeResponse = await client.control(
     "runtime",
     { key, nodeId, hostname, packageDigest, pluginVersions: versions },
     AbortSignal.timeout(30_000),
-  ), { preparation: remote.preparation?.mode === "prepare" });
-  const secrets = [...Object.values(bindings).map(binding => binding.auth.value), token];
+  );
+  const bindings = parseRuntimeServices(runtimeResponse, { preparation: remote.preparation?.mode === "prepare" });
+  const runtimeEnv = { ...process.env };
+  const allowed = [...new Set([...networkCredentialNames(remote.safeConfig.network?.template ?? {}), ...portableCredentialNames(remote.safeConfig, lookup)])];
+  if (runtimeResponse && typeof runtimeResponse === "object" && "credentialNames" in runtimeResponse) {
+    const names = runtimeResponse.credentialNames;
+    if (!Array.isArray(names) || names.some(name => typeof name !== "string" || !allowed.includes(name))) throw new TypeError("Invalid Ray resource credential names");
+    await Promise.all(names.map(async name => {
+      if (runtimeEnv[name]) return;
+      const response = await client.control("runtime", { key, nodeId, hostname, packageDigest, pluginVersions: versions, name }, AbortSignal.timeout(30_000));
+      if (!response || typeof response !== "object" || !("value" in response) || response.value !== null && typeof response.value !== "string") throw new TypeError("Invalid Ray credential response");
+      if (typeof response.value === "string") runtimeEnv[name] = response.value;
+    }));
+  }
+  const secrets = [...allowed.map(name => runtimeEnv[name]).filter((value): value is string => Boolean(value)).flatMap(credentialSecrets), ...Object.values(bindings).map(binding => binding.auth.value), token];
   const progress = new ProgressPublisher((snapshot, signal) => client.control("progress", { key, nodeId, snapshot }, signal), secrets);
   const cancellation = new AbortController();
   if (remote.preparation?.mode === "prepare" && remote.preparation.deadlineAt !== null) {
@@ -75,14 +89,13 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
     deadline.addEventListener("abort", () => cancellation.abort(deadline.reason), { once: true });
   }
   const heartbeatStop = new AbortController();
-  let uploading = false;
   const heartbeat = (async () => {
     let failures = 0;
     while (!heartbeatStop.signal.aborted) {
       try {
         const response = (await client.control(
           "control",
-          { key, nodeId, state: uploading ? "uploading" : "running" },
+          { key, nodeId, state: "running" },
           heartbeatStop.signal,
         )) as { cancelled?: unknown; reason?: unknown };
         if (typeof response.cancelled !== "boolean") throw new Error("Invalid Ray control response");
@@ -104,18 +117,22 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
   let preparationTiming: TaskPreparationTiming | undefined;
   const warnings = new Set<string>();
   try {
-    const benchmark = localizePortableSelection(remote.safeConfig.benchmark, "benchmark", node, lookup);
-    const environment = localizePortableSelection(remote.safeConfig.environment, "environment", node, lookup);
+    async function localized<T extends import("../../core/contracts/config.js").Selection>(selection: T, role: string): Promise<T> {
+      const local = localizePortableSelection(selection, role, node, lookup);
+      return { ...local, config: await resolveConfigurationCredentials(local.config, lookup(role, local.name)?.secretFields ?? [], async name => runtimeEnv[name]) };
+    }
+    const benchmark = await localized(remote.safeConfig.benchmark, "benchmark");
+    const environment = await localized(remote.safeConfig.environment, "environment");
     const service = remote.safeConfig.solver.service;
-    const config: LoadedConfig = {
-      ...(remote.safeConfig.network ? { network: restoreNetworkTemplate(remote.safeConfig.network.template, process.env), benchmarkName: remote.safeConfig.network.benchmarkName } : {}),
+    const config: ExecutionConfig = {
+      ...(remote.safeConfig.network ? { network: restoreNetworkTemplate(remote.safeConfig.network.template, runtimeEnv), benchmarkName: remote.safeConfig.network.benchmarkName } : {}),
       experiment: {
         hardware: remote.safeConfig.hardware ?? "npu",
         services: Object.fromEntries(Object.entries(bindings).map(([name, binding]) => [name, binding.model])),
         benchmark,
         environment,
-        solver: localizePortableSelection(remote.safeConfig.solver, "solver", node, lookup),
-        ...(remote.safeConfig.verifier ? { verifier: localizePortableSelection(remote.safeConfig.verifier, "verifier", node, lookup) } : {}),
+        solver: await localized(remote.safeConfig.solver, "solver"),
+        ...(remote.safeConfig.verifier ? { verifier: await localized(remote.safeConfig.verifier, "verifier") } : {}),
         metrics: [...DEFAULT_METRICS],
         reporter: { name: "markdown", config: {} },
         store: { name: "local", config: {} },
@@ -133,7 +150,7 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
       auths: Object.fromEntries(Object.entries(bindings).map(([name, binding]) => [name, binding.auth])),
       persisted: remote.safeConfig as unknown as JsonValue,
     };
-    const components = await createRunComponents(registry, config, node.configDirectory, message => {
+    const components = await createPreparationComponents(registry, config, node.configDirectory, message => {
       if (warnings.size < 8) warnings.add(redactDiagnostic(message, secrets)
         .replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, 4096));
     }, remote.imageConfigFingerprint);
@@ -161,114 +178,31 @@ export async function executeRemoteNode(input: unknown, node: NodeConfig, token:
       if (matches !== 1) throw new Error("Ray node task not uniquely present in locked source");
       return source;
     });
-    const preparationFile = remote.preparation
-      ? join(node.outputRoot, "preparations", key.runId, remote.preparation.roundId, `${safeTaskKey(key.taskId)}.json`)
-      : null;
-    let preparation: TaskPreparation = { state: "on-demand" };
-    if (remote.preparation?.mode === "prepare") {
-      const source = await validateSource();
-      if (!components.environment.materialize) throw new Error("Node environment lacks batch materialization");
-      const task = await progressOperation(progress.observe,
-        { phase: "prepare", message: "Reading node task files", taskId: key.taskId, attemptId: key.attemptId }, cancellation.signal,
-        activity => components.benchmark.prepare(remote.job.ref, source, cancellation.signal, activity));
-      if (task.input.id !== key.taskId || (task.transfer !== null && task.verifyEnv === null))
-        throw new Error("Invalid prepared task identity or transfer");
-      const timing: TaskPreparationTiming = preparationTiming = { taskId: key.taskId, status: "preparing", queuedAt: new Date().toISOString(),
-        startedAt: new Date().toISOString(), finishedAt: null, queueDurationMs: 0, durationMs: null, phaseDurationMs: {} };
-      const ready = await createTaskMaterializer(components, { sensitiveValues: secrets, onProgress: progress.observe })(
-        { state: "described", task }, cancellation.signal, { roundId: remote.preparation.roundId, attemptId: key.attemptId, timing,
-          concurrency: remote.preparation.concurrency, defaultTimeoutSeconds: remote.preparation.defaultTimeoutSeconds,
-          roundSignal: cancellation.signal,
-          ...(remote.preparation.environmentTimeoutSeconds === null ? {} : { environmentTimeoutSeconds: remote.preparation.environmentTimeoutSeconds }) });
-      const evidence = { task: ready.task, packageDigest, source, configFingerprint: remote.job.configFingerprint };
-      const digest = fingerprintConfig(evidence);
-      cancellation.signal.throwIfAborted();
-      await mkdir(dirname(preparationFile!), { recursive: true });
-      const temporary = `${preparationFile!}.${key.attemptId}.tmp`;
-      await writeFile(temporary, JSON.stringify(evidence) + "\n", { flag: "wx", mode: 0o600 });
-      await rename(temporary, preparationFile!);
-      cancellation.signal.throwIfAborted();
-      return { preparationDigest: digest, nodeId, hostname, environmentTimeouts: timing.environmentTimeouts,
-        ...(warnings.size ? { warnings: [...warnings] } : {}) };
-    }
-    if (remote.preparation?.mode === "execute") {
-      const evidence: unknown = JSON.parse(await readFile(preparationFile!, "utf8"));
-      // The coordinator received this digest from the preparation worker; verify
-      // the entire local receipt before trusting any private paths or image IDs.
-      if (fingerprintConfig(evidence as JsonValue) !== remote.preparation.digest)
-        throw new Error("Node preparation receipt differs from the ready barrier");
-      const receipt = evidence as { task: PreparedTask; packageDigest: string; source: JsonValue; configFingerprint: string };
-      if (receipt.packageDigest !== packageDigest || receipt.configFingerprint !== remote.job.configFingerprint ||
-        fingerprintConfig(receipt.source) !== fingerprintConfig(remote.source) || receipt.task.input.id !== key.taskId)
-        throw new Error("Node preparation receipt differs from dispatch");
-      preparation = { state: "ready", task: receipt.task };
-    }
-    const manifest: RunManifest = {
-      schemaVersion: 1,
-      evaluationKind: components.benchmark.evaluationKind ?? "quality",
-      runId: key.runId,
-      taskIds: [key.taskId],
-      source: remote.source,
-      configFingerprint: remote.job.configFingerprint,
-      pluginVersions: remote.pluginVersions,
-      ...(solverProvenance === undefined ? {} : { solverProvenance }),
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      durationMs: null,
-      status: "running",
-    };
-    let existing: RunManifest | undefined;
-    try {
-      await readFile(join(root, key.runId, "manifest.json"));
-      existing = await components.store.open(join(root, key.runId));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    if (existing) assertSolverProvenance(existing.solverProvenance, solverProvenance);
-    if (
-      existing &&
-      (existing.configFingerprint !== manifest.configFingerprint ||
-        fingerprintConfig(existing.source) !== fingerprintConfig(remote.source) ||
-        fingerprintConfig(existing.pluginVersions) !== fingerprintConfig(remote.pluginVersions))
-    )
-      throw new Error("Retained Ray attempt differs from locked dispatch");
-    if (!existing) await components.store.create(root, manifest, config.persisted);
-    const previous = (await components.store.listAttempts()).find(
-      attempt => attempt.key.attemptId === key.attemptId,
-    )?.record;
-    if (!previous) {
-      cancellation.signal.throwIfAborted();
-      const source = await validateSource();
-      await components.environment.recoverAttempts?.(remote.previousAttempts, cancellation.signal);
-      await components.benchmark.verificationRuntime?.recoverAttempts?.(remote.previousAttempts, cancellation.signal);
-      await runTask({ job: remote.job, preparation }, components, source, cancellation.signal, {
-        timeoutSeconds: remote.safeConfig.timeoutSeconds,
-        ...(remote.safeConfig.solveTimeoutSeconds === undefined ? {} : { solveTimeoutSeconds: remote.safeConfig.solveTimeoutSeconds }),
-        ...(remote.safeConfig.verifyTimeoutSeconds === undefined ? {} : { verifyTimeoutSeconds: remote.safeConfig.verifyTimeoutSeconds }),
-        ...(remote.safeConfig.scoreAfterSolveTimeout === undefined ? {} : { scoreAfterSolveTimeout: remote.safeConfig.scoreAfterSolveTimeout }),
-        includeTaskAnswer: remote.safeConfig.includeTaskAnswer === true,
-        sensitiveValues: secrets,
-        onProgress: progress.observe,
-      });
-    }
-    const record = (await components.store.listAttempts()).find(
-      attempt => attempt.key.attemptId === key.attemptId,
-    )?.record;
-    if (!record) throw new Error("Ray task has no durable result");
-    uploading = true;
-    await client.control("control", { key, nodeId, state: "uploading" }, AbortSignal.timeout(15_000));
-    const evidence = join(root, key.runId, "tasks", safeTaskKey(key.taskId), "attempts", key.attemptId);
-    const files = JSON.parse(await readFile(join(evidence, "files.json"), "utf8")) as FileManifest;
-    const upload = validateUploadManifest({
-      schemaVersion: 1,
-      key,
-      transferId: key.attemptId,
-      ...files,
-      result: record,
-    });
-    const receipt = await client.uploadAttempt(upload, evidence, AbortSignal.timeout(300_000));
-    // Keep node files by default. Explicit receipt-gated cleanup is a separate action.
-    return { receipt, nodeId, hostname, ...(warnings.size ? { warnings: [...warnings] } : {}) };
+    const preparationFile = join(node.outputRoot, "preparations", key.runId, remote.preparation.roundId, `${safeTaskKey(key.taskId)}.json`);
+    const source = await validateSource();
+    if (!components.environment.materialize) throw new Error("Node environment lacks batch materialization");
+    const task = await progressOperation(progress.observe,
+      { phase: "prepare", message: "Reading node task files", taskId: key.taskId, attemptId: key.attemptId }, cancellation.signal,
+      activity => components.benchmark.prepare(remote.job.ref, source, cancellation.signal, activity));
+    if (task.input.id !== key.taskId || (task.transfer !== null && task.verifyEnv === null))
+      throw new Error("Invalid prepared task identity or transfer");
+    const timing: TaskPreparationTiming = preparationTiming = { taskId: key.taskId, status: "preparing", queuedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(), finishedAt: null, queueDurationMs: 0, durationMs: null, phaseDurationMs: {} };
+    const ready = await createTaskMaterializer(components, { sensitiveValues: secrets, onProgress: progress.observe })(
+      { state: "described", task }, cancellation.signal, { roundId: remote.preparation.roundId, attemptId: key.attemptId, timing,
+        concurrency: remote.preparation.concurrency, defaultTimeoutSeconds: remote.preparation.defaultTimeoutSeconds,
+        roundSignal: cancellation.signal,
+        ...(remote.preparation.environmentTimeoutSeconds === null ? {} : { environmentTimeoutSeconds: remote.preparation.environmentTimeoutSeconds }) });
+    const evidence = { task: ready.task, packageDigest, source, configFingerprint: remote.job.configFingerprint };
+    const digest = fingerprintConfig(evidence);
+    cancellation.signal.throwIfAborted();
+    await mkdir(dirname(preparationFile), { recursive: true });
+    const temporary = `${preparationFile}.${key.attemptId}.tmp`;
+    await writeFile(temporary, JSON.stringify(evidence) + "\n", { flag: "wx", mode: 0o600 });
+    await rename(temporary, preparationFile);
+    cancellation.signal.throwIfAborted();
+    return { preparationDigest: digest, nodeId, hostname, environmentTimeouts: timing.environmentTimeouts,
+      ...(warnings.size ? { warnings: [...warnings] } : {}) };
   } catch (error) {
     await mkdir(root, { recursive: true });
     const message = redactDiagnostic(error instanceof Error ? error.message : "Ray node failed", secrets);
@@ -292,8 +226,7 @@ export async function startNodeWorker(): Promise<void> {
   process.env.EVALUATOR_CACHE_DIR ??= join(node.outputRoot, "cache");
   if (process.argv[2] === "--network-doctor") {
     const { NetworkRuntime } = await import("../../infrastructure/network/runtime.js");
-    const { diagnoseNetwork } = await import("../diagnostics/network.js");
-    const { parseNetworkProbePlan } = await import("../diagnostics/network-plan.js");
+    const { diagnoseNetwork } = await import("../../infrastructure/network/diagnostics.js");
     const { loadPackageDigest } = await import("../../infrastructure/provenance/package.js");
     const chunks: Buffer[] = [];
     let size = 0;
@@ -366,12 +299,12 @@ export async function startNodeWorker(): Promise<void> {
   const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { remote?: unknown };
   const registry = await openPluginRegistry(node.pluginPatchPath);
   try {
-    const result = await executeRemoteNode(input, node, token, registry);
+    const result = await executeRemotePreparation(input, node, token, registry);
     process.stdout.write(JSON.stringify(result) + "\n");
   } catch (error) {
-    // Preflight can fail before executeRemoteNode has obtained runtime auth or
+    // Preflight can fail before executeRemotePreparation has obtained runtime auth or
     // opened a run store. Preserve a bounded, credential-free diagnostic there too.
-    const remote = validateRemoteJob(input.remote, (role, name) => registry.ctx.evaluator.configTransport(role, name));
+    const remote = validateRemoteJob(input.remote, (role, name) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name));
     const root = join(node.outputRoot, "jobs", remote.job.attemptId);
     await mkdir(root, { recursive: true });
     const message = error instanceof Error ? error.message : "";

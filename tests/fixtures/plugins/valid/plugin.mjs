@@ -1,3 +1,4 @@
+import { registerNativeResource } from "arsi-evaluator";
 const fixtureState = () => globalThis.__t02FixtureState ??= {
   created: [], disposed: [], factoryInputs: [],
 };
@@ -32,18 +33,18 @@ export const inject = ["evaluator"];
 
 export function apply(ctx) {
   ctx.effect(() => () => fixtureState().disposed.push("fixture-seven-roles"));
-  ctx.evaluator.register("benchmark", "fixture-benchmark", validators.benchmark,
+  registerNativeResource(ctx, "benchmark", "fixture-benchmark", validators.benchmark,
     factory("benchmark", {}));
-  ctx.evaluator.register("environment", "fixture-environment", validators.environment,
+  registerNativeResource(ctx, "environment", "fixture-environment", validators.environment,
     factory("environment", {}));
-  ctx.evaluator.register("solver", "fixture-solver", validators.solver,
+  registerNativeResource(ctx, "solver", "fixture-solver", validators.solver,
     factory("solver", {}));
-  ctx.evaluator.register("metrics", "fixture-metrics", validators.metrics,
+  registerNativeResource(ctx, "metrics", "fixture-metrics", validators.metrics,
     factory("metrics", { name: "fixture-metrics", async compute() { return null; } }));
-  ctx.evaluator.register("reporter", "fixture-reporter", validators.reporter,
+  registerNativeResource(ctx, "reporter", "fixture-reporter", validators.reporter,
     factory("reporter", { async render() { return "fixture"; } }));
-  ctx.evaluator.register("store", "fixture-store", validators.store,
+  registerNativeResource(ctx, "store", "fixture-store", validators.store,
     factory("store", {}));
-  ctx.evaluator.register("scheduler", "fixture-scheduler", validators.scheduler,
+  registerNativeResource(ctx, "scheduler", "fixture-scheduler", validators.scheduler,
     factory("scheduler", {}));
 }

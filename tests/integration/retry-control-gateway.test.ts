@@ -15,7 +15,7 @@ test.skipIf(!available)("Jobs gateway delivers IPC requests to the active origin
   const root = await mkdtemp(join(tmpdir(), "retry-gateway-"));
   const jobs = join(root, "jobs"), security = join(root, "security");
   const jobId = randomUUID(), runId = randomUUID(), recoveryId = randomUUID();
-  const runRoot = join(jobs, jobId, "results", runId);
+  const runRoot = join(jobs, "workflow-runs", runId);
   const token = randomUUID() + randomUUID();
   let child: ChildProcess | undefined;
   let control: RetryControl | undefined;
@@ -30,7 +30,12 @@ test.skipIf(!available)("Jobs gateway delivers IPC requests to the active origin
     await mkdir(security); await mkdir(runRoot, { recursive: true });
     await writeFile(join(security, "jobs-token"), token);
     await createGatewayCertificate(security);
-    await writeFile(join(runRoot, "manifest.json"), JSON.stringify({ runId, pluginVersions: {} }));
+    await writeFile(join(runRoot, "run.json"), JSON.stringify({ runId }));
+    await writeFile(join(runRoot, "plan.json"), JSON.stringify({ fingerprint: "fixture-plan" }));
+    for (const id of [jobId, recoveryId]) {
+      await mkdir(join(jobs, id), { recursive: true });
+      await writeFile(join(jobs, id, "workflow-run.json"), JSON.stringify({ runId }));
+    }
     control = await RetryControl.start(runRoot, vi.fn());
     const admitted: string[] = [];
     await control.setAdmission(async requests => {
@@ -56,14 +61,16 @@ test.skipIf(!available)("Jobs gateway delivers IPC requests to the active origin
       });
     });
     const client = new JobsClient(`https://127.0.0.1:${port}`, await readFile(join(security, "cert.pem")), token);
-    const request = (requestId: string) => client.call(`/jobs/${jobId}/retry`, {
-      runId, requestId, taskIds: ["a"], reason: "network restored", pluginVersions: {}, serviceAuth: { default: "fixture-key" },
+    let activeJob = jobId;
+    const request = (requestId: string) => client.call(`/jobs/${activeJob}/retry`, {
+      kind: "workflow", runId, requestId, taskIds: ["a"], reason: "network restored", fingerprint: "fixture-plan",
     });
-    expect(await request("original")).toMatchObject({ requestId: "original", status: "accepted" });
-    expect(await request("original")).toMatchObject({ requestId: "original", status: "accepted" });
+    expect(await request("original")).toMatchObject({ active: true, request: { requestId: "original", status: "accepted" } });
+    expect(await request("original")).toMatchObject({ active: true, request: { requestId: "original", status: "accepted" } });
     states.set(jobId, "SUCCEEDED");
-    await controlTransaction(runRoot, async state => { state.recoveryJobId = recoveryId; });
-    expect(await request("recovery")).toMatchObject({ requestId: "recovery", status: "accepted" });
+    expect(await request("inactive")).toEqual({ active: false });
+    activeJob = recoveryId;
+    expect(await request("recovery")).toMatchObject({ active: true, request: { requestId: "recovery", status: "accepted" } });
     expect(admitted).toEqual(["original", "recovery"]);
     expect(submissions).toBe(0);
     await controlTransaction(runRoot, async state => { expect(state.accepting).toBe(true); });

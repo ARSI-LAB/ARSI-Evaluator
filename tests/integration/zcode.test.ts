@@ -1,9 +1,10 @@
+import { readBenchmarkResult } from "../fixtures/workflow/benchmark-plan.js";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { executeWarmup } from "../../src/application/warmup.js";
+import { warmupWorkflow } from "../../src/application/workflow-warmup.js";
 import { loadNetworkConfig } from "../../src/config/network.js";
 import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
 import { PINNED_NODE_IMAGE } from "../../src/infrastructure/containers/runtime-contract.js";
@@ -185,23 +186,21 @@ test.skipIf(!enabled("docker"))("ZCode uses the Docker model gateway and scores 
       "dataset/tasks/zcode/instruction.md": "Write answer to /workspace/result.txt.",
       "dataset/tasks/zcode/tests/test.sh": 'set -eu\ntest "$(cat /workspace/result.txt)" = answer\nprintf \'{"reward":1}\' > /logs/verifier/reward.json\n',
     });
-    await writeFile(configPath, JSON.stringify({
-      services: { fixture: { model, base_url: mock.endpoint, api: "openai-completions", api_key: "${ZCODE_FIXTURE_KEY}" } },
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", output: { directory: "./results" }, with: {
+      services: { fixture: { model, base_url: mock.endpoint, api: "openai-completions", apiKeyEnv: "ZCODE_FIXTURE_KEY" } },
       benchmark: { name: "harbor", config: { source: { kind: "local", path: "./dataset" } },
         solver: { name: "zcode", service: "fixture" } },
       environment: "docker",
       run: { maxTasks: 1, preparation: { environmentTimeoutSeconds: 1800, roundTimeoutSeconds: 1800 } },
-      output: { directory: "./results" },
+  }
     }));
     const networkConfigPath = process.env.EVALUATOR_ZCODE_TEST_NETWORK;
     const options = { configPath, signal: AbortSignal.timeout(1_800_000),
       ...(networkConfigPath === undefined ? {} : { networkConfigPath }) };
-    const warmup = await executeWarmup(options);
-    expect(warmup, JSON.stringify(warmup.failures)).toMatchObject({ status: "ready", failures: [] });
-    expect(warmup.readyTaskIds).toHaveLength(1);
+    const warmup = await warmupWorkflow(options);
+    expect(warmup).toContainEqual(expect.objectContaining({ status: "passed", summary: expect.stringContaining("1/1 tasks ready") }));
     expect(mock.requests).toEqual([]);
-    const result = await new Evaluator().run({ ...options, env: { ZCODE_FIXTURE_KEY: secret } });
-    if (result.kind !== "local") throw new Error("Expected evaluation on the local scheduler");
+    const result = await readBenchmarkResult(await new Evaluator().run({ ...options, env: { ZCODE_FIXTURE_KEY: secret } }));
     const [attempt] = result.snapshot.records;
     expect(attempt, JSON.stringify(attempt?.errors)).toMatchObject({ executionStatus: "completed", scoreStatus: "valid", verdict: { score: 1 },
       collection: { trajectory: "complete" }, solve: { finalText: answer, usage: { inputTokens: 30, outputTokens: 14, totalTokens: 44 } } });

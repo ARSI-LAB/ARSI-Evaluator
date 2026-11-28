@@ -1,5 +1,7 @@
 # Benchmark 评测要求与验收指南
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./benchmark-evaluation-requirements.en.md) | 中文
 
 本文面向负责接入数据集和验收实验的人员，回答“这个 Benchmark 要准备什么、怎么配置、怎样确认运行符合官方要求”。交付物是任务规格、实验 YAML 和真实运行的验收结果。
@@ -315,50 +317,54 @@ build_timeout_sec = 1200
 与 `my-benchmark/` 同目录的 `experiment.yaml`：
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: harbor
-  config:
-    dataset: my-benchmark@1.0
-    source:
-      kind: local
-      path: ./my-benchmark
-    tasks:
-      root: tasks
-      id: task.name
-      expectedCount: 1
-    defaults:
-      workdir: /workspace
-      buildTimeoutSeconds: 1200
-    scoring:
-      primary: reward
-      passThreshold: 1
-      errorValues: [-1]
-  solver:
-    name: simpleagent
-    service: default
-  verifier:
-    name: harbor-shell
+  benchmark:
+    name: harbor
+    config:
+      dataset: my-benchmark@1.0
+      source:
+        kind: local
+        path: ./my-benchmark
+      tasks:
+        root: tasks
+        id: task.name
+        expectedCount: 1
+      defaults:
+        workdir: /workspace
+        buildTimeoutSeconds: 1200
+      scoring:
+        primary: reward
+        passThreshold: 1
+        errorValues: [-1]
+    solver:
+      name: simpleagent
+      service: default
+    verifier:
+      name: harbor-shell
 
-environment:
-  name: docker
-  platform: linux/amd64
-  config:
-    allowEmulation: false
+  environment:
+    name: docker
+    platform: linux/amd64
+    config:
+      allowEmulation: false
 
-scheduler:
-  name: local
-  concurrency: 1
+  scheduler:
+    name: local
+    concurrency: 1
 
-run:
-  timeoutSeconds: 2400
-  verifyTimeoutSeconds: 300
-  onError: continue
+  run:
+    timeoutSeconds: 2400
+    verifyTimeoutSeconds: 300
+    onError: continue
+
 
 output:
   directory: ./results/my-benchmark

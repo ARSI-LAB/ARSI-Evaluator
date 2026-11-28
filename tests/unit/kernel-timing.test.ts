@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -42,7 +43,7 @@ test("timing evidence rejects mismatched means, missing steps and mixed devices"
 });
 
 test("Python flow collector rejects incomplete associations without NPU", () => {
-  execFileSync("python3", [fileURLToPath(new URL("./test_kernel_timing.py",import.meta.url))], {timeout:5000});
+  execFileSync(process.platform === "win32" ? "python" : "python3", [fileURLToPath(new URL("./test_kernel_timing.py",import.meta.url))], { timeout: 5000, cwd: tmpdir() });
 });
 
 test("flow audit supports direct and asynchronous host launch associations", () => {

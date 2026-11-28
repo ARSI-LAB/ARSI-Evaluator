@@ -212,7 +212,7 @@ export function resolveInput(configPath: string, input: UserConfig, profiles: Re
   return { source, origins };
 }
 
-/** Resolve public defaults without I/O. Authentication and environment expansion belong to loadConfig. */
+/** Resolve public defaults without I/O. Runtime credentials and environment expansion are supplied by workflow resources and the application. */
 export function resolveConfig(configPath: string, userConfig: UserConfig, profiles: ResolvedProfiles, overrides: CliOverrides = {}): EffectiveConfig {
   const { source } = resolveInput(configPath, userConfig, profiles, overrides);
   const services = Object.fromEntries(Object.entries(expectRecord(source.services, "services")).map(([name, value]) => {

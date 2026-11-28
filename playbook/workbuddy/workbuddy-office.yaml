@@ -1,10 +1,15 @@
-# Office 默认只使用上游规则评分。
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  # Office 默认只使用上游规则评分。
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: workbuddy
-  scenario: office
+  benchmark:
+    name: workbuddy
+    scenario: office
+output:
+  directory: ../../results/workbuddy/workbuddy-office

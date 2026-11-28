@@ -104,23 +104,26 @@ Benchmark 未注册时，进入[回退流程](#回退流程)，不要先用通�
 以 `init` 生成的配置为底稿，只加入用户确认的字段。保持渐进式配置：能由 Profile 补齐的字段不要重复写。结构通常是：
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: <benchmark>
-  # version / scenario 按用户确认或 Profile 默认
+  benchmark:
+    name: <benchmark>
+    # version / scenario 按用户确认或 Profile 默认
 
-# 可选：只写用户明确选择的字段
-environment:
-  platform: linux/amd64
-scheduler:
-  concurrency: 4
-run:
-  maxTasks: 5
+  # 可选：只写用户明确选择的字段
+  environment:
+    platform: linux/amd64
+  scheduler:
+    concurrency: 4
+  run:
+    maxTasks: 5
 output:
   directory: ./results/my-experiment
 ```
@@ -128,7 +131,7 @@ output:
 生成规则：
 
 - 模型服务至少一个；Benchmark 必填。其余字段仅在用户选择或目标 Benchmark 明确要求时写入。
-- 认证一律使用环境变量引用，例如 `${MODEL_API_KEY}`、`${HF_TOKEN}`、`${JUDGE_API_KEY}`。在最终摘要中列出需要导出的变量名。
+- 模型和裁判服务分别填写 `apiKeyEnv: MODEL_API_KEY` 和 `apiKeyEnv: JUDGE_API_KEY`，受限数据使用 `hfToken: {credential: HF_TOKEN}`。在最终摘要中列出需要导出的变量名。
 - 相对路径以实验 YAML 所在目录为基准；需要跨目录复用时优先写绝对路径。
 - 不写已废弃字段，不把旧版 `benchmarks` 数组、顶层 `model` 或 `solver` 混进新格式。
 - 写完把完整的最终 YAML 展示给用户；用户要求修改时只改相关字段并重新预检。
@@ -248,7 +251,7 @@ arsi-evaluator run <experiment.yaml> --progress plain
 arsi-evaluator run <experiment.yaml> --patch <cordis.patch.yaml> --network <network.yaml> --progress plain
 ```
 
-需要先枚举任务 ID 时可以用 `run <yaml> --dry-run`；它只输出解析后的 `taskIds`，不打印输出目录，也不校验路径。输出目录和相对路径语义以 `inspect` 的结果为准。
+需要先枚举任务 ID 时可以用 `run <yaml> --dry-run`；在 `benchmark.runtime` 资源返回的 `output.groups[].taskIds` 中查看每个分组的题目。输出目录和相对路径语义以 `inspect` 的结果为准。
 
 运行期间保持进程存活，不要 detach。结束后先判定运行状态，再交付：
 

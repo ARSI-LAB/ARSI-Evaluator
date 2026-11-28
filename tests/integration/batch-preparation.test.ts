@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { harness } from "../fixtures/engine/fakes.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { parseEffectiveConfig } from "../../src/config/effective.js";
 import { planBenchmarkRun } from "../../src/plugins/benchmarks/shared/plan-run.js";
 import { LocalScheduler } from "../../src/plugins/schedulers/local/scheduler.js";
@@ -13,11 +13,15 @@ import type { EnvironmentPreparationContext } from "../../src/core/contracts/env
 import type { ScheduledPreparation } from "../../src/core/contracts/preparation.js";
 
 const cleanups: (() => Promise<void>)[] = [];
+vi.setConfig({ testTimeout: 30_000 });
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup(); });
 
 test("20 live attempts refill only after verification and persistence, without waiting for their peers", async () => {
   const { components, config } = await fixture();
   components.scheduler = new LocalScheduler(20);
+  config.experiment.scheduler.config.concurrency = 20;
+  // Gates deliberately hold attempts while peers verify and persist; this test does not measure deadlines.
+  config.experiment.run.timeoutSeconds = 60;
   components.benchmark.enumerate = async function* () {
     for (let index = 0; index < 22; index++) yield { id: `t${index}`, recordKey: index };
   };
@@ -43,7 +47,7 @@ test("20 live attempts refill only after verification and persistence, without w
     if (args[0].key.taskId === "t7") { committing.resolve(); await committed.promise; }
     return commit(...args);
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try {
     await vi.waitFor(() => expect(started).toHaveLength(20), { timeout: 10_000 });
     gates[7]!.resolve();
@@ -63,7 +67,9 @@ test("20 live attempts refill only after verification and persistence, without w
     for (const gate of gates) gate.resolve();
     const snapshot = await running;
     expect(snapshot.records).toHaveLength(22);
-    expect(snapshot.records.every(record => record.executionStatus === "completed")).toBe(true);
+    expect(snapshot.records.filter(record => record.executionStatus !== "completed").map(record => ({
+      taskId: record.key.taskId, status: record.executionStatus, errors: record.errors,
+    }))).toEqual([]);
   }
 }, 30_000);
 
@@ -96,11 +102,12 @@ test("all solve and verify environments become ready before any attempt starts",
     if (++count === 6) await gate.promise;
     return spec;
   };
-  const running = runEngine({ components, config, signal: new AbortController().signal });
-  await vi.waitFor(() => expect(count).toBe(6));
-  expect(events).not.toContain("solve.environment");
-  expect(await components.store.listAttempts()).toHaveLength(0);
-  gate.resolve();
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  try {
+    await vi.waitFor(() => expect(count).toBe(6), { timeout: 10_000 });
+    expect(events).not.toContain("solve.environment");
+    expect(await components.store.listAttempts()).toHaveLength(0);
+  } finally { gate.resolve(); await running; }
   const snapshot = await running;
   expect(snapshot.records).toHaveLength(3);
   expect(snapshot.run.preparationRounds).toHaveLength(1);
@@ -120,8 +127,9 @@ test("a batch scheduler that omits a task cannot dispatch it with unprepared dep
     if (scheduled.pipeline) throw new Error("Expected a batch");
     return { tasks: scheduled.tasks.slice(1) };
   };
-  await expect(runEngine({ components, config, signal: new AbortController().signal }))
-    .rejects.toThrow("Batch preparation differs from locked task plan");
+  const result = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  expect(result.workflow.status).toBe("failed");
+  expect(JSON.stringify(result.workflow.steps)).toContain("Preparation ended without a receipt for every case");
   expect(inputs).toHaveLength(0);
   expect(await components.store.listAttempts()).toHaveLength(0);
 });
@@ -129,6 +137,7 @@ test("a batch scheduler that omits a task cannot dispatch it with unprepared dep
 test("model truncation prepares another round only for the failed task", async () => {
   const { components, config, events } = await fixture();
   components.scheduler = new LocalScheduler(1);
+  config.experiment.scheduler.config.concurrency = 1;
   config.experiment.run.onError = "continue";
   const calls = new Map<string, number>();
   components.solver.solve = async (input, _session, context) => {
@@ -137,7 +146,7 @@ test("model truncation prepares another round only for the failed task", async (
     return consumeDsh(dshStream(input.id === "a" && count === 1 ? interruptedResponse : undefined),
       context, "fixture-key");
   };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.run.status).toBe("completed");
   expect([...calls.entries()]).toEqual([["a", 2], ["b", 1], ["c", 1]]);
   expect(events.filter(event => event === "materialize")).toHaveLength(8);
@@ -161,24 +170,27 @@ test.each([undefined, 1, 2])("batch preparation concurrency %s preserves the bar
     return spec;
   };
   const prepareTasks = vi.spyOn(components.scheduler, "prepareTasks");
-  const running = runEngine({ components, config, signal: new AbortController().signal });
+  const running = runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   try {
-    await vi.waitFor(() => expect(started).toHaveLength(concurrency ?? 2));
+    await vi.waitFor(() => expect(started).toHaveLength(concurrency ?? 2), { timeout: 10_000 });
     expect(await components.store.listAttempts()).toHaveLength(0);
     if (concurrency !== 1) {
       gates.get("b")!.resolve();
-      await vi.waitFor(() => expect(started).toEqual(["a", "b", "c"]));
+      await vi.waitFor(() => expect(started).toEqual(["a", "b", "c"]), { timeout: 10_000 });
       gates.get("c")!.resolve();
       expect(inputs).toHaveLength(0);
       expect(await components.store.listAttempts()).toHaveLength(0);
     } else {
       gates.get("a")!.resolve();
-      await vi.waitFor(() => expect(started).toEqual(["a", "b"]));
+      await vi.waitFor(() => expect(started).toEqual(["a", "b"]), { timeout: 10_000 });
       gates.get("b")!.resolve();
-      await vi.waitFor(() => expect(started).toEqual(["a", "b", "c"]));
+      await vi.waitFor(() => expect(started).toEqual(["a", "b", "c"]), { timeout: 10_000 });
       expect(inputs).toHaveLength(0);
     }
-  } finally { for (const gate of gates.values()) gate.resolve(); }
+  } finally {
+    for (const gate of gates.values()) gate.resolve();
+    await running;
+  }
   const snapshot = await running;
   expect(snapshot.run.status).toBe("completed");
   expect(maximum).toBe(concurrency ?? 2);
@@ -192,10 +204,12 @@ test.each(["cancel", "deadline"] as const)("concurrent batch %s drains workers a
   config.experiment.run.preparation = { mode: "batch", concurrency: 2, ...(mode === "deadline" ? { roundTimeoutSeconds: 0.3 } : {}) };
   const controller = new AbortController();
   const cleanup = Promise.withResolvers<void>();
+  const bothStarted = Promise.withResolvers<void>();
   const started: string[] = [];
   let cancelled = 0, drained = 0, settled = false;
   components.environment.materialize = async (_spec, signal, _ready, _activity, context) => {
     started.push(context!.taskId);
+    if (started.length === 2) bothStarted.resolve();
     try {
       return await new Promise<never>((_resolve, reject) => {
         if (signal.aborted) reject(signal.reason);
@@ -203,16 +217,22 @@ test.each(["cancel", "deadline"] as const)("concurrent batch %s drains workers a
       });
     } finally { cancelled++; await cleanup.promise; drained++; }
   };
-  const running = runEngine({ components, config, signal: controller.signal }).catch(error => error).finally(() => { settled = true; });
+  if (mode === "deadline") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const running = runBenchmarkFixture({ components, config, signal: controller.signal }).catch(error => error).finally(() => { settled = true; });
   try {
-    await vi.waitFor(() => expect(started).toEqual(["a", "b"]));
+    await Promise.race([bothStarted.promise, running.then(() => { throw new Error("Batch ended before both workers entered preparation"); })]);
     if (mode === "cancel") controller.abort(new Error("controlled batch cancellation"));
-    await vi.waitFor(() => expect(cancelled).toBe(2));
+    else await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => expect(cancelled).toBe(2), { timeout: 10_000 });
     expect(settled).toBe(false);
     expect(await components.store.listAttempts()).toHaveLength(0);
-  } finally { cleanup.resolve(); await running; }
+  } finally {
+    cleanup.resolve();
+    if (mode === "deadline") vi.useRealTimers();
+    await running;
+  }
   expect(drained).toBe(2);
-  expect(started).toEqual(["a", "b"]);
+  expect(started.toSorted()).toEqual(["a", "b"]);
   const snapshot = await components.store.snapshot();
   expect(snapshot.run.status).toBe(mode === "cancel" ? "cancelled" : "error");
   expect(snapshot.run.preparationRounds?.[0]?.tasks).toEqual([
@@ -230,10 +250,26 @@ test("one failed concurrent batch task preserves successful preparations", async
     if (context?.taskId === "b") throw new Error("controlled task preparation failure");
     return spec;
   };
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(inputs.map(input => input.id).sort()).toEqual(["a", "c"]);
   expect(snapshot.records.find(record => record.key.taskId === "b")).toMatchObject({ executionStatus: "failed", solve: null });
   expect(snapshot.run.preparationRounds?.[0]?.tasks?.map(task => task.status)).toEqual(["ready", "error", "ready"]);
+});
+
+test("an aborting batch does not dispatch ready cases or assign another case's preparation failure", async () => {
+  const { components, config, inputs } = await fixture();
+  config.experiment.run.onError = "abort";
+  components.environment.materialize = async (spec, _signal, _ready, _activity, context) => {
+    if (context?.taskId === "b") throw new Error("controlled preparation failure for b");
+    return spec;
+  };
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
+  expect(snapshot.workflow.status).toBe("failed");
+  expect(snapshot.workflow.units).toHaveLength(0);
+  expect(inputs).toHaveLength(0);
+  expect(snapshot.records).toHaveLength(1);
+  expect(snapshot.records[0]).toMatchObject({ key: { taskId: "b" }, executionStatus: "failed", solve: null });
+  expect(snapshot.pendingTaskIds).toEqual(["a", "c"]);
 });
 
 test("batch deadline records started failures and leaves queued preparations pending without solving", async () => {
@@ -247,7 +283,7 @@ test("batch deadline records started failures and leaves queued preparations pen
     });
     throw new Error("unreachable");
   };
-  await runEngine({ components, config, signal: new AbortController().signal });
+  await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   const snapshot = await components.store.snapshot();
   expect(snapshot.run.status).toBe("error");
   expect(snapshot.records).toHaveLength(1);
@@ -264,7 +300,7 @@ test("a task preparation deadline stops an aborting batch without assigning its 
   components.environment.materialize = async (_spec, signal) => new Promise<never>((_resolve, reject) => {
     signal.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal });
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   expect(snapshot.records).toHaveLength(1);
   expect(snapshot.records[0]).toMatchObject({ key: { taskId: "a" }, errors: [expect.objectContaining({ code: "ENV_PREPARATION_TIMEOUT" })] });
   expect(snapshot.pendingTaskIds).toEqual(["b", "c"]);
@@ -276,7 +312,7 @@ test("a required environment failure aborts the batch without scores", async () 
   const { components, config } = await fixture();
   config.experiment.run.onError = "continue";
   components.environment.materialize = async () => { throw new Error("build unavailable"); };
-  await runEngine({ components, config, signal: new AbortController().signal });
+  await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   const snapshot = await components.store.snapshot();
   expect(snapshot.records).toHaveLength(3);
   expect(snapshot.records.every(record => record.executionStatus === "failed" && record.verdict === null)).toBe(true);
@@ -287,11 +323,11 @@ test("a required environment failure aborts the batch without scores", async () 
 test("resuming a failed preparation retains history and opens a new round", async () => {
   const { components, config } = await fixture();
   components.environment.materialize = async () => { throw new Error("first preparation failed"); };
-  await runEngine({ components, config, signal: new AbortController().signal });
+  await runBenchmarkFixture({ components, config, signal: new AbortController().signal });
   const first = await components.store.snapshot();
   await components.store.close();
   components.environment.materialize = async spec => spec;
-  const snapshot = await runEngine({ components, config, signal: new AbortController().signal,
+  const snapshot = await runBenchmarkFixture({ components, config, signal: new AbortController().signal,
     resumeDirectory: join(config.experiment.output.directory, first.run.runId) });
   expect(snapshot.run.preparationRounds?.map(round => round.status)).toEqual(["error", "ready"]);
   expect(snapshot.records).toHaveLength(3);

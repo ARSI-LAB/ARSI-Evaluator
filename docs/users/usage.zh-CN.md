@@ -1,5 +1,7 @@
 # 日常操作
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./usage.md) | 中文
 
 第一次使用先完成[两题快速上手](quick-start.zh-CN.md)。本文使用同一份 `first-run.yaml`；YAML 示例是修改片段，需要合并到已有同名字段中，不要重复写两个 `run:` 或 `benchmark:`。
@@ -170,7 +172,7 @@ arsi-evaluator run first-run.yaml --resume <RUN_ID>
 arsi-evaluator report results/first-run/<RUN_ID>
 ```
 
-不填写 ID 时由 Evaluator 查找可续跑的历史运行，明确填写可以避免选错。允许更新 Evaluator 代码并重新构建后续跑，无需增加参数；未完成或无效任务使用更新后的代码执行。来源、实验配置、外部插件、待评测 Bundle 和 Harness 版本仍需匹配；修改模型、选题、准备模式或并发后，应开始新 run。
+不填写 ID 时要求输出目录中只有一个已有运行；明确填写可避免选错。续跑要求计划、实现指纹、来源、模型和选题匹配。修改模型、步骤、插件或选题后，应开始新 run。
 
 从源码运行时，修改 Evaluator 代码后，需先在仓库根目录执行 `pnpm build`，再执行续跑命令。CLI 使用 `dist/` 中的构建产物，未重新构建时仍会执行旧代码：
 
@@ -179,7 +181,7 @@ pnpm build
 arsi-evaluator run first-run.yaml --resume <RUN_ID>
 ```
 
-续跑不再比较历史运行与当前 Evaluator 发布包、内置运行时、Solver 安装内容和 AgentX 桥接代码的摘要。原 manifest 中的版本与 Solver 身份记录保留；当前续跑向调度器提供当前代码与运行时的身份。使用 Ray 时，客户端、协调端与执行节点仍需部署相同的当前版本；已有结果的格式校验和执行模式兼容检查仍然有效。
+运行保存插件来源与实现指纹，续跑不会忽略版本变化。Ray 提交端、协调端和执行节点必须使用一致的包和插件。仅有旧版原生 manifest、没有工作流 plan.json/run.json 的目录不能直接续跑；保留原目录，使用原版本查看旧报告或新建工作流运行。
 
 续跑先处理未完成的资源清理，再新建 attempt 执行未完成或无效任务。已有有效结果，包括按规则计为有效零分的 Agent 解题超时，不会再次解题。AgentX 失败的测量点整点重跑，不续接到某条请求。
 
@@ -191,7 +193,7 @@ Tasks 表中的解题用时取已保存的 solve 阶段实际耗时，验证用�
 
 Markdown 报告面向阅读，展示运行概况、评分、耗时、模型用量、逐题结果和错误统计。只列各题当前结果，不展示费用指标、历史 attempt、准备轮次或指标字段说明。指标由已保存的运行数据计算，不调用模型生成分析；缺失的用量和计时显示为未知。完整数据（包括原始费用记录）保留在 `metrics.json`、`manifest.json` 和任务结果、轨迹等 JSON 文件中。
 
-新运行使用新的 Run ID，只生成该运行目录下的 `report.md` 和 `metrics.json`。显式执行 `--resume` 仍沿用 Run ID，但另建 `reports/resume-1/`、`reports/resume-2/` 等目录保存续跑报告；首次续跑前的报告保存在 `reports/initial/`。根目录的报告和指标始终更新为最新结果，`reports/current.json` 指向当前续跑报告目录。续跑中发生的自动重试、单独执行 `retry`、离线执行 `report` 均更新当前报告，不新增报告目录。已有的 `reports/revision-N/` 历史目录保留，之后不再新增这类目录。各目录中的证据链接均指向对应的原始任务文件。
+新运行使用新的 Run ID，根部 report.md 为当前报告，指标和逐题附件由报告插件保存。显式续跑沿用 Run ID，历史报告放在 reports/initial 和 reports/resume-N。自动重试、retry 和 report 更新当前报告，不新增续跑历史。
 
 ## 如何读结果
 
@@ -202,24 +204,28 @@ Markdown 报告面向阅读，展示运行概况、评分、耗时、模型用�
 每次 run 有独立目录；同一题的多次尝试分别保留：
 
 ```text
-results/first-run/<RUN_ID>/
-├── report.md                 # 首先打开的报告
-├── metrics.json              # 统计结果
-├── manifest.json             # 状态、选题、来源和版本
-├── config.yaml               # 内部执行配置，认证值不写入
-└── tasks/<任务目录>/attempts/<ATTEMPT_ID>/
-    ├── result.json           # 单次执行、评分和清理结果
-    ├── files.json            # 证据文件清单
-    ├── agent/                # session、轨迹、进程输出
-    ├── verifier/             # 验证阶段证据
-    └── artifacts/            # 收集的原始产物，可能是归档
+results/<RUN_ID>/
+├── plan.json
+├── run.json
+├── report.md
+├── reports/
+├── artifacts/
+└── benchmark-evidence/<RUN_ID>/
+    ├── manifest.json
+    ├── config.yaml
+    └── tasks/<task-key>/attempts/<ATTEMPT_ID>/
+        ├── result.json
+        ├── files.json
+        ├── agent/
+        ├── verifier/
+        └── artifacts/
 ```
 
 任务目录名可能是 ID 的哈希，请从报告链接或 `result.json` 的任务标识定位，不能假设目录名就是原题 ID。
 
 | 想知道什么 | 看哪里 | 含义 |
 | --- | --- | --- |
-| 整次运行是否结束 | 报告、manifest 的状态 | `completed` 表示流程完成，不表示全答对 |
+| 整次运行是否结束 | 报告、run.json 的状态 | `completed` 表示流程完成，不表示全答对 |
 | 单题是否执行完成 | `result.json` 的执行状态和错误 | 超时、取消、无效结果分别记录 |
 | 得了多少分 | verdict 的 `score` | 没有评分不能自动补 0 |
 | 是否测了二元正确性 | verdict 的 `passed` | `null` 表示没有测，不是错误或 False |

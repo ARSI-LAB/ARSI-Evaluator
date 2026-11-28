@@ -1,0 +1,3 @@
+- insert:
+    - id: workflow-compare
+      name: ./dist/index.js

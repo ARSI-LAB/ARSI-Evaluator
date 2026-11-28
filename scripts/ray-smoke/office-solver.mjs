@@ -1,10 +1,11 @@
+import { registerNativeResource } from "arsi-evaluator";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const inject = ["evaluator"];
 // Empty submission intentionally exercises infrastructure, not model quality.
 export function apply(ctx) {
-  ctx.evaluator.register("solver", "office-smoke", value => value, (config, runtime) => ({
+  registerNativeResource(ctx, "solver", "office-smoke", value => value, (config, runtime) => ({
     requirements: () => [],
     async solve(_task, session, context) {
       const process = await session.start({ executable: "sh", args: ["-c", "test ! -e /tests"], cwd: session.workdir, env: {}, input: null }, context.signal);

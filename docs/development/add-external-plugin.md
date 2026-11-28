@@ -15,10 +15,11 @@
 运行 `mkdir -p .scratch/external-plugin-example`，在该目录创建 `completed-count.mjs`。Evaluator 加载文件时会调用 `apply(ctx)`，这段代码把指标注册为 `external-completed-count`。
 
 ```js
+import { registerNativeResource } from "arsi-evaluator";
 export const inject = ["evaluator"];
 
 export function apply(ctx) {
-  ctx.evaluator.register("metrics", "external-completed-count", config => {
+  registerNativeResource(ctx, "metrics", "external-completed-count", config => {
     if (config === null || typeof config !== "object" || Array.isArray(config) || Object.keys(config).length !== 0) {
       throw new TypeError("external-completed-count accepts no configuration fields");
     }

@@ -4,18 +4,21 @@
 
 字段路径、类型、默认值和插件参数入口见[实验 YAML 字段参考](reference/experiment-yaml.zh-CN.md)。
 
-实验 YAML 可以只声明模型服务和 Benchmark，框架通过插件 Profile 补齐其余参数：
+实验 YAML 选择 `benchmark.evaluate` 模板后，只需在 `with` 中声明模型服务和 Benchmark，其余参数由插件 Profile 补齐：
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: workbuddy
-  scenario: office
+  benchmark:
+    name: workbuddy
+    scenario: office
 ```
 
 直接使用 [Office 示例](../../playbook/workbuddy/workbuddy-office.yaml) 或 [DeepSWE 示例](../../playbook/deepswe/deepswe.yaml)。DeepSWE 默认版本为 1.1；WorkBuddy 默认 code，支持 code、office、web、security。来源固定到现有 Git revision 或归档摘要，未知版本和场景会报错。
@@ -26,9 +29,9 @@ Terminal-Bench 与 SWE-bench Verified 分别可用 `benchmark.name: terminalbenc
 
 Terminal-Bench 的版本、任务镜像与支持条件见 [Terminal-Bench 指南](benchmarks/terminalbench.zh-CN.md)。
 
-![YAML 经 Profile 展开和配置校验，由 bootstrap 调用 Cordis 注册的工厂创建组件](imgs/02-framework-config-plugins.png)
+`inspect` 展开模板、Profile 和资源依赖并校验步骤连接；运行时才创建组件。模型认证使用凭据名称，计划和导出不保存真实值。
 
-`loadConfig` 使用已注册的 Profile 补齐配置，`bootstrap` 再按组件名称调用工厂。模型认证按 service 绑定，保存配置时只保留认证引用。组件注册和参数校验不会启动任务。
+下文未带 `schemaVersion` 的 YAML 是 `with` 参数片段；`run.timeoutSeconds` 等也指 `with.run` 的整题参数。顶层 `run` 控制整个工作流。结果目录优先填写顶层 `output.directory`；完整自定义步骤、模型对比和记忆流程见[自定义评测流程](workflows.zh-CN.md)。
 
 ## 配置名称与默认值
 
@@ -42,7 +45,7 @@ Terminal-Bench 的版本、任务镜像与支持条件见 [Terminal-Bench 指南
 
 Benchmark 的 Profile 是一组默认配置。例如选 `workbuddy` 的 `office` 场景后，会自动带上对应数据来源、验证器和默认预算。先使用默认组合，有需要再改；用 `inspect` 查看最终用了什么。
 
-Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local，Reporter 默认 Markdown。省略 `output` 或 `output.directory` 时，结果保存在仓库根目录的 `results/<Benchmark 名>/<YAML 文件名（不含扩展名）>/<runId>/`。例如 `playbook/gsm8k/gsm8k-agentbundle.yaml` 对应 `results/gsm8k/gsm8k-agentbundle/<runId>/`；Benchmark 名使用配置中的名称，WorkBuddy 的各场景均归入 `workbuddy`。默认路径不受 YAML 所在目录或命令启动目录影响；安装包运行时，以 Evaluator 包根目录代替源码仓库根目录。
+Environment 默认 Docker，Scheduler 默认 Local 并发 1，Store 默认 Local，Reporter 默认 Markdown。默认结果目录为 YAML 所在目录的 `results/<runId>/`。现有 Playbook 显式填写输出目录，继续使用其约定的位置。
 
 显式填写 `output.directory` 可以覆盖默认位置；此时相对路径仍相对实验 YAML。已有运行需要续跑时，应保留原来的输出目录配置；`inspect` 输出和运行保存的配置会记录实际输出目录。Harbor 缓存默认使用系统用户缓存目录，可通过 EVALUATOR_CACHE_DIR 或 benchmark.config.cacheDir 覆盖；Security 必须使用 Linux 原生目录，不能解压到 Windows 或 /mnt/c、/mnt/d。
 
@@ -190,20 +193,20 @@ run:
 
 GPQA 使用受限仓库 [Idavidrein/gpqa](https://huggingface.co/datasets/Idavidrein/gpqa)，OfficeQA Pro V2 也需要访问授权。先用自己的 Hugging Face 账号接受数据集访问条件并获得权限，再创建具有该仓库读取权限的 [User Access Token](https://huggingface.co/settings/tokens)。Token 不会替代数据集访问审批，模型 API key 也不能用作 HF_TOKEN。
 
-在 YAML 中像模型 key 一样直接引用环境变量，SDK 的 `env` 也可提供此值。以 GPQA 为例，完整配置见 [GPQA 全量配置](../../playbook/gpqa/gpqa-simpleagent.yaml)：
+在 YAML 中填写凭据引用，运行时从环境变量读取；SDK 的 `env` 也可提供此值。以 GPQA 为例，完整配置见 [GPQA 全量配置](../../playbook/gpqa/gpqa-simpleagent.yaml)：
 
 ```yaml
 benchmark:
   name: gpqa
   config:
-    hfToken: ${HF_TOKEN}
+    hfToken: {credential: HF_TOKEN}
 ```
 
 10 个 HF 记录型题库（gsm8k、mmlu、mmlu_pro、math500、gpqa、mgsm、triviaqa、humaneval、simpleqa、healthbench）、OfficeQA Pro V2 和 AgentX 均支持 `benchmark.config.hfToken`。DROP 直接下载 AllenAI 官方原始数据包，不使用 hfToken，配置仅支持 cacheDir。旧 `hfTokenEnv` 字段不再接受。公开数据可省略 hfToken，避免引入不必要的必填环境变量；GPQA 和 OfficeQA 示例显式声明认证。
 
 AgentX 的 Trace 数据集公开，原有示例不需要额外设置 HF_TOKEN。tokenizer 由用户随推理服务准备，按现有 tokenizer 字段提供相应模型的本机目录，不增加 tokenizer 认证参数。WorkBuddy 的现有公开归档不要求 HF token。
 
-配置保存和导出只保留变量引用，不保存展开值。Ray 消息及 Jobs 重试文件删除显式凭据字段，执行节点使用自身固定名称的 HF_TOKEN；未显式配置 hfToken 时也可从该变量读取。不自动读取 `hf auth login` 的本地缓存。WSL 中可以交互输入，避免把值写入命令历史：
+配置保存和导出只保留凭据名称。节点优先使用本地变量，缺少时通过认证 HTTPS 通道读取提交端声明的凭据；真实值不写入临时提交和补测文件。不自动读取 `hf auth login` 的本地缓存。WSL 中可以交互输入，避免把值写入命令历史：
 
 ```bash
 read -rsp 'HF token: ' HF_TOKEN
@@ -211,7 +214,7 @@ printf '\n'
 export HF_TOKEN
 ```
 
-也可将只有 token 的 UTF-8 文本文件放在 Windows，再在 WSL 中读取，例如 `export HF_TOKEN="$(cat /mnt/c/Users/your-name/Desktop/hf_token.txt)"`。不要把 token 值写入 YAML、命令参数、聊天或结果。使用其他环境变量名时直接引用，例如 `hfToken: ${DATASET_TOKEN}`；Ray 节点仍需配置 HF_TOKEN。认证请求建议使用官方 `HF_ENDPOINT=https://huggingface.co`；镜像对 gated 数据的支持可能不同。权限要求见 [HF gated datasets](https://huggingface.co/docs/hub/datasets-gated)。
+也可将只有 token 的 UTF-8 文本文件放在 Windows，再在 WSL 中读取，例如 `export HF_TOKEN="$(cat /mnt/c/Users/your-name/Desktop/hf_token.txt)"`。不要把 token 值写入 YAML、命令参数、聊天或结果。使用其他环境变量名时直接引用，例如 `hfToken: {credential: DATASET_TOKEN}`；节点优先使用本地变量，缺少时通过认证通道读取提交端声明的凭据。认证请求建议使用官方 `HF_ENDPOINT=https://huggingface.co`；镜像对 gated 数据的支持可能不同。权限要求见 [HF gated datasets](https://huggingface.co/docs/hub/datasets-gated)。
 
 ## 本机模型服务与 Docker
 
@@ -234,9 +237,9 @@ arsi-evaluator inspect experiment.yaml
 arsi-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-`inspect` 输出包含实际实验配置与网络设置的 JSON，保留密钥环境变量引用。它校验配置，不启动组件工厂、下载、任务枚举、容器或模型调用。模型设置从 YAML 读取；模型覆盖参数仅由 run 支持。
+`inspect` 输出包含展开步骤、资源、网络模板和实现指纹的计划 JSON，保留凭据名称。它校验配置，不启动组件工厂、下载、任务枚举、容器或模型调用。模型设置从 YAML 读取；模型覆盖参数仅由 run 支持。
 
-优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑允许更新 Evaluator 代码，配置、来源、外部插件和 Solver 身份仍需匹配，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
+优先级为：框架默认、父 Profile、当前版本/场景 Profile、用户 YAML、CLI。对象递归合并，数组整体替换。来源信息不参与配置指纹；等价简写和完整配置可以得到同样的指纹。保存结果使用内部执行配置；离线报告与用户 YAML 有独立读取入口。续跑要求保存计划与当前实现指纹匹配，配置、来源、插件和 Solver 身份也需匹配，详见[续跑说明](usage.zh-CN.md#续跑与重建报告)。
 
 ## Ray 与执行节点
 
@@ -275,7 +278,7 @@ run 在最外层根据 deployment 提交整实验；提交端不创建本地执�
 
 显式填写 deployment 时，managedLocal 缺省 false，表示连接已有集群；设置 true 才会准备配套本机集群。省略 deployment 和 Ray Client endpoint 时，简写配置自动补齐 kind: ray-jobs、managedLocal: true。远端部署不会自动安装插件。nodes 选择已存在的节点，不负责部署或扩容。节点选择、准备、执行和清理沿用同一容量规则。
 
-显式配置 scheduler.config.endpoint 且省略 deployment 时，由当前进程执行 Engine，通过 Ray Client 连接已有集群：
+显式配置 scheduler.config.endpoint 且省略 deployment 时，由当前进程执行工作流，通过 Ray Client 连接已有集群：
 
 ```yaml
 scheduler:

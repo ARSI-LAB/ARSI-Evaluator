@@ -44,7 +44,7 @@
 - 三项必选在同一轮完成，不拆分为多轮重复追问。
 - 条件必填项随所属必选项一并询问，不单独发起一轮：
   - 独立裁判：是否需要 Judge、绑定在哪个字段，完全由对应 Benchmark 的 Profile 决定，不得跨 Benchmark 套用。例如 SimpleQA / HealthBench / MATH-500 用 `benchmark.config.judgeService`，WorkBuddy 用 `benchmark.verifier.service`。`benchmark.verifier` 还必须提供已注册的 verifier `name`；只有 Profile 已提供 `name` 时才能只覆盖 `service`，否则 `inspect` 会报 `CONFIG_INVALID`。
-  - 受限数据：GPQA、OfficeQA Pro V2 等需要先申请访问权限，再提供 `HF_TOKEN` 变量名；YAML 写 `benchmark.config.hfToken: ${HF_TOKEN}`。
+  - 受限数据：GPQA、OfficeQA Pro V2 等需要先申请访问权限，再提供 `HF_TOKEN` 变量名；在 `with.benchmark.config` 中写 `hfToken: {credential: HF_TOKEN}`。
   - AISBench：需要远端 SSH 凭据时，只收集环境变量名，不收集密码。
 - 版本与场景默认使用 Profile 的 `defaultVersion` / `defaultScenario`，用户主动要求时才修改；版本号加引号，例如 `version: "4.0"`。
 - 用户可能只给一个 OpenAI 兼容网关；先按 `openai-completions` 处理，不要追问内部实现。
@@ -76,7 +76,7 @@
 
 - 只询问用户真正会关心的项，不逐项确认 `hardware`、`store`、`reporter` 等。
 - 不要在未确认宿主机资源时承诺“安全并发”；并发是上限，不是自动容量规划。
-- 不确定任务 ID 时，可运行 `arsi-evaluator run <yaml> --dry-run` 枚举；它只输出 `taskIds`，不打印输出目录，也不校验路径，且可能下载数据。输出路径以 `inspect` 的结果为准。
+- 不确定任务 ID 时，可运行 `arsi-evaluator run <yaml> --dry-run` 枚举；命令可能下载数据，所选题目见 `benchmark.runtime` 资源的 `output.groups[].taskIds`。输出路径以 `inspect` 的结果为准。
 - 改选题或并发后需要新建 run；不要把不同范围的运行当成同一次续跑。
 
 ## 不要问的字段

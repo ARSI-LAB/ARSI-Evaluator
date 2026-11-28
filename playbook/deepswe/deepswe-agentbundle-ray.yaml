@@ -1,15 +1,20 @@
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
-benchmark:
-  name: deepswe
-  version: "1.1"
-  solver:
-    name: agentbundle
-    config:
-      path: ./bundles/dsh-deepswe
-scheduler:
-  name: ray
-  concurrency: 2
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
+  benchmark:
+    name: deepswe
+    version: "1.1"
+    solver:
+      name: agentbundle
+      config:
+        path: ./bundles/dsh-deepswe
+  scheduler:
+    name: ray
+    concurrency: 2
+output:
+  directory: ../../results/deepswe/deepswe-agentbundle-ray

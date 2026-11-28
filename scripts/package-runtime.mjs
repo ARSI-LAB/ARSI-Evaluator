@@ -147,7 +147,7 @@ await cp(new URL("../src/runtimes/agentbundle/assets/run.mjs", import.meta.url),
 // Cluster Jobs runtime is shipped and hashed with the same package as the CLI.
 await mkdir(new URL("application/ray/entries/", distribution), { recursive: true });
 await mkdir(new URL("adapters/ray/", distribution), { recursive: true });
-for (const name of ["jobs-entry", "jobs-gateway", "jobs-retry-entry"]) {
+for (const name of ["jobs-entry", "jobs-gateway"]) {
   const code = await readFile(new URL(`../src/application/ray/entries/${name}.mjs`, import.meta.url), "utf8");
   await writeFile(new URL(`application/ray/entries/${name}.mjs`, distribution), code.replaceAll("../../../../dist/", "../../../"));
   await writeFile(new URL(`adapters/ray/${name}.js`, distribution), `await import("../../application/ray/entries/${name}.mjs");\n`);

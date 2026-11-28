@@ -22,6 +22,7 @@ COPY node_modules/agent-bundle-core/dist ./node_modules/agent-bundle-core/dist
 COPY dist/infrastructure/ray/python/requirements.txt ./ray-requirements.txt
 RUN pip install --no-cache-dir -r ray-requirements.txt "ray[default]==2.58.0"
 COPY dist ./dist
+COPY playbook/network ./playbook/network
 COPY scripts ./scripts
 COPY tests/fixtures/ray/plugin.mjs ./scripts/ray-smoke/controlled.mjs
 ARG EVALUATOR_SOURCE_FINGERPRINT="manual"

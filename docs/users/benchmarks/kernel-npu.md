@@ -1,5 +1,7 @@
 # Evaluating Existing Kernels on NPU (kernel-npu)
 
+Benchmark parameter fragments below belong under `with` in a `schemaVersion: 2`, `workflow: benchmark.evaluate` document. See the configuration guide for complete files and general workflows.
+
 > English | [Simplified Chinese](./kernel-npu.zh-CN.md)
 
 `kernel` validates existing candidates on Ascend NPUs, returning correctness, reference/candidate duration, speedup, and optional detailed hardware profiling. `kernel-replay` submits fixed artifacts without generation, repair, or model calls. Standalone use needs Evaluator, inputs, and NPU runtime. RSI generates candidates through its Proposer and evaluates frozen artifacts through the full SDK. This protocol performs correctness/timing/profiling; optimizers handle source diagnostics, model bottleneck analysis, and edits.

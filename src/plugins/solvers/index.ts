@@ -1,5 +1,6 @@
 import { modelWithLimits, type AgentLimits } from "./agent-limits.js";
 import { pickSolverToolPolicy } from "../../core/validation/solver-tool-policy.js";
+import { registerNativeResource } from "../workflows/benchmark/component-resource.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { SimpleAgentSolver, parseSimpleAgentConfig } from "./simpleagent.js";
 import { ChoiceLogprobsSolver, parseChoiceLogprobsConfig } from "./choice-logprobs.js";
@@ -23,25 +24,25 @@ function solverArgs<T extends AgentLimits>(runtime: PluginFactoryContext, config
 
 export function apply(ctx: Context): void {
   for (const name of ["qwencode", "kimicode", "minimaxcode", "opencode"] as const) {
-    ctx.evaluator.register("solver", name, value => parseNativeCodeConfig(name, value),
+    registerNativeResource(ctx, "solver", name, value => parseNativeCodeConfig(name, value),
       (config, runtime) => new NativeCodeSolver(name, ...solverArgs(runtime, config)));
   }
-  ctx.evaluator.register("solver", "claudecode", parseClaudeCodeConfig, (config, runtime) => new ClaudeCodeSolver(...solverArgs(runtime, config)));
-  ctx.evaluator.register("solver", "codex", parseCodexConfig, (config, runtime) => new CodexSolver(...solverArgs(runtime, config)));
-  ctx.evaluator.register("solver", "zcode", parseZCodeConfig, (config, runtime) => new ZCodeSolver(...solverArgs(runtime, config)));
-  ctx.evaluator.register("solver", "trae", parseTraeConfig, (config, runtime) => new TraeSolver(...solverArgs(runtime, config)));
-  ctx.evaluator.register("solver", "codebuddy", parseCodeBuddyConfig, (config, runtime) => new CodeBuddySolver(...solverArgs(runtime, config)));
-  ctx.evaluator.register("solver", "choice-logprobs", parseChoiceLogprobsConfig, (config, runtime) => {
+  registerNativeResource(ctx, "solver", "claudecode", parseClaudeCodeConfig, (config, runtime) => new ClaudeCodeSolver(...solverArgs(runtime, config)));
+  registerNativeResource(ctx, "solver", "codex", parseCodexConfig, (config, runtime) => new CodexSolver(...solverArgs(runtime, config)));
+  registerNativeResource(ctx, "solver", "zcode", parseZCodeConfig, (config, runtime) => new ZCodeSolver(...solverArgs(runtime, config)));
+  registerNativeResource(ctx, "solver", "trae", parseTraeConfig, (config, runtime) => new TraeSolver(...solverArgs(runtime, config)));
+  registerNativeResource(ctx, "solver", "codebuddy", parseCodeBuddyConfig, (config, runtime) => new CodeBuddySolver(...solverArgs(runtime, config)));
+  registerNativeResource(ctx, "solver", "choice-logprobs", parseChoiceLogprobsConfig, (config, runtime) => {
     const { model, auth } = bindSolverService(runtime);
     return new ChoiceLogprobsSolver(config, model, auth, runtime.environmentName);
   });
-  ctx.evaluator.register("solver", "kernel-replay", (value: unknown) => {
+  registerNativeResource(ctx, "solver", "kernel-replay", (value: unknown) => {
     const config = expectRecord(value, "kernel-replay");
     rejectUnknown(config, [], "kernel-replay");
     return {};
   }, () => new KernelReplaySolver());
-  ctx.evaluator.register("solver", "agentx-replay", parseAgentXReplayConfig, (config, runtime) => new AgentXReplaySolver(config, runtime));
-  ctx.evaluator.register(
+  registerNativeResource(ctx, "solver", "agentx-replay", parseAgentXReplayConfig, (config, runtime) => new AgentXReplaySolver(config, runtime));
+  registerNativeResource(ctx,
     "solver",
     "agentbundle",
     parseAgentBundleConfig,
@@ -65,11 +66,10 @@ export function apply(ctx: Context): void {
           ...(config.dify.registryPath === undefined ? {} : { registryPath: runtime.resolvePath(config.dify.registryPath) }),
         } }),
       }, runtime.network);
-      ctx.effect(() => () => solver.dispose(), "AgentBundle staging lifecycle");
       return solver;
     },
   );
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "solver",
     "simpleagent",
     parseSimpleAgentConfig,
@@ -91,7 +91,6 @@ export function apply(ctx: Context): void {
           ...(config.bundle?.webFetchTools === undefined ? {} : { webFetchTools: config.bundle.webFetchTools }),
         },
       );
-      ctx.effect(() => () => solver.dispose(), "simpleagent staging lifecycle");
       return solver;
     },
   );

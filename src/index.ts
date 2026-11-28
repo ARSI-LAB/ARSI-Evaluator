@@ -1,4 +1,18 @@
+export type { EvaluatorRegistry } from "./application/plugins/registry.js";
 export type * from "./core/contracts/hardware.js";
+export type * from "./core/contracts/workflow.js";
+export { registerNativeResource, prepareNativeResource, createNativeResource, nativeResourceEntries, hasNativeResource, nativeResourceTransport } from "./plugins/workflows/benchmark/component-resource.js";
+export { compileWorkflow } from "./core/workflow/compile.js";
+export { executeWorkflow, executeWorkflowUnit, recoverWorkflowUnit } from "./core/workflow/execute.js";
+export { WorkflowDefinitions } from "./core/workflow/catalog.js";
+export { collectionPort, workflowCollection, readWorkflowCollection } from "./core/workflow/collections.js";
+export { jsonPort, textPort, booleanPort, workflowValue, workflowObject } from "./core/workflow/values.js";
+export { scoreSetPort } from "./core/workflow/scores.js";
+export { startLocalProcess, runtimeProcessEnvironment } from "./infrastructure/process/local.js";
+export { parseWorkflowDocument, workflowConfiguration } from "./config/workflow-schema.js";
+export { runWorkflow, inspectWorkflow, exportWorkflow, initializeWorkflow, listWorkflows, retryWorkflow, type WorkflowOptions } from "./application/workflow.js";
+export { warmupWorkflow, type WorkflowWarmupResult } from "./application/workflow-warmup.js";
+export { rebuildWorkflowReport } from "./application/workflow-report.js";
 export type * from "./core/contracts/task.js";
 export { parseTaskAttachments, parseInputModalities } from "./core/validation/multimodal.js";
 export type * from "./core/contracts/result.js";
@@ -26,8 +40,6 @@ export type { CliOverrides, ModelConfig, ReasoningEffort, Selection, SolverSelec
 export type { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS } from "./config/defaults.js";
 export type { assertJsonValue, expectNonEmptyString, expectPositiveInteger, expectPositiveNumber, expectRecord, parseSelection, rejectUnknown } from "./core/validation/input.js";
 export type { assertServiceBindings, solverBinding } from "./core/policies/service-bindings.js";
-export type { LoadedConfig } from "./config/loaded.js";
-export { loadConfig } from "./application/config.js";
 export { resolveConfig } from "./config/resolve.js";
 export type { ConfigOrigins, ConfigResolution } from "./config/resolve.js";
 export { parseUserConfig } from "./config/user-schema.js";
@@ -38,12 +50,8 @@ export type { ConfigProfile, ProfileDefaults, ProfileLayer, ProfileRole, Resolve
 export { redactSecrets } from "./config/redact.js";
 export { redactDiagnostic } from "./core/errors/diagnostics.js";
 export type { PluginConfigValidator, PluginFactory, PluginFactoryContext, PluginRole, PreparedPlugin, RoleImplementations } from "./core/contracts/plugin.js";
-export { bootstrap, type BootstrappedComponents } from "./application/plugins/bootstrap.js";
-export type { EvaluatorRegistry } from "./application/plugins/registry.js";
-export {
-  Evaluator, EvaluatorRunError, type EvaluationResult, type EvaluatorRunOptions,
-  type DoctorOptions, type DoctorReport, type CleanupOptions,
-} from "./application/evaluator.js";
+export type { CleanupOptions, DoctorOptions, DoctorReport } from "./application/benchmark-maintenance.js";
+export { Evaluator, EvaluatorRunError, type EvaluationResult, type EvaluatorRunOptions } from "./application/evaluator.js";
 export type { ProgressEvent, ProgressListener, LiveProgress } from "./core/progress/progress.js";
 export type * from "./core/contracts/activity.js";
 export type * from "./core/contracts/components.js";
@@ -68,8 +76,7 @@ export type { BenchmarkDefinition, BenchmarkRecord, DefinedTask, BenchmarkDefini
 export { DockerEnvironment, type DockerEnvironmentOptions } from "./plugins/environments/docker/environment.js";
 export { PINNED_NODE_IMAGE, type DockerCommand } from "./infrastructure/containers/runtime-contract.js";
 export { runDockerCommand } from "./infrastructure/containers/command.js";
-export { runEngine, type EngineInput } from "./application/run-engine.js";
-export { rebuildReport, saveReport } from "./application/report/index.js";
+export { saveReport } from "./plugins/workflows/benchmark/report.js";
 export { SimpleAgentSolver, SimpleAgentError } from "./plugins/solvers/simpleagent.js";
 export { AgentBundleSolver, parseAgentBundleConfig } from "./plugins/solvers/agentbundle.js";
 export { AgentBundleError } from "./runtimes/agentbundle/cli.js";
@@ -92,7 +99,6 @@ export {
   type UploadManifest,
   type UploadReceipt,
 } from "./infrastructure/transfer/protocol.js";
-export { createDistributedReceiver } from "./plugins/stores/distributed-receiver.js";
 
 export { parseDockerPlatform, resolveDockerPlatform, PlatformCapabilityDetector, type DockerPlatformSelection, type PlatformResolution } from "./infrastructure/containers/platform.js";
 export type { Verifier, VerificationTask, VerificationEvidence } from "./core/contracts/verifier.js";
@@ -115,3 +121,6 @@ export type { KernelContract, KernelAssessment, KernelCheck, KernelEffectiveProt
 
 export { parseKernelTimingEvidence, auditKernelTimingSample } from "./plugins/benchmarks/operator/kernel/timing.js";
 export type { KernelTimingEvidence, KernelTimingSample, KernelTimingRow } from "./plugins/benchmarks/operator/kernel/timing.js";
+
+export { maintainWorkflow } from "./application/workflow-maintenance.js";
+export type { WorkflowMaintenanceResult } from "./core/workflow/maintenance.js";

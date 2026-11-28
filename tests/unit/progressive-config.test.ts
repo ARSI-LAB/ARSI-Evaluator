@@ -1,17 +1,17 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { stringify } from "yaml";
-import { exportConfig } from "../../src/config/export.js";
-import { loadConfig, loadSavedConfig } from "../../src/application/config.js";
+import { inspectWorkflow, exportWorkflow, readWorkflowConfiguration } from "../../src/application/workflow.js";
+import { openPluginRegistry } from "../../src/application/plugins/open-registry.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 import { resolveConfig, resolveInput } from "../../src/config/resolve.js";
 import { parseUserConfig } from "../../src/config/user-schema.js";
 import { readProfileDirectory } from "../../src/infrastructure/profiles/read.js";
 import { type ConfigProfile } from "../../src/config/profile-schema.js";
 import { fingerprintConfig } from "../../src/core/results/run-manifest.js";
-import { explainConfig } from "../../src/config/explain.js";
-import { assertJsonValue } from "../../src/core/validation/input.js";
+import { assertJsonValue, expectRecord } from "../../src/core/validation/input.js";
 
 const services = { default: { model: "fixture", base_url: "https://model.invalid/v1", api_key: "${TEST_MODEL_KEY}" } };
 const profiles = (await Promise.all(["agent-harness", "inference-engine", "operator"].map(category => readProfileDirectory(new URL(`../../src/plugins/benchmarks/${category}/profiles/`, import.meta.url))))).flat();
@@ -19,7 +19,10 @@ const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 async function file(value: unknown): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "progressive-config-")); directories.push(dir);
-  const path = join(dir, "experiment.yaml"); await writeFile(path, stringify(value)); return path;
+  const parameters = expectRecord(value, "fixture parameters");
+  const path = join(dir, "experiment.yaml"); await writeFile(path, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+    ...parameters, services: { default: { model: "fixture", base_url: "https://model.invalid/v1", apiKeyEnv: "TEST_MODEL_KEY" } },
+  } })); return path;
 }
 function user(benchmark: unknown, rest = {}) { return parseUserConfig({ services, benchmark, ...rest }); }
 function fingerprint(value: unknown): string { assertJsonValue(value); return fingerprintConfig(value); }
@@ -108,10 +111,10 @@ test("overriding only a service preserves Benchmark-owned solver defaults over t
   expect(resolveConfig("experiment.yaml", config, [...profiles, solver, benchmark]).solver).toEqual({ name: "agentbundle", config: { path: "./benchmark-default" }, service: "other" });
 });
 
-test("metric aliases expose their inherited dimensions with accurate profile provenance", async () => {
-  const path = await file({ services, benchmark: "deepswe", metrics: ["usage", "deepswe-score"] });
-  const config = await loadConfig(path, {}, {}, { allowMissingAuth: true });
-  expect(explainConfig(config)).toContain('metrics.1.config.dimensions.0: "f2p"  [profile deepswe]');
+test("metric aliases retain their inherited dimensions and profile provenance", () => {
+  const config = resolveInput("experiment.yaml", user("deepswe", { metrics: ["usage", "deepswe-score"] }), profiles);
+  expect(config.origins["metrics.1.config.dimensions.0"]).toBe("profile deepswe");
+  expect(config.source.metrics).toEqual([{ name: "usage", config: {} }, { name: "harbor-score", config: { dimensions: ["f2p", "p2p", "partial"] } }]);
 });
 
 test("Office explicit judge route opts in while Web can use an independent service", () => {
@@ -137,23 +140,24 @@ test("WorkBuddy profiles constrain incompatible Code tasks without assuming Offi
   expect(custom.environment.config.buildPipConstraints).toMatchObject({ "workbuddy/feature-medium-add_support_for_dependencies": [] });
 });
 
-test("loading and exporting preserve credentials as references and round trip fingerprints", async () => {
+test("loading and exporting preserve credential references and resolved workflow settings", async () => {
   const path = await file({ services, benchmark: "deepswe" });
-  const loaded = await loadConfig(path, {}, { TEST_MODEL_KEY: "do-not-export-me" });
-  const exported = await file(exportConfig(loaded));
-  const reloaded = await loadConfig(exported, {}, { TEST_MODEL_KEY: "do-not-export-me" });
-  expect(fingerprint(loaded.experiment)).toBe(fingerprint(reloaded.experiment));
-  expect(JSON.stringify(loaded.persisted)).not.toContain("do-not-export-me");
-  expect(explainConfig(loaded)).toContain("profile deepswe@1.1");
-  expect(explainConfig(loaded)).toContain("[generated]");
-  expect(explainConfig(loaded)).toContain('services.default.model: "fixture"  [user YAML]');
-  const view = await loadConfig(path, { model: "other" }, {}, { allowMissingAuth: true });
-  expect(explainConfig(view)).toContain('services.default.model: "other"  [CLI override]');
+  const loaded = await inspectWorkflow({ configPath: path, env: { TEST_MODEL_KEY: "do-not-export-me" } });
+  const destination = join(dirname(path), "export.yaml");
+  await exportWorkflow({ configPath: path, env: {} }, destination);
+  const reloaded = await inspectWorkflow({ configPath: destination, env: {} });
+  expect(reloaded.document).toEqual(loaded.document);
+  expect(JSON.stringify(loaded)).not.toContain("do-not-export-me");
+  expect(await readFile(destination, "utf8")).toContain("TEST_MODEL_KEY");
+  const view = await inspectWorkflow({ configPath: path, env: {}, parameterOverrides: { model: "other" } });
+  expect(benchmarkExperiment(view).services.default?.name).toBe("other");
+  const origin = resolveInput("experiment.yaml", user("deepswe"), profiles, { model: "other" });
+  expect(origin.origins["services.default.name"]).toBe("CLI override");
 });
 
 test("rejects legacy YAML rather than maintaining a second parser", async () => {
   const path = await file({ services, benchmarks: [{ name: "gsm8k" }] });
-  await expect(loadConfig(path, {}, {})).rejects.toThrow(/unknown field.*benchmarks/);
+  await expect(inspectWorkflow({ configPath: path, env: {} })).rejects.toThrow(/unknown field.*benchmarks/);
   expect(resolveInput("experiment.yaml", user("workbuddy"), profiles).source.run).toMatchObject({ onError: "continue" });
 });
 
@@ -188,21 +192,21 @@ test("explicit Jobs connections keep their endpoint and do not start managed loc
     .toThrow(/belongs to the coordinator/);
 });
 
-test("Ray shorthand equals explicit local deployment, exports with provenance and reloads", async () => {
+test("Ray shorthand and explicit deployment export the same connection and Benchmark settings", async () => {
   const input = { services, benchmark: "deepswe", scheduler: { name: "ray", concurrency: 4 } };
-  const path = await file(input);
-  const loaded = await loadConfig(path, {}, {}, { allowMissingAuth: true });
-  const explicit = await loadConfig(await file({ ...input, deployment: { kind: "ray-jobs", managedLocal: true } }), {}, {}, { allowMissingAuth: true });
-  expect(loaded.deployment).toEqual(explicit.deployment);
-  expect(fingerprint(loaded.experiment)).toBe(fingerprint(explicit.experiment));
-  expect(explainConfig(loaded)).toContain('deployment.managedLocal: true  [framework default]');
-  const reloaded = await loadConfig(await file(exportConfig(loaded)), {}, {}, { allowMissingAuth: true });
-  expect(reloaded.deployment).toEqual(loaded.deployment);
-  expect(fingerprint(reloaded.experiment)).toBe(fingerprint(loaded.experiment));
-  expect(await readFile(path, "utf8")).not.toContain("deployment:");
-  const coordinator = await loadSavedConfig(await file(loaded.persisted), {}, { allowMissingAuth: true, validatePlugins: false });
-  expect(coordinator.deployment).toBeUndefined();
-  expect(coordinator.experiment.scheduler).toEqual(loaded.experiment.scheduler);
+  const path = await file(input), registry = await openPluginRegistry();
+  try {
+    const loaded = await readWorkflowConfiguration(path, registry, {});
+    const explicit = await readWorkflowConfiguration(await file({ ...input, deployment: { kind: "ray-jobs", managedLocal: true } }), registry, {});
+    expect(loaded.deployment).toEqual(explicit.deployment);
+    expect(loaded.plan.document).toEqual(explicit.plan.document);
+    const exported = join(dirname(path), "export.yaml");
+    await exportWorkflow({ configPath: path, env: {} }, exported);
+    const reloaded = await readWorkflowConfiguration(exported, registry, {});
+    expect(reloaded.deployment).toEqual(loaded.deployment);
+    expect(reloaded.plan.document).toEqual(loaded.plan.document);
+    expect(await readFile(path, "utf8")).not.toContain("deployment:");
+  } finally { await registry.dispose(); }
 });
 
 test("packaged profiles participate in byte-level provenance", async () => {

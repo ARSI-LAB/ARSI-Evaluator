@@ -1,13 +1,18 @@
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { parse } from "yaml";
 import type { NetworkDocument } from "../core/contracts/network.js";
 import { networkDocument, expandNetworkTemplate } from "./network-schema.js";
 
 export async function loadNetworkConfig(path?: string, env: NodeJS.ProcessEnv = process.env): Promise<NetworkDocument> {
+  const { template, origin } = await loadNetworkTemplate(path, env);
+  return networkDocument(template, env, origin);
+}
+
+/** Read references without requiring the submitting host to own execution-node credentials. */
+export async function loadNetworkTemplate(path?: string, env: NodeJS.ProcessEnv = process.env) {
   const selected = path ?? env.EVALUATOR_NETWORK_CONFIG;
   const absolute = selected ? resolve(selected) : defaultNetworkConfigPath();
   let content: string;
@@ -26,13 +31,11 @@ export async function loadNetworkConfig(path?: string, env: NodeJS.ProcessEnv = 
   }
   const template: unknown = parse(content, { maxAliasCount: 50, uniqueKeys: true }) ?? {};
   // Validate/clone before saving a template; do not expand its references on another node.
-  return networkDocument(expandNetworkTemplate(template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined })), env, absolute);
+  return { template: expandNetworkTemplate(template, new Proxy({}, { get: (_target, key) => typeof key === "string" ? `\${${key}}` : undefined })), origin: absolute };
 }
 
 export function defaultNetworkConfigPath(): string {
   return join(homedir(), ".arsi-evaluator", "network.yaml");
 }
 
-export function recommendedNetworkConfigPath(): string {
-  return fileURLToPath(new URL("../../playbook/network/mirrors.yaml", import.meta.url));
-}
+export { recommendedNetworkConfigPath } from "./network-paths.js";

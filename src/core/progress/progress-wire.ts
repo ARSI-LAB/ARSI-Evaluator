@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ProgressEvent, ProgressListener, LiveProgress } from "./progress.js";
 import { LIVE_BUDGET, LIVE_LINES, ProgressSnapshots, safeProgress } from "./live-progress.js";
+import { validFailureMetadata } from "../errors/validation.js";
+import type { Failure } from "../contracts/result.js";
+import { rejectUnknown } from "../validation/input.js";
 
 export type ProgressSnapshot = { schemaVersion: 1; publisherId: string; sequence: number; events: ProgressEvent[]; ended?: boolean; ageMs?: number };
 const statuses: LiveProgress["status"][] = ["started", "updated", "completed", "failed", "cancelled"];
@@ -13,6 +16,13 @@ function text(value: unknown, maximum = 2048): asserts value is string {
 }
 function number(value: unknown): asserts value is number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER) throw new TypeError("Invalid progress number");
+}
+function progressSummary(input: unknown): NonNullable<ProgressEvent["summary"]> {
+  const summary = object(input);
+  number(summary.total); number(summary.prepared); number(summary.completed);
+  if (![summary.total, summary.prepared, summary.completed].every(Number.isSafeInteger) || summary.prepared > summary.total || summary.completed > summary.total)
+    throw new TypeError("Invalid progress summary");
+  return { total: summary.total, prepared: summary.prepared, completed: summary.completed };
 }
 export function parseProgressSnapshot(input: unknown): ProgressSnapshot {
   const root = object(input);
@@ -41,17 +51,44 @@ export function parseProgressSnapshot(input: unknown): ProgressSnapshot {
         ...(typeof live.preparation === "boolean" ? { preparation: live.preparation } : {}),
         ...(typeof live.parentId === "string" ? { parentId: live.parentId } : {}) };
     }
-    if (item.summary !== undefined) {
-      const summary = object(item.summary);
-      number(summary.total); number(summary.prepared); number(summary.completed);
-      if (![summary.total, summary.prepared, summary.completed].every(Number.isSafeInteger) || summary.prepared > summary.total || summary.completed > summary.total) throw new TypeError("Invalid progress summary");
-      event.summary = { total: summary.total, prepared: summary.prepared, completed: summary.completed };
-    }
+    if (item.summary !== undefined) event.summary = progressSummary(item.summary);
     return safeProgress(event);
   });
   return { schemaVersion: 1, publisherId: root.publisherId, sequence: root.sequence, events,
     ...(typeof root.ageMs === "number" ? { ageMs: root.ageMs } : {}),
     ...(typeof root.ended === "boolean" ? { ended: root.ended } : {}) };
+}
+
+/** Formal diagnostics and transient previews share the same presentation contract. */
+export function parseProgressEvent(input: unknown): ProgressEvent {
+  const item = object(input);
+  rejectUnknown(item, ["phase", "message", "taskId", "attemptId", "taskNumber", "taskTotal", "error", "warning", "failure", "transient", "live", "summary", "connection"], "progress event");
+  if (item.transient === true || item.live !== undefined) {
+    const parsed = parseProgressSnapshot({ schemaVersion: 1, publisherId: "event", sequence: 1, events: [item] }).events[0];
+    if (!parsed) throw new TypeError("Missing progress event");
+    return parsed;
+  }
+  text(item.phase, 128);
+  if (typeof item.message !== "string" || Buffer.byteLength(item.message) > 65536) throw new TypeError("Invalid progress message");
+  const event: ProgressEvent = { phase: item.phase, message: item.message };
+  if (item.summary !== undefined) event.summary = progressSummary(item.summary);
+  for (const field of ["taskId", "attemptId"] as const) if (item[field] !== undefined) { text(item[field]); event[field] = item[field]; }
+  for (const field of ["taskNumber", "taskTotal"] as const) if (item[field] !== undefined) { number(item[field]); event[field] = item[field]; }
+  for (const field of ["error", "warning", "transient"] as const) if (item[field] !== undefined) {
+    if (typeof item[field] !== "boolean") throw new TypeError("Invalid progress flag");
+    event[field] = item[field];
+  }
+  if (item.failure !== undefined) {
+    const failure = object(item.failure);
+    if (!validFailureMetadata(failure) || !["prepare", "install", "environment", "solve", "transfer", "verify", "collect", "cleanup", "store"].includes(String(failure.phase)))
+      throw new TypeError("Invalid progress failure");
+    event.failure = failure as Failure;
+  }
+  if (item.connection !== undefined) {
+    if (item.connection !== "connected" && item.connection !== "interrupted" && item.connection !== "unsupported") throw new TypeError("Invalid progress connection");
+    event.connection = item.connection;
+  }
+  return safeProgress(event);
 }
 
 export class ProgressPublisher {

@@ -4,24 +4,22 @@ import { join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { stringify } from "yaml";
 import { runCli } from "../../src/cli/main.js";
-import { loadConfig } from "../../src/application/config.js";
-import { bootstrap } from "../../src/application/plugins/bootstrap.js";
+import { inspectWorkflow } from "../../src/application/workflow.js";
+import { benchmarkExperiment } from "../fixtures/workflow/benchmark-plan.js";
 
 test.each([60, 120, 3600])("YAML durationSeconds=%s overrides the profile without other configuration changes", async durationSeconds => {
   await mkdir(".scratch", { recursive: true });
   const root = await mkdtemp(resolve(".scratch/agentx-duration-config-"));
   const file = join(root, "experiment.yaml");
-  await writeFile(file, stringify({
-    services: { default: { model: "fixture/model", base_url: "http://localhost:8000/v1", api_key: "${AGENTX_CONFIG_KEY}" } },
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+    services: { default: { model: "fixture/model", base_url: "http://localhost:8000/v1", apiKeyEnv: "AGENTX_CONFIG_KEY" } },
     benchmark: { name: "agentx", config: { durationSeconds } },
-  }));
+  } }));
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request"));
   try {
-    const config = await loadConfig(file, {}, { ...process.env, AGENTX_CONFIG_KEY: "fixture-key" });
+    const config = { experiment: benchmarkExperiment(await inspectWorkflow({ configPath: file, env: {} })) };
     expect(config.experiment.benchmark.config).toMatchObject({ mode: "standard", durationSeconds, seed: 42 });
     expect(config.experiment.run.timeoutSeconds).toBe(10800);
-    const components = await bootstrap(config, root);
-    await components.dispose();
     expect(fetch).not.toHaveBeenCalled();
   } finally {
     fetch.mockRestore();
@@ -37,10 +35,10 @@ test.each([
   const root = await mkdtemp(resolve(".scratch/agentx-config-"));
   const file = join(root, "removed-scenario.yaml");
   vi.stubEnv("AGENTX_CONFIG_KEY", "fixture-key");
-  await writeFile(file, stringify({
-    services: { default: { model: "fixture/model", base_url: "http://localhost:8000/v1", api_key: "${AGENTX_CONFIG_KEY}" } },
+  await writeFile(file, stringify({ schemaVersion: 2, workflow: "benchmark.evaluate", with: {
+    services: { default: { model: "fixture/model", base_url: "http://localhost:8000/v1", apiKeyEnv: "AGENTX_CONFIG_KEY" } },
     benchmark: { name: "agentx", ...selection },
-  }));
+  } }));
   const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected external request"));
   try {
     for (const args of [["doctor", file], ["run", file, "--dry-run"]]) {

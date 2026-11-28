@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, test, vi } from "vitest";
 import { callControlChannel, openControlChannel } from "../../src/infrastructure/ipc/control-channel.js";
-import { runEngine } from "../../src/application/run-engine.js";
+import { runBenchmarkFixture } from "../fixtures/engine/workflow.js";
 import { controlTransaction, RetryControl, submitRetry } from "../../src/application/retry-control/mailbox.js";
 import { harness } from "../fixtures/engine/fakes.js";
 
@@ -21,6 +21,8 @@ vi.mock("node:fs/promises", async importOriginal => {
       return actual.rename(...args);
     }) };
 });
+vi.setConfig({ testTimeout: 30_000 });
+
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   fault.target = ""; fault.remaining = 0; fault.code = "EPERM";
@@ -101,23 +103,22 @@ test("requests acknowledged during preparation are admitted once after the execu
   expect(release).toHaveBeenCalledTimes(1);
 });
 
-test("offline recovery claims a pending request atomically and rejects a second claim", async () => {
+test("offline recovery claims a pending request once and replays its saved receipt", async () => {
   const root = await directory(), value = harness(root);
   cleanups.push(() => value.dispose());
   value.config.experiment.run.taskIds = ["a"];
   const solve = value.components.solver.solve;
   value.components.solver.solve = async () => { throw new Error("ECONNRESET"); };
-  const failed = await runEngine({ ...value, signal: new AbortController().signal });
+  const failed = await runBenchmarkFixture({ ...value, signal: new AbortController().signal });
   const runRoot = join(value.config.experiment.output.directory, failed.run.runId);
   await value.components.store.close();
   expect((await submitRetry(runRoot, { requestId: "offline", taskIds: ["a"] })).request.status).toBe("pending");
   value.components.solver.solve = solve;
-  const recovered = await runEngine({ ...value, resumeDirectory: runRoot, retryTaskIds: ["a"], retryRequestId: "offline", signal: new AbortController().signal });
+  const recovered = await runBenchmarkFixture({ ...value, resumeDirectory: runRoot, retryTaskIds: ["a"], retryRequestId: "offline", signal: new AbortController().signal });
   expect(recovered.run.status).toBe("completed");
   expect(recovered.attemptHistory).toHaveLength(2);
   await value.components.store.close();
-  await expect(runEngine({ ...value, resumeDirectory: runRoot, retryTaskIds: ["a"], retryRequestId: "offline", signal: new AbortController().signal }))
-    .rejects.toThrow("already claimed");
+  expect((await runBenchmarkFixture({ ...value, resumeDirectory: runRoot, retryTaskIds: ["a"], retryRequestId: "offline", signal: new AbortController().signal })).run.runId).toBe(failed.run.runId);
   expect((await value.components.store.listAttempts())).toHaveLength(2);
 });
 
@@ -194,9 +195,9 @@ test("a failed manual admission does not cancel active tasks; the same ID can be
     return solve(...args);
   };
   const warnings: string[] = [];
-  const running = runEngine({ ...value, signal: new AbortController().signal, onProgress: event => {
-    if (event.phase === "task" && event.taskId === "a") failed.resolve();
-    if (event.warning) warnings.push(event.message);
+  const running = runBenchmarkFixture({ ...value, signal: new AbortController().signal, onEvent: event => {
+    if (event.status === "failed" && event.message === "Execution unit a: failed") failed.resolve();
+    if (event.path === "retry") warnings.push(event.message);
   } });
   try {
     await failed.promise;
@@ -227,10 +228,9 @@ test.each(["startup", "shutdown"])("control persistence failure at %s leaves suc
   fault.code = "EPERM";
   if (phase === "startup") fault.remaining = 7;
   const warnings: string[] = [];
-  const result = await runEngine({ ...value, runId, signal: new AbortController().signal, onProgress: event => {
+  const result = await runBenchmarkFixture({ ...value, runId, signal: new AbortController().signal, onProgress: event => {
     if (phase === "shutdown" && event.phase === "task" && event.summary?.completed === 3) fault.remaining = 7;
-    if (event.warning) warnings.push(event.message);
-  } });
+    }, onEvent: event => { if (event.path === "retry") warnings.push(event.message); } });
   expect(result.run.status).toBe("completed");
   expect(result.records.every(record => record.verdict?.score === 1)).toBe(true);
   expect(warnings.some(message => message.includes("injected file occupation"))).toBe(true);

@@ -13,10 +13,11 @@ const plugin = await readFile(new URL("cli/plugin.mjs", fixtures), "utf8");
 await writeFile(join(root, ".validation/base.mjs"), plugin);
 await writeFile(join(root, ".validation/plugin.mjs"), `import { apply as base } from "./base.mjs";
 import { writeFile } from "node:fs/promises";
+import { registerNativeResource } from "arsi-evaluator";
 export const inject = ["evaluator"];
 export function apply(ctx) {
   base(ctx);
-  ctx.evaluator.register("environment", "distribution-maintenance", x => x, (_, runtime) => ({
+  registerNativeResource(ctx, "environment", "distribution-maintenance", x => x, (_, runtime) => ({
     async prepare() { throw new Error("maintenance does not allocate sessions"); },
     async cleanupImages() { return { nodeId: "fixture-node", items: [] }; },
     async acquireImageLease() { return async () => writeFile(runtime.resolvePath("lease-released"), "released"); },

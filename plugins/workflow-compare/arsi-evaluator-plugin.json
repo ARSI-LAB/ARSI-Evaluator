@@ -1,0 +1,7 @@
+{
+  "id": "workflow-compare",
+  "entry": "./dist/index.js",
+  "bundled": false,
+  "patch": "cordis.patch.yaml",
+  "build": { "script": "scripts/build.mjs", "install": ["dist"] }
+}

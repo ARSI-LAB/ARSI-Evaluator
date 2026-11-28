@@ -79,7 +79,7 @@ export class TracerService {
 
     const health = await this.probe();
     if (health) {
-      const mismatch = this.databaseMismatch(health);
+      const mismatch = this.config.useCollectorDatabase ? null : this.databaseMismatch(health);
       if (mismatch) {
         this.fail(mismatch);
         return false;

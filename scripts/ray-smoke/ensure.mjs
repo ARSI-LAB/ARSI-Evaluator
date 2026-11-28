@@ -1,18 +1,17 @@
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, lstat, mkdir, mkdtemp, cp, realpath, rm } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { readFile, readdir, lstat, mkdir, mkdtemp, cp, realpath, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const bundleDirectory = process.env.EVALUATOR_BUNDLE_DIR?.trim() || null;
+const bundleMounts = JSON.parse(process.env.EVALUATOR_BUNDLE_MOUNTS || "{}");
 const composeFiles = [
   "scripts/ray-smoke/compose.yaml",
   "scripts/ray-smoke/jobs.yaml",
-  ...(bundleDirectory === null ? [] : ["scripts/ray-smoke/jobs-agentbundle.yaml"]),
 ];
 const composeArgs = composeFiles.flatMap(file => ["-f", file]);
 const imageName = "evaluator-ray-smoke:local";
@@ -124,7 +123,7 @@ async function serviceStates(env) {
       imageId: container.Image,
       running: container.State?.Running === true,
       health: container.State?.Health?.Status ?? null,
-      bundleDirectory: container.Config?.Env?.find(value => value.startsWith("EVALUATOR_BUNDLE_DIR="))?.slice("EVALUATOR_BUNDLE_DIR=".length) ?? null,
+      bundleDigest: container.Config?.Labels?.["org.arsi.evaluator.bundles"] ?? null,
     };
   }
   return states;
@@ -134,10 +133,10 @@ function healthy(state) {
   return state?.running === true && (state.health === null || state.health === "healthy");
 }
 
-export function deploymentPlan(fingerprint, image, states, expectedBundleDirectory = null) {
+export function deploymentPlan(fingerprint, image, states, expectedBundleDigest = null) {
   const build = image?.fingerprint !== fingerprint;
   const bundleMatches = ["head", "worker-a", "worker-b"].every(name =>
-    (states[name]?.bundleDirectory ?? null) === expectedBundleDirectory);
+    (states[name]?.bundleDigest ?? null) === expectedBundleDigest);
   const ready = !build && bundleMatches && requiredServices.every(name =>
     healthy(states[name]) && (!appServices.includes(name) || states[name].imageId === image.id));
   const forceRecreate = !build && !ready && requiredServices.some(name => states[name] && !healthy(states[name]));
@@ -187,14 +186,31 @@ async function waitForRay(headId, env, timeoutMs) {
   throw new Error("Ray did not register both evaluator workers before the readiness deadline");
 }
 
+/** Mount individual bundles so groups can use sources from different parent directories. */
+export async function bundleComposeOverride(input, directory) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Bundle mounts must be an object");
+  const mounts = [];
+  for (const [name, source] of Object.entries(input).sort(([a], [b]) => a.localeCompare(b, "en"))) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(name) || typeof source !== "string" || !isAbsolute(source) || /[\u0000-\u001f]/u.test(source)) throw new TypeError("Invalid bundle mount name or absolute source path");
+    const [parent, info, manifest] = await Promise.all([lstat(dirname(source)), lstat(source), lstat(join(source, "bundle.yaml"))]);
+    if (!parent.isDirectory() || parent.isSymbolicLink() || !info.isDirectory() || info.isSymbolicLink() || !manifest.isFile() || manifest.isSymbolicLink()) throw new Error(`Bundle must be a regular directory with a regular bundle.yaml: ${source}`);
+    mounts.push({ type: "bind", source: await realpath(source), target: `/builtin-experiment/bundles/${name}`, read_only: true, bind: { create_host_path: false } });
+  }
+  const digest = createHash("sha256").update(JSON.stringify(mounts)).digest("hex");
+  const services = Object.fromEntries(["head", "worker-a", "worker-b"].map(name => [name, {
+    labels: { "org.arsi.evaluator.bundles": digest },
+    volumes: mounts.map(mount => ({ ...mount, source: mount.source.replaceAll("$", () => "$$") })),
+  }]));
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, `bundles-${digest}.compose.json`);
+  await writeFile(path, JSON.stringify({ services }), { mode: 0o600 });
+  return { path, digest };
+}
+
 async function main() {
   if (process.argv.length !== 2) throw new Error("Usage: pnpm ray:ensure");
-  if (bundleDirectory !== null) {
-    const info = await lstat(bundleDirectory);
-    if (!info.isDirectory() || info.isSymbolicLink()) {
-      throw new Error(`AgentBundle directory must be a regular directory: ${bundleDirectory}`);
-    }
-  }
+  const bundles = await bundleComposeOverride(bundleMounts, join(root, ".scratch/ray-smoke"));
+  composeArgs.push("-f", bundles.path);
   const manifest = JSON.parse(await readFile(join(root, "dist/package-provenance.json"), "utf8"));
   const { deploymentNetwork } = await import("../network/deployment.mjs");
   const access = await deploymentNetwork();
@@ -210,7 +226,7 @@ async function main() {
     if (states[name] && states[name].networkDigest !== access.network.document.digest)
       throw new Error(`Network settings changed for ${name}; an administrator must explicitly recreate the Docker-in-Docker services before rerunning ensure. Existing daemons were not restarted.`);
   }
-  let plan = deploymentPlan(fingerprint, image, states, bundleDirectory);
+  let plan = deploymentPlan(fingerprint, image, states, bundles.digest);
   if (plan.ready) {
     try {
       await waitForRay(states.head.id, env, 10_000);
@@ -240,7 +256,7 @@ async function main() {
   ], env);
   const updatedImage = await imageState();
   const updatedStates = await serviceStates(env);
-  if (!deploymentPlan(fingerprint, updatedImage, updatedStates, bundleDirectory).ready) {
+  if (!deploymentPlan(fingerprint, updatedImage, updatedStates, bundles.digest).ready) {
     throw new Error("Compose finished, but the cluster containers do not match the built image");
   }
   await waitForRay(updatedStates.head.id, env, 60_000);

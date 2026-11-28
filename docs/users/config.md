@@ -4,18 +4,21 @@
 
 For field paths, types, defaults, and plugin-specific options, see the [experiment YAML field reference](reference/experiment-yaml.md).
 
-Experiment YAML can declare only model services and a benchmark; plugin profiles fill remaining fields:
+Select `benchmark.evaluate`, then declare model services and the benchmark under `with`; plugin profiles fill the remaining fields:
 
 ```yaml
-services:
-  default:
-    model: ${MODEL_NAME}
-    base_url: ${MODEL_ENDPOINT}
-    api_key: ${MODEL_API_KEY}
+schemaVersion: 2
+workflow: benchmark.evaluate
+with:
+  services:
+    default:
+      model: ${MODEL_NAME}
+      base_url: ${MODEL_ENDPOINT}
+      apiKeyEnv: MODEL_API_KEY
 
-benchmark:
-  name: workbuddy
-  scenario: office
+  benchmark:
+    name: workbuddy
+    scenario: office
 ```
 
 Use the [Office](../../playbook/workbuddy/workbuddy-office.yaml) or [DeepSWE](../../playbook/deepswe/deepswe.yaml) examples. DeepSWE defaults to 1.1; WorkBuddy defaults to code and supports code/office/web/security. Sources are pinned to existing Git revisions/archive digests. Unknown versions/scenarios fail.
@@ -26,13 +29,13 @@ Terminal-Bench/SWE-bench Verified use `benchmark.name: terminalbench/swebench`, 
 
 See [Terminal-Bench](benchmarks/terminalbench.md) for versions, task images, and requirements.
 
-![YAML expands through profiles and validation; bootstrap creates components through Cordis-registered factories](imgs/02-framework-config-plugins.png)
+`inspect` expands templates, profiles, and resource bindings and validates step connections. Execution creates components later. Credentials remain named references in saved plans.
 
-`loadConfig` fills configuration from registered profiles; `bootstrap` selects factories by component names. Authentication is service-bound; saved configuration retains references only. Registration/validation start no tasks.
+YAML fragments below without `schemaVersion` belong under `with`; task settings such as `run.timeoutSeconds` mean `with.run`. Top-level `run` controls the whole workflow. Prefer top-level `output.directory` for results. See [composable workflows](workflows.md) for custom steps, model comparisons, and memory evaluation.
 
 ## NPU and GPU Selection
 
-Select hardware at the experiment YAML root:
+Select hardware under `with`:
 
 ```yaml
 hardware: npu # npu or gpu; defaults to npu
@@ -63,7 +66,7 @@ Historical configurations without this field mean NPU. Omitted hardware and expl
 
 A benchmark profile supplies defaults. WorkBuddy `office`, for example, supplies sources, verifiers, and budgets. Start with defaults and override as needed; `inspect` shows final values.
 
-Defaults: Docker Environment, Local Scheduler concurrency 1, Local Store, Markdown Reporter. Omitted `output`/`output.directory` uses repository-root `results/<benchmark-name>/<YAML-basename>/<runId>/`. `playbook/gsm8k/gsm8k-agentbundle.yaml` maps to `results/gsm8k/gsm8k-agentbundle/<runId>/`. Names come from configuration; all WorkBuddy scenarios use workbuddy. This default is independent of YAML/current directories; installed packages use the Evaluator package root.
+Defaults: Docker Environment, Local Scheduler concurrency 1, Local Store, Markdown Reporter. The default output is `results/<runId>/` relative to the YAML directory; existing Playbooks explicitly preserve their chosen directories.
 
 Explicit `output.directory` overrides the location; relative values use the YAML directory. Keep original output settings for resume. Resolved/saved configurations record actual output paths, so file renaming does not regenerate them. Harbor defaults to system user cache, overridable by EVALUATOR_CACHE_DIR or benchmark.config.cacheDir. Security needs native Linux paths, not Windows or /mnt/c,/mnt/d.
 
@@ -190,20 +193,20 @@ Fewer remaining tasks runs the remainder; `offset` at/beyond candidate count fai
 
 GPQA uses gated [Idavidrein/gpqa](https://huggingface.co/datasets/Idavidrein/gpqa); OfficeQA Pro V2 also requires access approval. Accept dataset conditions with your HF account, obtain access, then create a read-authorized [User Access Token](https://huggingface.co/settings/tokens). Tokens do not replace approval; model keys are not HF_TOKEN.
 
-Reference environment variables directly in YAML, or supply SDK `env`. GPQA example; see [full configuration](../../playbook/gpqa/gpqa-simpleagent.yaml):
+Use named credential bindings in YAML; supply values through the environment or SDK `env`. GPQA example; see [full configuration](../../playbook/gpqa/gpqa-simpleagent.yaml):
 
 ```yaml
 benchmark:
   name: gpqa
   config:
-    hfToken: ${HF_TOKEN}
+    hfToken: {credential: HF_TOKEN}
 ```
 
 Ten HF record benchmarks (gsm8k, mmlu, mmlu_pro, math500, gpqa, mgsm, triviaqa, humaneval, simpleqa, healthbench), OfficeQA Pro V2, and AgentX support `benchmark.config.hfToken`. DROP downloads official AllenAI archives directly, supports cacheDir only, and uses no hfToken. Old `hfTokenEnv` is rejected. Omit authentication for public data to avoid required variables; GPQA/OfficeQA examples declare it explicitly.
 
 AgentX traces are public and existing examples require no extra HF_TOKEN. Prepare a matching tokenizer alongside inference services and provide its local path through existing tokenizer fields, without new authentication options. Current WorkBuddy public archives need no HF token.
 
-Saved/exported configuration keeps variable references, never expanded tokens. Ray messages/Jobs retry files strip explicit credentials; nodes use their own HF_TOKEN, also available when hfToken is omitted. Local `hf auth login` caches are not read automatically. WSL can prompt interactively to avoid shell history:
+Saved/exported plans retain credential names. Nodes prefer local values, then fetch missing declared credentials over authenticated HTTPS. Credentials are not written to temporary submissions or retry files. Local `hf auth login` caches are not read automatically. WSL can prompt interactively to avoid shell history:
 
 ```bash
 read -rsp 'HF token: ' HF_TOKEN
@@ -211,7 +214,7 @@ printf '\n'
 export HF_TOKEN
 ```
 
-Alternatively, read a token-only UTF-8 Windows file in WSL, e.g. `export HF_TOKEN="$(cat /mnt/c/Users/your-name/Desktop/hf_token.txt)"`. Keep values out of YAML, arguments, chats, and results. Other names may be referenced as `hfToken: ${DATASET_TOKEN}`; Ray still requires HF_TOKEN. Prefer official `HF_ENDPOINT=https://huggingface.co` for authenticated requests; gated mirror support varies. See [HF gated datasets](https://huggingface.co/docs/hub/datasets-gated).
+Alternatively, read a token-only UTF-8 Windows file in WSL, e.g. `export HF_TOKEN="$(cat /mnt/c/Users/your-name/Desktop/hf_token.txt)"`. Keep values out of YAML, arguments, chats, and results. Other names may be referenced as `hfToken: {credential: DATASET_TOKEN}`; nodes prefer local values and fetch missing declared credentials over the authenticated channel. Prefer official `HF_ENDPOINT=https://huggingface.co` for authenticated requests; gated mirror support varies. See [HF gated datasets](https://huggingface.co/docs/hub/datasets-gated).
 
 ## Local Model Services and Docker
 
@@ -234,9 +237,9 @@ arsi-evaluator inspect experiment.yaml
 arsi-evaluator inspect experiment.yaml --patch ./patch.yaml
 ```
 
-`inspect` prints JSON containing the effective experiment and network settings, with credential references preserved. It validates configuration without factories, downloads, task enumeration, containers, or model calls. Model settings come from YAML; model override flags are supported only by run.
+`inspect` prints the expanded workflow plan, resource bindings, network templates, and implementation fingerprints, with credential names preserved. It validates configuration without factories, downloads, task enumeration, containers, or model calls. Model settings come from YAML; model override flags are supported only by run.
 
-Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume allows updated Evaluator code while configuration, sources, external plugins, and solver identity must still match; see [resume](usage.md#resume-and-rebuild-reports).
+Precedence: framework defaults, parent profile, version/scenario profile, YAML, CLI. Objects merge recursively; arrays replace wholesale. Origin metadata is excluded from fingerprints; equivalent shorthand/full forms match. Results save internal execution configuration; offline reports/user YAML have separate readers. Resume requires the saved plan and implementation fingerprints to match; configuration, sources, plugins, and solver identity are also checked; see [resume](usage.md#resume-and-rebuild-reports).
 
 ## Ray and Execution Nodes
 
@@ -275,7 +278,7 @@ The outer run submits whole experiments through deployment; submitters create no
 
 Explicit deployment defaults managedLocal to false, connecting existing clusters; true prepares the managed cluster. Without deployment/Ray Client endpoint, shorthand fills kind: ray-jobs and managedLocal: true. Remote deployment installs no plugins automatically. nodes selects existing nodes without deploying/scaling; placement, preparation, execution, and cleanup share capacity rules.
 
-With explicit scheduler.config.endpoint and no deployment, the current process runs Engine and connects through Ray Client:
+With explicit scheduler.config.endpoint and no deployment, the current process runs the workflow and connects through Ray Client:
 
 ```yaml
 scheduler:

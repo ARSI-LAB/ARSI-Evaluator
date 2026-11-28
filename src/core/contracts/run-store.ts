@@ -18,6 +18,8 @@ export interface RunStore {
   open(runDir: string): Promise<RunManifest>;
   allocate(key: AttemptKey): Promise<AttemptPaths>;
   listAttempts(): Promise<AttemptSummary[]>;
+  /** Verified evidence for an already committed attempt; never allocates or executes work. */
+  readAttemptEvidence?(key: AttemptKey): Promise<{ record: AttemptRecord; files: FileManifest; root: string }>;
   currentTaskResult?(taskId: string): Promise<AttemptRecord | null>;
   updateRun(patch: Partial<Pick<RunManifest, "status" | "finishedAt" | "durationMs" | "preparationRounds" | "source" | "taskIds" | "failure" | "initializationFailures">>): Promise<void>;
   commit(record: AttemptRecord, files: FileManifest): Promise<void>;

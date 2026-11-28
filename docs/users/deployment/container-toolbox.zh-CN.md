@@ -1,5 +1,7 @@
 # 在管理容器中安装和运行评测
 
+文中的 Benchmark 参数片段应放在 `schemaVersion: 2`、`workflow: benchmark.evaluate` 的 `with` 下；完整配置与通用工作流请参阅配置指南。
+
 > [English](./container-toolbox.md) | 中文
 
 适用于已有 Docker Engine 的 Linux 服务器。宿主机需准备 Evaluator 仓库，并能访问 `/var/run/docker.sock`；Node.js、pnpm 和 Python 等依赖由管理容器提供。

@@ -1,7 +1,7 @@
 import type { ErrorCode } from "../../core/errors/registry.js";
 import { validFailureMetadata } from "../../core/errors/validation.js";
 import { upgradeStoredResult } from "../../core/results/stored-result.js";
-import { registerRunLocation } from "../../infrastructure/filesystem/run-index.js";
+import { fileRetry } from "../../infrastructure/filesystem/atomic-json.js";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, open, readFile, readdir, rename, rm, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -225,7 +225,6 @@ async function reclaimDeadWriter(directory: string): Promise<void> {
 }
 
 export class LocalRunStore implements RunStore {
-  constructor(private readonly runIndexDirectory?: string) {}
   private directory: string | null = null;
   private run: RunManifest | null = null;
   private token: string | null = null;
@@ -292,7 +291,6 @@ export class LocalRunStore implements RunStore {
         await atomicWrite(join(directory, "config.yaml"), serialized(safe));
         await atomicWrite(join(directory, "manifest.json"), serialized(manifest));
         this.run = structuredClone(manifest);
-        await registerRunLocation(manifest.runId, directory, this.runIndexDirectory);
       } catch (error) {
         await this.release();
         throw error;
@@ -402,6 +400,16 @@ export class LocalRunStore implements RunStore {
     return summaries.sort(
       (a, b) => run.taskIds.indexOf(a.key.taskId) - run.taskIds.indexOf(b.key.taskId) || a.ordinal - b.ordinal,
     );
+  }
+
+  async readAttemptEvidence(key: AttemptKey): Promise<{ record: AttemptRecord; files: FileManifest; root: string }> {
+    await this.queue;
+    const paths = this.paths(key);
+    const attempt = (await this.readAttempts([key.taskId])).find(item => sameKey(item.key, key));
+    if (!attempt?.record) throw new StoreError("STORE_RECORD_INVALID", "Attempt has no committed evidence");
+    const files = await json<FileManifest>(await checkedPath(paths.root, "files.json"));
+    await verifyFileManifest(paths.root, files);
+    return { record: attempt.record, files, root: paths.root };
   }
 
   async currentTaskResult(taskId: string): Promise<AttemptRecord | null> {
@@ -671,7 +679,7 @@ export class LocalRunStore implements RunStore {
             }) : text;
             await atomicWrite(join(temporary, path), relocated);
           }
-          if (create) await rename(temporary, target);
+          if (create) await fileRetry(() => rename(temporary, target));
         } finally { if (create) await rm(temporary, { recursive: true, force: true }); }
       };
       if (mode === "resume") {

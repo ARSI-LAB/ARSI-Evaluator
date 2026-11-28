@@ -1,22 +1,23 @@
+import { nativeResourceTransport, registerNativeResource } from "../workflows/benchmark/component-resource.js";
 import type { Context } from "@deepseek-ai/cordis";
 import { LocalScheduler } from "./local/scheduler.js";
 import { RayScheduler } from "./ray/scheduler.js";
-import { parseRayConfig } from "../../config/ray.js";
+import { parseRayConnectionConfig } from "../../config/ray.js";
+import { resolveRayConnectionConfig } from "../../infrastructure/ray/connection.js";
 import { DEFAULT_LOCAL_CONCURRENCY } from "../../config/defaults.js";
 import { expectRecord, rejectUnknown, expectPositiveInteger } from "../../core/validation/input.js";
 
 export function apply(ctx: Context): void {
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "scheduler",
     "ray",
-    parseRayConfig,
+    parseRayConnectionConfig,
     (config, runtime) => {
-      const scheduler = new RayScheduler(config, runtime, (role, name) => ctx.evaluator.configTransport(role, name));
-      ctx.effect(() => () => scheduler.close(), "Ray scheduler lifecycle");
+      const scheduler = new RayScheduler(resolveRayConnectionConfig(config), runtime, (role, name) => nativeResourceTransport(ctx.evaluator.workflows, role, name));
       return scheduler;
     },
   );
-  ctx.evaluator.register(
+  registerNativeResource(ctx,
     "scheduler",
     "local",
     (value: unknown) => {

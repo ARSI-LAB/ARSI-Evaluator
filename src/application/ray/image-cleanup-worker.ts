@@ -1,3 +1,4 @@
+import { nativeResourceTransport, prepareNativeResource } from "../../plugins/workflows/benchmark/component-resource.js";
 import { resolve } from "node:path";
 import { openPluginRegistry } from "../plugins/open-registry.js";
 import { loadPackageDigest } from "../../infrastructure/provenance/package.js";
@@ -35,10 +36,10 @@ async function withNodeEnvironment<T>(input: unknown, node: NodeConfig,
     if (Object.values(expected).some(version => typeof version !== "string")) throw new TypeError("Invalid plugin versions");
     assertWorkerVersions(expected as Record<string, string>, registry.pluginVersions,
       expectNonEmptyString(payload.packageDigest, "package digest"), await loadPackageDigest());
-    const lookup = (role: string, name: string) => registry.ctx.evaluator.configTransport(role, name);
+    const lookup = (role: string, name: string) => nativeResourceTransport(registry.ctx.evaluator.workflows, role, name);
     const selection = localizePortableSelection(expectRecord(payload.environment, "environment") as unknown as import("../../core/contracts/config.js").Selection,
       "environment", node, lookup);
-    const environment = await registry.ctx.evaluator.prepare("environment", selection)({
+    const environment = await prepareNativeResource(registry.ctx, "environment", selection)({
       services: {}, solverService: "", configDirectory: node.configDirectory,
       resolvePath: path => resolve(node.configDirectory, path), ...(node.pluginPatchPath ? { pluginPatchPath: node.pluginPatchPath } : {}),
     });
