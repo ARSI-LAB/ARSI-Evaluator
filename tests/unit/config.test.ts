@@ -16,6 +16,16 @@ async function file(value: unknown, filename = "experiment.yaml") {
 }
 const load = (path: string) => loadConfig(path, {}, { KEY: "secret" });
 
+test("GSM8K's explicit task classification preserves the resume identity of historical task configs", async () => {
+  const current = await load(await file({ services, benchmark: "gsm8k" }));
+  expect(current.experiment.benchmark.evaluationScenario).toBe("task");
+  const path = await file({ ...current.experiment, services: { default: { ...current.experiment.services.default, apiKey: "${KEY}" } },
+    benchmark: { name: "gsm8k", config: current.experiment.benchmark.config } });
+  const historical = await loadSavedConfig(path, { KEY: "secret" });
+  expect(historical.experiment.benchmark.evaluationScenario).toBeUndefined();
+  expect(fingerprintResumeConfig(current.persisted)).toBe(fingerprintResumeConfig(historical.persisted));
+});
+
 test.each(["minimal", "low", "medium", "high", "xhigh", "max"])("service reasoning effort %s survives export, save and resume identity", async reasoningEffort => {
   const loaded = await load(await file({ services: { default: { ...services.default, reasoningEffort } }, benchmark: "gsm8k" }));
   expect(loaded.experiment.services.default?.reasoningEffort).toBe(reasoningEffort);

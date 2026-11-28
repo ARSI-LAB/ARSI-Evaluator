@@ -86,6 +86,25 @@ export class AgentXBenchmark implements Benchmark {
       : new LocalRecordSource(config.localPath, definition));
   }
 
+  requestedMeasurements(config: EffectiveConfig): string[] {
+    const formal = this.config.measurementMode !== "profiling";
+    const telemetry = config.solver.config.telemetry === undefined ? {} : parseTelemetryConfig(config.solver.config.telemetry, config.hardware);
+    const requested = new Set<string>();
+    if (formal) requested.add("service/requests");
+    if (formal && (this.config.engineMetrics || telemetry.vllm)) requested.add("engine/engine");
+    if (formal && telemetry.ascend) requested.add("resource/npu");
+    const profile = this.config.profiling;
+    if (profile) {
+      const preset = profile.preset ?? "timeline";
+      if (preset === "full" || preset === "timeline") {
+        for (const type of ["execution/operators", "execution/runtime", "parallelism/communication", "parallelism/timeline",
+          "resource/npu", "hardware/hbm", "hardware/pmu", "hardware/cache"]) requested.add(type);
+        if (preset === "full" || profile.nodeMetrics) requested.add("resource/host");
+      } else requested.add({ compute: "hardware/pmu", bandwidth: "hardware/hbm", cache: "hardware/cache" }[preset]);
+    }
+    return [...requested];
+  }
+
   validateRun(config: EffectiveConfig): void {
     if (config.solver.name !== "agentx-replay" || config.verifier !== undefined)
       throw new TypeError("AgentX requires agentx-replay and has no correctness verifier");
@@ -121,7 +140,7 @@ export class AgentXBenchmark implements Benchmark {
     for (const concurrency of this.config.concurrency) {
       signal.throwIfAborted();
       const id = this.id(concurrency) + (this.config.measurementMode === "profiling" ? "-profiling" : "");
-      yield { id, recordKey: { concurrency } };
+      yield { id, recordKey: { concurrency }, measurementConcurrency: concurrency };
     }
   }
 
