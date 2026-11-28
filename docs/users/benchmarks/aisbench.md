@@ -2,6 +2,8 @@
 
 > English | [中文](./aisbench.zh-CN.md)
 
+Use `target`, `workload`, `concurrency` and `collect` to select a load and measurement mode. [Inference workload configuration](./inference-workloads.md)
+
 AISBench ships with Evaluator. The CLI and SDK register it by default.
 
 See the [AISBench plugin guide](../../../plugins/aisbench/README.md) for installation, configuration, execution, offline reports, and limitations.
@@ -36,7 +38,7 @@ Set `multimodalGeneration.mmmuParquetDir` to `/data/MMMU` in the YAML. AISBench 
 
 Install the matching upstream generator in the load generator's AISBench Python environment with `python -m pip install -e ./plugins/prefix_cache` from the AISBench source tree. AISBench 3.1.0 and plugin 0.5.0 have been verified together. If the host wheel omits `ais_bench.benchmark.datasets.utils`, run `python -m pip install -e .` from the same source tree. Prepare the MMMU Parquet files and the model tokenizer there. The [generated multimodal playbook](../../../plugins/aisbench/playbook/03-generated-multimodal.yaml) uses `multimodalGeneration` in place of `datasets`. Set `imageScenario` to `single_1080p` for one native 1920×1080 image or `multi_720p_5` for five copies of a native 1280×720 image. Set `mmmuParquetDir` to the remote directory containing the matching image.
 
-`imageScenario: [single_1080p, multi_720p_5]` selects both presets. Omit it for a single 1080p image. `textTokens` counts the text using the SSH solver's `tokenizerPath`. The generator uses the bundled GSM8K corpus or a remote `corpusPath` with enough distinct questions. With both presets, `concurrency: [1, 8]` and `dataCount: 16` produce four groups of 16 requests each. Use `dataCount: [4, 16]` for the first four and all sixteen requests respectively. The report includes per-group throughput and latency. Generated workloads default to streaming and a 256-token output limit. The summary in `artifacts/aisbench/native-plan.json` records counts, dimensions and digests per preset. [Upstream generator](https://github.com/AISBench/benchmark/blob/7ace6948a3a2726578aed869db0d5885ace11d55/plugins/prefix_cache/MULTIMODAL.md)
+`imageScenario: [single_1080p, multi_720p_5]` selects both presets. Omit it for a single 1080p image. `textTokens` counts the text using the SSH solver's `tokenizerPath`. The generator uses the bundled GSM8K corpus or a remote `corpusPath` with enough distinct questions. With both presets, `concurrency: [1, 8]` and `dataCount: 16` produce four groups of 16 requests each. Use `dataCount: [4, 16]` for the first four and all sixteen requests respectively. The report includes per-group throughput and latency. Generated workloads default to streaming and a 256-token output limit. The summary in the point’s `performance/native-plan.json` records counts, dimensions and digests per preset. [Upstream generator](https://github.com/AISBench/benchmark/blob/7ace6948a3a2726578aed869db0d5885ace11d55/plugins/prefix_cache/MULTIMODAL.md)
 
 To set the fixed output length recorded in the dataset independently of the backend limit, use `multimodalGeneration.outputTokens` and the outer `maxOutputTokens`. If only one is set, both use that value.
 
@@ -80,4 +82,16 @@ The `aisbench-ssh` solver maps `tokenizerPath` to `--path`. Omit it to keep the 
 
 You can also select an existing full native configuration with `configFile: ./bench/run.py` and optional sibling `files: [./bench/helper.py]`, or with `remoteConfigFile: /bench/run.py`. Omit `backend` and `datasets` in that case. The file owns model routing and can read `EVALUATOR_AISBENCH_MODEL`, `EVALUATOR_AISBENCH_BASE_URL` and `EVALUATOR_AISBENCH_API_KEY`. Local Python files are hashed and transferred. Data and weights stay on the load generator.
 
-Evaluator's dry run validates the local configuration and lists tasks. During execution, the selected remote version must support the requested options and datasets. The redacted command is saved under `artifacts/aisbench/native-plan.json` in the attempt. Native text artifacts live in the adjacent `outputs/` directory, and `collection.json` lists omitted private configs and unsupported file formats. Reports preserve per-group request counts, throughput and available latency percentiles with their upstream units. Missing groups, failed requests and unrecognized output are identified in the report. Server-side GPU/NPU profiler tracing is a separate operation.
+Evaluator's dry run validates the local configuration and lists tasks. During execution, the selected remote version must support the requested options and datasets. For a measurement, the redacted command is saved under `cN/performance/native-plan.json`. A native configuration that selects its own concurrency uses `configured/`. Standalone dataset preparation and validation keep their task and attempt directories. Native text artifacts live in the adjacent `outputs/` directory, and `collection.json` lists omitted private configs and unsupported file formats. Reports preserve per-group request counts, throughput and available latency percentiles with their upstream units. Missing groups, failed requests and unrecognized output are identified in the report.
+
+## Collect serving performance and Ascend profiles in one run
+
+The [service profiling playbook](../../../plugins/aisbench/playbook/04-service-profiling.yaml) runs formal and diagnostic TextVQA passes against one SGLang service at concurrency 1 and 8. Set the endpoint, load host, serving node and trace path for your deployment.
+
+~~~bash
+arsi-evaluator run plugins/aisbench/playbook/04-service-profiling.yaml
+~~~
+
+AISBench and AgentX use the same service profiler. Set `benchmark.collect` to `all` or `profiling` and select `vllm` or `sglang` with `target.profiling.provider`. The example sets `benchmark.config.profiling` directly. AISBench provides formal latency and throughput. Each diagnostic pass warms up with one request and sends bounded load to the same model service. Find the evidence under the point’s `profiling/trace/` directory. [Unified configuration and result directory tree](./inference-workloads.md#result-directory-tree)
+
+A native config that specifies only `benchmark.config.profiling` is translated to `all` and retains SGLang's control protocol. The old `requestsPerPoint` field maps to `traceCount`. Ensure the collector can access the service trace directory. A diagnostic service alias must identify the same model and endpoint as the formal service. If an explicit `warmups` conflicts with the single diagnostic warmup, select `collect` explicitly and use `warmups` for the formal pass.

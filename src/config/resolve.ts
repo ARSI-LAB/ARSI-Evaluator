@@ -2,6 +2,7 @@ import { basename, extname, join } from "node:path";
 import { DEFAULT_TASK_TIMEOUT_SECONDS } from "../core/policies/timeouts.js";
 import { fileURLToPath } from "node:url";
 import { parseEffectiveConfig } from "./effective.js";
+import { expandWorkload } from "./inference-workload.js";
 import { parseDeployment } from "./deployment.js";
 import { profileChain, validateProfiles, type ProfileLayer, type ResolvedProfiles } from "./profile-schema.js";
 import { DEFAULT_LOCAL_CONCURRENCY } from "./defaults.js";
@@ -90,13 +91,22 @@ function servicesInput(services: UserConfig["services"]): Record<string, unknown
 export function resolveInput(configPath: string, input: UserConfig, profiles: ResolvedProfiles, overrides: CliOverrides = {}): ConfigResolution {
   validateProfiles(profiles);
   const user = parseUserConfig(input);
-  const benchmark = typeof user.benchmark === "string" ? { name: user.benchmark } : user.benchmark;
-  const chain = profiles.some(profile => profile.role === "benchmark" && profile.id === benchmark.name)
-    ? profileChain(profiles, "benchmark", benchmark.name) : [];
+  const inputBenchmark = typeof user.benchmark === "string" ? { name: user.benchmark } : user.benchmark;
+  const chain = profiles.some(profile => profile.role === "benchmark" && profile.id === inputBenchmark.name)
+    ? profileChain(profiles, "benchmark", inputBenchmark.name) : [];
+  const benchmark = expandWorkload(inputBenchmark, chain);
   const origins: ConfigOrigins = {};
   let source: Record<string, unknown> = {};
+  let evaluationScenario: unknown;
   const apply = (value: Record<string, unknown>, origin: string) => {
     const normalized = partial(value);
+    // A classification belongs to the profile, even when a layer switches implementations.
+    // Replace the whole rule and resolve it after benchmark.config is merged and expanded.
+    if (isRecord(normalized.benchmark) && normalized.benchmark.evaluationScenario !== undefined) {
+      evaluationScenario = normalized.benchmark.evaluationScenario;
+      origins["benchmark.evaluationScenario"] = origin;
+      delete normalized.benchmark.evaluationScenario;
+    }
     clearReplacedOrigins(source, normalized, "", origins);
     source = expectRecord(merge(source, normalized), "configuration");
     trace(normalized, "", origin, origins);
@@ -151,6 +161,7 @@ export function resolveInput(configPath: string, input: UserConfig, profiles: Re
   if (canonicalName !== benchmark.name && benchmarkNameOrigin) origins["benchmark.name"] = benchmarkNameOrigin;
   const resolvedBenchmark = expectRecord(source.benchmark, "benchmark");
   const { solver: rawSolver, verifier: rawVerifier, ...pluginBenchmark } = resolvedBenchmark;
+  if (evaluationScenario !== undefined) pluginBenchmark.evaluationScenario = evaluationScenario;
   const solver = normalizeSelection(rawSolver, "benchmark.solver", [], true);
   const services = servicesInput(user.services);
   const service = solver.service ?? defaultService(services);

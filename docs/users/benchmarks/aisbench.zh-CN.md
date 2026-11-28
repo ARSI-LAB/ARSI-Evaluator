@@ -2,6 +2,8 @@
 
 > [English](./aisbench.md) | 中文
 
+日常实验可以通过 `target`、`workload`、`concurrency` 和 `collect` 选择负载和采集模式。[推理引擎压测配置](./inference-workloads.zh-CN.md)
+
 AISBench 随 Evaluator 发布，CLI 和 SDK 默认注册。
 
 安装、配置、执行、离线报告与限制统一见 [AISBench 插件说明](../../../plugins/aisbench/README.md)。
@@ -55,7 +57,7 @@ benchmark:
 
 `single_1080p` 每条请求带一张 1920×1080 原图。`multi_720p_5` 每条带五份相同的 1280×720 原图。生成器按 `benchmark.solver.config.tokenizerPath` 将每条请求的文本调整为指定 token 数；图像和对话模板占用的 token 另计。默认文本语料使用随 Evaluator 分发的 GSM8K。可用 `multimodalGeneration.corpusPath` 指向压测机上的兼容 JSONL，其中需有足够多的不同问题。`maxOutputTokens` 为输出上限，生成模式默认 256。
 
-上述实验产生四组结果。每种图片规格在每档并发各发 16 条正式请求，共 64 条。各组使用相同文本，报告按规格和并发展示吞吐与时延。流式请求可测首 token 时延（TTFT）、每个输出 token 耗时（TPOT）及相邻 token 时延（ITL）。`imageScenario` 也接受单值，省略时使用单图 1080p。`dataCount: [4, 16]` 表示每种规格准备 16 条，并发 1 使用前 4 条，并发 8 使用全部 16 条。制数摘要保存在 `artifacts/aisbench/native-plan.json` 的 `multimodalGeneration.datasets`。[官方生成器说明](https://github.com/AISBench/benchmark/blob/7ace6948a3a2726578aed869db0d5885ace11d55/plugins/prefix_cache/MULTIMODAL.md)
+上述实验产生四组结果。每种图片规格在每档并发各发 16 条正式请求，共 64 条。各组使用相同文本，报告按规格和并发展示吞吐与时延。流式请求可测首 token 时延（TTFT）、每个输出 token 耗时（TPOT）及相邻 token 时延（ITL）。`imageScenario` 也接受单值，省略时使用单图 1080p。`dataCount: [4, 16]` 表示每种规格准备 16 条，并发 1 使用前 4 条，并发 8 使用全部 16 条。制数摘要保存在每档的 `performance/native-plan.json` 的 `multimodalGeneration.datasets`。[官方生成器说明](https://github.com/AISBench/benchmark/blob/7ace6948a3a2726578aed869db0d5885ace11d55/plugins/prefix_cache/MULTIMODAL.md)
 
 需要分别控制样本记录的输出长度和模型后端的输出上限时，在 `multimodalGeneration` 中填 `outputTokens`，在外层填 `maxOutputTokens`。只填其中一个会为两者使用同一数值。
 
@@ -117,4 +119,16 @@ Solver 使用 `aisbench-ssh`。其中 `tokenizerPath` 映射到 `--path`。省�
 
 已有完整原生配置时，可用 `configFile: ./bench/run.py` 及可选 `files: [./bench/helper.py]`，或用 `remoteConfigFile: /bench/run.py` 替代 `backend` 和 `datasets`。配置文件自行定义模型和服务，可读环境变量 `EVALUATOR_AISBENCH_MODEL`、`EVALUATOR_AISBENCH_BASE_URL`、`EVALUATOR_AISBENCH_API_KEY`。本地 Python 文件按摘要核对并上传，数据与模型在远端准备。
 
-`run --dry-run` 在本地校验并列出任务。正式运行时检查远端版本，原生参数和数据集须由该版本支持。脱敏调用见 attempt 下 `artifacts/aisbench/native-plan.json`，文本产物在同目录的 `outputs/`，跳过的私有配置或不支持格式见 `collection.json`。报告按原生模型和数据集分组，保留请求数、吞吐和已有时延分位数的单位。缺组、请求失败或无法识别的结果在报告中单独标出。服务端 GPU/NPU profiler 时间线需另行采集。
+`run --dry-run` 在本地校验并列出任务。正式运行时检查远端版本，原生参数和数据集须由该版本支持。脱敏调用见 `cN/performance/native-plan.json`。并发由原生配置决定时，产物放在 `configured/` 下。仅制数或校验数据时使用原有的任务和 attempt 目录。对压测作业，文本产物在同目录的 `outputs/`，跳过的私有配置或不支持格式见 `collection.json`。报告按原生模型和数据集分组，保留请求数、吞吐和已有时延分位数的单位。缺组、请求失败或无法识别的结果在报告中单独标出。
+
+## 一次运行采集推理性能和 Ascend profiling
+
+[服务端采集示例](../../../plugins/aisbench/playbook/04-service-profiling.yaml)用同一个 SGLang 服务跑 TextVQA，并发 1 和 8 各执行正式轮和诊断轮。将服务地址、发压机、推理节点和 trace 路径改为实际部署值后运行：
+
+~~~bash
+arsi-evaluator run plugins/aisbench/playbook/04-service-profiling.yaml
+~~~
+
+AISBench 和 AgentX 使用同一个服务 profiler。日常实验用 `benchmark.collect: all` 或 `profiling` 选轮次，用 `target.profiling.provider` 选 `vllm` 或 `sglang`。也可像示例一样在实验中填写 `benchmark.config.profiling`。正式轮的时延与吞吐来自 AISBench。诊断轮先单独预热一个请求，再用同一模型服务采集有界负载，证据位于每档的 `profiling/trace/`。[统一配置与产物目录树](./inference-workloads.zh-CN.md#产物目录树)
+
+已有原生配置若只设置了 `benchmark.config.profiling`，加载时会转换为 `all`，沿用 SGLang 的启停协议；旧字段 `requestsPerPoint` 映射到 `traceCount`。请确保采集节点能访问服务的 trace 目录。单独声明的诊断服务需与正式轮使用同一模型和端点。旧配置若显式设置了与一次诊断预热冲突的 `warmups`，请改用显式 `collect`，此时 `warmups` 只控制正式轮。

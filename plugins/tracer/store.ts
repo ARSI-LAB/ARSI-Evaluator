@@ -6,12 +6,10 @@ import type {
   AttemptRecord,
   AttemptSummary,
   FileManifest,
-  MetricResults,
   RemoteAttemptUpdate,
   ResultSnapshot,
   RunManifest,
   RunStore,
-  TaskReportDocument,
 } from "arsi-evaluator";
 import type { JsonValue } from "arsi-evaluator";
 import type { TracerClient } from "./client.js";
@@ -84,7 +82,7 @@ export class TracerStore implements RunStore {
     return this.inner.listAttempts();
   }
 
-  async updateRun(patch: Partial<Pick<RunManifest, "status" | "finishedAt" | "durationMs" | "preparationRounds" | "source" | "taskIds" | "failure" | "initializationFailures">>): Promise<void> {
+  async updateRun(patch: Parameters<RunStore["updateRun"]>[0]): Promise<void> {
     await this.inner.updateRun(patch);
     if (this.runId && patch.status !== undefined && patch.status !== "running") {
       await this.stopTails();
@@ -145,8 +143,8 @@ export class TracerStore implements RunStore {
     return this.inner.snapshot();
   }
 
-  saveReportBundle(digest: string, metrics: MetricResults, markdown: string, reports: TaskReportDocument[], mode?: "update" | "resume"): Promise<void> {
-    return this.inner.saveReportBundle(digest, metrics, markdown, reports, mode);
+  saveReportBundle(...args: Parameters<RunStore["saveReportBundle"]>): Promise<void> {
+    return this.inner.saveReportBundle(...args);
   }
 
   async close(): Promise<void> {

@@ -2,8 +2,8 @@ import { parseInputModalities } from "../core/validation/multimodal.js";
 import type { HardwareKind } from "../core/contracts/hardware.js";
 import { parseHardware } from "./hardware.js";
 import { parseDeployment, type Deployment } from "./deployment.js";
-import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown } from "../core/validation/input.js";
-import type { EffectiveConfig, ReasoningEffort } from "../core/contracts/config.js";
+import { expectNonEmptyString, expectPositiveInteger, expectRecord, parseEvaluationScenario, rejectUnknown } from "../core/validation/input.js";
+import type { EffectiveConfig, EvaluationScenario, ReasoningEffort } from "../core/contracts/config.js";
 import { parseReasoningEffort } from "../core/validation/reasoning-effort.js";
 
 export type PluginSelection = { name?: string; config?: Record<string, unknown>; service?: string };
@@ -13,6 +13,10 @@ export type BenchmarkSelection = Omit<PluginSelection, "service"> & {
   name: string;
   version?: string;
   scenario?: string;
+  workload?: Record<string, unknown>;
+  concurrency?: number[];
+  collect?: string;
+  evaluationScenario?: EvaluationScenario;
   solver?: string | PluginSelection;
   verifier?: string | PluginSelection;
 };
@@ -94,12 +98,17 @@ export function parseUserConfig(value: unknown): UserConfig {
     parsedServices[name] = parsed;
   }
   const rawBenchmark = typeof record.benchmark === "string" ? { name: record.benchmark } : expectRecord(record.benchmark, "benchmark");
-  rejectUnknown(rawBenchmark, ["name", "config", "version", "scenario", "solver", "verifier"], "benchmark");
+  rejectUnknown(rawBenchmark, ["name", "config", "version", "scenario", "evaluationScenario", "solver", "verifier", "workload", "concurrency", "collect"], "benchmark");
+  if (rawBenchmark.concurrency !== undefined && !Array.isArray(rawBenchmark.concurrency)) throw new TypeError("benchmark.concurrency must be an array");
   const benchmark: BenchmarkSelection = {
     name: expectNonEmptyString(rawBenchmark.name, "benchmark.name"),
+    ...(rawBenchmark.workload === undefined ? {} : { workload: expectRecord(rawBenchmark.workload, "benchmark.workload") }),
+    ...(rawBenchmark.collect === undefined ? {} : { collect: expectNonEmptyString(rawBenchmark.collect, "benchmark.collect") }),
+    ...(rawBenchmark.concurrency === undefined ? {} : { concurrency: rawBenchmark.concurrency.map(n => expectPositiveInteger(n, "benchmark.concurrency")) }),
     ...(rawBenchmark.config === undefined ? {} : { config: structuredClone(expectRecord(rawBenchmark.config, "benchmark.config")) }),
     ...(rawBenchmark.version === undefined ? {} : { version: expectNonEmptyString(rawBenchmark.version, "benchmark.version") }),
     ...(rawBenchmark.scenario === undefined ? {} : { scenario: expectNonEmptyString(rawBenchmark.scenario, "benchmark.scenario") }),
+    ...(rawBenchmark.evaluationScenario === undefined ? {} : { evaluationScenario: parseEvaluationScenario(rawBenchmark.evaluationScenario) }),
     ...(rawBenchmark.solver === undefined ? {} : { solver: normalizeSelection(rawBenchmark.solver, "benchmark.solver", [], true) }),
     ...(rawBenchmark.verifier === undefined ? {} : { verifier: normalizeSelection(rawBenchmark.verifier, "benchmark.verifier", [], true) }),
   };

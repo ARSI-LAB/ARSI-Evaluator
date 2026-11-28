@@ -1,7 +1,7 @@
 import type { Reporter, ReportContext, TaskReportTarget } from "../../core/contracts/reporter.js";
 import type { MetricResults } from "../../core/contracts/metrics.js";
 import type { ResultSnapshot } from "../../core/contracts/result.js";
-import { safeTaskKey } from "../../core/artifacts/artifacts.js";
+import { resultDirectory, safeTaskKey } from "../../core/artifacts/artifacts.js";
 import { redactSecrets } from "../../config/redact.js";
 import { selectedRecords } from "../metrics/records.js";
 import { attemptStatus, attemptTimeoutKind, evaluationScore, isAgentTimeout, isEvaluationComplete, isInvalidEvaluation, hasUnconfirmedCleanup } from "../../core/results/evaluation-outcome.js";
@@ -58,8 +58,8 @@ export function renderMarkdown(snapshot: ResultSnapshot, metrics: MetricResults,
     const record = byTask.get(id);
     if (!record) { lines.push(`| ${escaped(id)} | pending | — | — | — | — | — | — |`); continue; }
     const safe = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(record.key.attemptId) && !record.key.attemptId.endsWith(".");
-    const root = `${evidenceRoot}tasks/${safeTaskKey(id)}/attempts/${record.key.attemptId}/`;
-    const evidence = safe ? `[result](${root}result.json) · [文件清单](${root}files.json)${record.trajectory ? ` · [轨迹](${root}agent/trajectory.jsonl)` : ""}` : "无有效证据路径";
+    const root = `${evidenceRoot}${resultDirectory(snapshot.run, record.key)}/`;
+    const evidence = safe ? `[result](${root}${snapshot.run.resultLayout ? "measurement.json" : "result.json"}) · [文件清单](${root}files.json)${record.trajectory ? ` · [轨迹](${root}agent/trajectory.jsonl)` : ""}` : "无有效证据路径";
     const errors = [...new Set(record.errors.map(error => error.code))].join("; ");
     lines.push(`| ${escaped(id)} | ${attemptStatus(record)}${attemptTimeoutKind(record) ? ` (${attemptTimeoutKind(record)})` : ""} | ${evaluationScore(record) ?? "—"} | ${record.phaseDurationMs.solve === undefined ? "—" : (record.phaseDurationMs.solve / 1000).toFixed(2)} | ${record.phaseDurationMs.verify === undefined ? "—" : (record.phaseDurationMs.verify / 1000).toFixed(2)} | ${record.collection.trajectory} / ${record.collection.artifacts} | ${escaped(errors) || "—"} | ${evidence} |`);
   }
@@ -105,7 +105,7 @@ export function renderMarkdown(snapshot: ResultSnapshot, metrics: MetricResults,
       lines.push(`| ${escaped(item.key.taskId)} | ${escaped(item.nodeId ?? "unknown")} / ${escaped(item.hostname ?? "unknown")} | ${item.state} | ${escaped(item.message ?? "—")} |`);
   }
   lines.push("", "## 运行文件", "",
-    `[指标 JSON](metrics.json) · [运行清单](${evidenceRoot}manifest.json) · [保存配置](${evidenceRoot}config.yaml)`,
+    `[指标 JSON](${snapshot.run.resultLayout ? "metrics/index.json" : "metrics.json"}) · [运行清单](${evidenceRoot}manifest.json) · [保存配置](${evidenceRoot}config.yaml)`,
     ...(snapshot.run.source ? ["", `数据来源：${escaped(snapshot.run.source.source)} @ ${escaped(snapshot.run.source.revision)}`] : []));
   return lines.join("\n") + "\n";
 }
@@ -113,15 +113,18 @@ export function renderMarkdown(snapshot: ResultSnapshot, metrics: MetricResults,
 export class MarkdownReporter implements Reporter {
   taskReports(snapshot: ResultSnapshot, metrics: MetricResults): TaskReportTarget[] {
     const value = metrics["agentx-performance"];
-    if (snapshot.run.taskIds.length < 2 || value === undefined) return [];
+    if (snapshot.run.resultLayout || snapshot.run.taskIds.length < 2 || value === undefined) return [];
     const metric = expectRecord(value, "agentx-performance metric");
     if (metric.applicable !== true) return [];
     if (!Array.isArray(metric.points)) throw new TypeError("Invalid AgentX report points");
     const points = metric.points.map(value => expectRecord(value, "AgentX report point"));
+    // A collection joins results from multiple attempts. Render the full snapshot
+    // so a point's baseline and device evidence stay together in the same report.
+    if (points.some(point => Array.isArray(point.collections))) return [];
     return snapshot.run.taskIds.map(taskId => {
       const point = points.find(point => point.taskId === taskId);
       const summary = point?.measurement == null ? null : parseAgentXSummary(point.measurement);
-      const concurrency = summary?.workload.concurrency ?? /-c([1-9]\d*)$/u.exec(taskId)?.[1];
+      const concurrency = summary?.measuredConcurrency ?? summary?.workload.concurrency ?? /-c([1-9]\d*)$/u.exec(taskId)?.[1];
       return { taskId, id: concurrency === undefined ? `task-${safeTaskKey(taskId)}` : `c${concurrency}`,
         title: concurrency === undefined ? taskId : `AgentX c${concurrency}` };
     });

@@ -39,10 +39,11 @@ def identity(pid):
 
 
 def redact(text, secret):
-    if secret:
-        forms = {secret, json.dumps(secret)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1], repr(secret)[1:-1], html.escape(secret)}
-        for form in sorted(forms, key=len, reverse=True):
-            text = text.replace(form, "[REDACTED]")
+    secrets = secret if isinstance(secret, list) else [secret]
+    forms = {form for key in secrets if key for form in
+             (key, json.dumps(key)[1:-1], json.dumps(key, ensure_ascii=False)[1:-1], repr(key)[1:-1], html.escape(key))}
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "[REDACTED]")
     return text
 
 
@@ -139,7 +140,7 @@ def collect(root, secret, native=False):
     run = root / "run"
     artifacts = root / "artifacts"
     skipped = []
-    for name in ["native-plan.json", "aisbench_result.csv", "aisbench.log", "aisbench_all.log", "aisbench_client.log", "outputs"]:
+    for name in ["native-plan.json", "engine-series.jsonl", "engine-window.json", "collections.json", "aisbench_result.csv", "aisbench.log", "aisbench_all.log", "aisbench_client.log", "outputs"]:
         source = run / name
         if not source.exists() or source.is_symlink():
             continue
@@ -149,7 +150,7 @@ def collect(root, secret, native=False):
                 continue
             # Upstream snapshots contain executable config and can embed escaped credentials.
             relative = item.relative_to(run)
-            if native and ("configs" in relative.parts or item.suffix.lower() not in {".csv", ".json", ".jsonl", ".log", ".txt", ".md", ".html", ".yaml", ".yml"}):
+            if native and ("configs" in relative.parts or item.suffix.lower() not in {".csv", ".json", ".jsonl", ".log", ".out", ".txt", ".md", ".html", ".yaml", ".yml"}):
                 skipped.append({"path": relative.as_posix(), "reason": "private config or unsupported format"})
                 continue
             dest = artifacts / relative
@@ -185,7 +186,8 @@ def supervise(root):
     stopped = threading.Event()
     cancelled = threading.Event()
     child = None
-    secret = config.get("apiKey", "")
+    window = None
+    secret = config.get("apiKey")
     def heartbeat():
         while not stopped.wait(2):
             state["heartbeat"] = time.time()
@@ -204,6 +206,11 @@ def supervise(root):
             cancelled.set()
             return
         state["phase"] = "benchmark" if "native" in config and "multimodalGeneration" not in config["native"] else "generating-data"
+        metrics = config.get("windowMetrics")
+        if metrics:
+            from service_collections import ServiceWindow
+            window = ServiceWindow(config, metrics, root / "run")
+            window.worker.start()
         child = subprocess.Popen(args, cwd=run, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         with (root / "artifacts/runner.log").open("a", encoding="utf-8") as log:
             for line in iter(child.stdout.readline, b""):
@@ -215,6 +222,7 @@ def supervise(root):
                 log.write(redact(text, secret))
                 log.flush()
         code = child.wait()
+
     except Exception as error:
         with (root / "artifacts/runner.log").open("a", encoding="utf-8") as log:
             log.write(redact(f"{type(error).__name__}: {error}\n", secret))
@@ -222,6 +230,8 @@ def supervise(root):
         stopped.set()
         thread.join()
         try:
+            if window:
+                atomic(root / "run" / "engine-window.json", window.finish())
             collect(root, secret, native="native" in config)
         except Exception as error:
             code = -1
@@ -272,6 +282,8 @@ def dispatch(request):
     if action == "start":
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not root.exists():
+        if action == "release-generated-input":
+            return {}
         if action == "status":
             return status(root)
         raise ValueError("Job missing")
@@ -280,6 +292,15 @@ def dispatch(request):
         state_path = root / "state.json"
         if state_path.exists() and load(state_path)["fingerprint"] != request["fingerprint"]:
             raise ValueError("Job fingerprint differs")
+        if action == "release-generated-input":
+            if not state_path.exists():
+                return {}
+            if status(root)["state"] not in TERMINAL:
+                raise ValueError("Cannot release generated input for an active job")
+            target = root / "generated-input"
+            if target.exists():
+                shutil.rmtree(target)
+            return {}
         if action == "start" and state_path.exists():
             existing = load(state_path)
             token = request.get("restartToken")

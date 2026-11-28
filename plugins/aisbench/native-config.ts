@@ -2,6 +2,9 @@ import { posix } from "node:path";
 import type { JsonValue } from "arsi-evaluator";
 import { expectNonEmptyString, expectPositiveInteger, expectRecord, rejectUnknown } from "./validation.js";
 
+import { nativeArguments, aisbenchManagedArgs, parseServiceProfile, type ServiceProfileConfig } from "arsi-evaluator";
+import { parseWorkload, type AisbenchWorkload } from "./config.js";
+
 type Dataset = { name: string; abbr?: string; config?: Record<string, JsonValue> };
 type ImageScenario = "single_1080p" | "multi_720p_5";
 type MultimodalGeneration = {
@@ -13,6 +16,11 @@ type MultimodalGeneration = {
   outputDirectory?: string;
 };
 export type NativeConfig = {
+  nativeArgs?: string[]; nativeConcurrency?: boolean;
+  syntheticText?: true; syntheticWorkload?: AisbenchWorkload;
+  measurementMode?: "performance" | "profiling" | "all";
+  serviceProfiler?: ServiceProfileConfig;
+  engineMetrics?: string[];
   backend?: string[]; datasets?: Dataset[]; configFile?: string; files?: string[]; remoteConfigFile?: string;
   multimodalGeneration?: MultimodalGeneration;
   multimodalManifest?: string;
@@ -21,6 +29,18 @@ export type NativeConfig = {
   stream?: boolean; pressureSeconds?: number; speculativeDecoding?: boolean; generationParams?: Record<string, JsonValue>;
   summarizer?: string; options?: Record<string, JsonValue>;
 };
+
+export function nativeBatchSize(args: readonly string[]): number | undefined {
+  const index = args.findLastIndex(arg => arg === "--batch-size" || arg.startsWith("--batch-size="));
+  const token = args[index];
+  if (!token) return undefined;
+  const separate = token === "--batch-size";
+  const value = separate ? args[index + 1] : token.slice("--batch-size=".length);
+  const next = args[index + (separate ? 2 : 1)];
+  if (!value || !/^[1-9][0-9]*$/u.test(value) || (next && !next.startsWith("-"))) return undefined;
+  const size = Number(value);
+  return Number.isSafeInteger(size) ? size : undefined;
+}
 
 function list(value: unknown, field: string): unknown[] {
   const items = Array.isArray(value) ? value : [value];
@@ -84,7 +104,7 @@ function parseMultimodalGeneration(value: unknown): MultimodalGeneration {
   return { imageScenario, textTokens: expectPositiveInteger(v.textTokens, "multimodalGeneration.textTokens"),
     ...(v.outputTokens === undefined ? {} : { outputTokens: expectPositiveInteger(v.outputTokens, "multimodalGeneration.outputTokens") }),
     mmmuParquetDir: remotePath(v.mmmuParquetDir, "multimodalGeneration.mmmuParquetDir"),
-    ...(v.outputDirectory === undefined ? {} : { outputDirectory: remotePath(v.outputDirectory, "multimodalGeneration.outputDirectory") }),
+    ...(v.outputDirectory === undefined ? {} : { outputDirectory: v.outputDirectory === ".evaluator-prepared" ? v.outputDirectory : remotePath(v.outputDirectory, "multimodalGeneration.outputDirectory") }),
     ...(v.corpusPath === undefined ? {} : { corpusPath: remotePath(v.corpusPath, "multimodalGeneration.corpusPath") }) };
 }
 
@@ -92,8 +112,42 @@ export function parseNativeConfig(value: unknown): NativeConfig {
   const v = expectRecord(value, "aisbench native config");
   rejectUnknown(v, ["backend", "datasets", "configFile", "files", "remoteConfigFile", "concurrency", "dataCount", "requestRate",
     "warmups", "maxOutputTokens", "stream", "pressureSeconds", "speculativeDecoding", "generationParams", "summarizer", "options",
-    "multimodalGeneration", "multimodalManifest", "multimodalAction"], "aisbench native config");
+    "multimodalGeneration", "multimodalManifest", "multimodalAction", "profiling", "engineMetrics", "measurementMode", "serviceProfiler", "nativeArgs", "nativeConcurrency", "syntheticText", "syntheticWorkload"], "aisbench native config");
+  // Older native YAML used SGLang's output_dir protocol and always ran a formal pass first.
+  // Translate it at the input boundary, before building any tasks or remote commands.
+  const legacy = v.measurementMode === undefined && v.profiling !== undefined;
+  const mode = legacy ? "all" : v.measurementMode;
   const result: NativeConfig = {};
+  if (v.nativeArgs !== undefined) result.nativeArgs = nativeArguments(v.nativeArgs, aisbenchManagedArgs);
+  if (v.nativeConcurrency === true) {
+    if (v.concurrency !== undefined) throw new TypeError("Native concurrency conflicts with benchmark.concurrency");
+    result.nativeConcurrency = true;
+  }
+  if (v.syntheticText === true) {
+    result.syntheticText = true;
+    const workload = expectRecord(v.syntheticWorkload ?? {}, "syntheticWorkload");
+    result.syntheticWorkload = parseWorkload({ ...(!workload.prefixCache || !expectRecord(workload.prefixCache, "prefixCache").enabled ? { dataset: "synthetic" } : {}), ...workload });
+  }
+  if (mode !== undefined) {
+    if (mode !== "performance" && mode !== "profiling" && mode !== "all") throw new TypeError("Invalid AISBench collect");
+    result.measurementMode = mode;
+    if (mode !== "performance") {
+      if (legacy) {
+        const { requestsPerPoint, ...profile } = expectRecord(v.profiling, "profiling");
+        if (v.serviceProfiler !== undefined || (requestsPerPoint !== undefined && profile.traceCount !== undefined))
+          throw new TypeError("Conflicting profiling settings; use benchmark.collect and target.profiling.traceCount");
+        if (v.warmups !== undefined && v.warmups !== 1)
+          throw new TypeError("The shared profiler uses one diagnostic warmup. Set benchmark.collect explicitly to use warmups for the formal pass");
+        result.serviceProfiler = parseServiceProfile({ provider: "sglang", ...profile,
+          ...(requestsPerPoint === undefined ? {} : { traceCount: requestsPerPoint }) }, "vllm");
+      } else result.serviceProfiler = parseServiceProfile(v.serviceProfiler ?? v.profiling, "vllm");
+      if (result.nativeArgs?.some(arg => ["--pressure", "--pressure-time"].includes(arg.split("=")[0]!)))
+        throw new TypeError("Native pressure mode cannot guarantee a bounded profiling window");
+      if (v.configFile || v.remoteConfigFile) throw new TypeError("Cannot confirm profiler service binding for an opaque native config file; use native --models/--datasets or workload.type: dataset");
+      if (result.nativeConcurrency && !nativeBatchSize(result.nativeArgs ?? []))
+        throw new TypeError("Specify a single known concurrency for bounded profiling of native args");
+    }
+  }
   const multimodal = v.multimodalGeneration !== undefined || v.multimodalManifest !== undefined;
   if (multimodal) {
     if (v.datasets !== undefined || v.configFile !== undefined || v.remoteConfigFile !== undefined)
@@ -118,9 +172,12 @@ export function parseNativeConfig(value: unknown): NativeConfig {
       throw new TypeError("Choose backend/datasets, configFile, or remoteConfigFile");
     if (v.configFile !== undefined) result.configFile = localFile(v.configFile);
     else result.remoteConfigFile = remotePath(v.remoteConfigFile, "remoteConfigFile");
-  } else {
-    if (v.backend !== undefined || !["prepare", "validate"].includes(result.multimodalAction ?? "run"))
-      result.backend = list(v.backend === undefined && multimodal ? "vllm_api_general_chat" : v.backend, "backend").map(name => taskName(name, "backend"));
+  } else if (!result.nativeArgs && !result.syntheticText) {
+    if (v.backend !== undefined || !["prepare", "validate"].includes(result.multimodalAction ?? "run")) {
+      const defaultBackend = result.measurementMode ? (v.stream === false ? "vllm_api_general_chat" : "vllm_api_stream_chat")
+        : multimodal ? "vllm_api_general_chat" : undefined;
+      result.backend = list(v.backend ?? defaultBackend, "backend").map(name => taskName(name, "backend"));
+    }
     if (!multimodal) result.datasets = list(v.datasets, "datasets").map(dataset);
   }
   if (v.files !== undefined) {
@@ -132,6 +189,7 @@ export function parseNativeConfig(value: unknown): NativeConfig {
   for (const field of ["concurrency", "dataCount"] as const) {
     if (v[field] !== undefined) result[field] = list(v[field], field).map(item => expectPositiveInteger(item, field));
   }
+  if (legacy && !result.concurrency) result.concurrency = [1];
   const count = result.concurrency?.length ?? 1;
   if (result.dataCount && result.dataCount.length !== count) {
     if (Array.isArray(v.dataCount)) throw new TypeError("dataCount list length must match concurrency");
@@ -179,6 +237,19 @@ export function parseNativeConfig(value: unknown): NativeConfig {
       if (key.startsWith("no-") && Object.hasOwn(result.options, canonical)) throw new TypeError(`Conflicting options.${key} and options.${canonical}`);
       if (item === null || (Array.isArray(item) && item.length === 0)) throw new TypeError(`options.${key} requires a value`);
     }
+  }
+  if (result.serviceProfiler && ["prepare", "validate"].includes(result.multimodalAction ?? "run"))
+    throw new TypeError("Service profiling requires a measurement workload");
+  if (legacy && result.dataCount?.some(n => n < (result.serviceProfiler?.traceCount ?? 1)))
+    throw new TypeError("profiling.requestsPerPoint exceeds dataCount");
+  if (v.engineMetrics !== undefined) {
+    if ((!result.measurementMode && !result.backend) || ["prepare", "validate"].includes(result.multimodalAction ?? "run"))
+      throw new TypeError("Service metrics require a measurement workload with a bound service");
+    if (!Array.isArray(v.engineMetrics) || !v.engineMetrics.length ||
+        !v.engineMetrics.every((m): m is string => typeof m === "string" && /^[a-zA-Z_:][a-zA-Z0-9_:]*$/u.test(m)) ||
+        new Set(v.engineMetrics).size !== v.engineMetrics.length)
+      throw new TypeError("engineMetrics must list distinct Prometheus metric names");
+    result.engineMetrics = v.engineMetrics;
   }
   return result;
 }

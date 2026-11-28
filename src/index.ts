@@ -1,4 +1,8 @@
 export type * from "./core/contracts/hardware.js";
+export { nativeArguments, aisbenchManagedArgs } from "./core/validation/native-args.js";
+export { serviceDiagnosticSection } from "./plugins/metrics/agentx-measurement-files.js";
+export { captureServiceProfile } from "./runtimes/agentx/service-profile.js";
+export { serviceProfileMeasurements, collectionEvidence as validateServiceEvidence, parseProfileConfig as parseServiceProfile, type AgentXProfileConfig as ServiceProfileConfig } from "./plugins/benchmarks/inference-engine/shared/service-collections.js";
 export type * from "./core/contracts/task.js";
 export { parseTaskAttachments, parseInputModalities } from "./core/validation/multimodal.js";
 export type * from "./core/contracts/result.js";
@@ -13,6 +17,7 @@ export type * from "./core/contracts/environment.js";
 export type * from "./core/contracts/image-cleanup.js";
 export type * from "./core/contracts/solver.js";
 export type * from "./core/contracts/metrics.js";
+export { measurementDirectory } from "./core/artifacts/artifacts.js";
 export type * from "./core/contracts/reporter.js";
 export type * from "./core/contracts/run-store.js";
 export type * from "./core/contracts/plugin-extension.js";
@@ -22,7 +27,7 @@ export { createPreparationRound, runPreparationRound } from "./core/preparation/
 export type * from "./core/contracts/verifier.js";
 export type * from "./core/contracts/config-transport.js";
 export type * from "./core/contracts/verification-runtime.js";
-export type { CliOverrides, ModelConfig, ReasoningEffort, Selection, SolverSelection, VerifierSelection, EffectiveConfig, RuntimeAuth } from "./core/contracts/config.js";
+export type { CliOverrides, EvaluationScenario, ModelConfig, ReasoningEffort, Selection, SolverSelection, VerifierSelection, EffectiveConfig, RuntimeAuth } from "./core/contracts/config.js";
 export type { DEFAULT_LOCAL_CONCURRENCY, DEFAULT_METRICS, KNOWN_APIS, KNOWN_PROVIDERS } from "./config/defaults.js";
 export type { assertJsonValue, expectNonEmptyString, expectPositiveInteger, expectPositiveNumber, expectRecord, parseSelection, rejectUnknown } from "./core/validation/input.js";
 export type { assertServiceBindings, solverBinding } from "./core/policies/service-bindings.js";

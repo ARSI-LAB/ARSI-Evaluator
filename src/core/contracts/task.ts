@@ -8,6 +8,8 @@ export type PhaseTimeoutOverrides = { solveTimeoutSeconds?: number; verifyTimeou
 export type TaskRef = {
   id: string;
   recordKey: JsonValue;
+  /** null means concurrency is owned by an external configuration. */
+  measurementConcurrency?: number | null;
 };
 
 export type TaskAttachment = {
@@ -56,6 +58,8 @@ export type PreparedTask = {
   transfer: TransferSpec | null;
   /** Snapshot declared deliverables without restoring into another environment. */
   artifactCollection?: Extract<TransferSpec, { kind: "artifacts" }>;
+  /** Inventory files under <name>/outputs. By default they are copied from the workspace. A solver source writes there directly. */
+  artifactDirectory?: { name: string; requiredFiles: string[]; source?: "solver" };
   /** Omitted preserves non-Harbor benchmarks' existing verification contract. */
   verificationMode?: "none" | "shared" | "separate";
   verificationNetwork?: NonNullable<EnvironmentSpec["network"]>;

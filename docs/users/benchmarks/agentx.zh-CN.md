@@ -2,6 +2,8 @@
 
 > [English](./agentx.md) | 中文
 
+日常实验可以通过 `target`、`workload`、`concurrency` 和 `collect` 选择负载和采集模式。[推理引擎压测配置](./inference-workloads.zh-CN.md)
+
 AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子 Agent 依赖和等待时间，测量模型服务的吞吐和延迟。它没有 ground truth，`passed` 为 `null`，不输出正确率或奖励分数。实现固定使用 [agentx-harness 1.0.7](https://inferencex.semianalysis.com/agentx/quickstart) 的 `agentx` 场景。
 
 ![AgentX 按测量点回放固定 Trace，由 Python Harness 调用模型服务并生成性能摘要](../imgs/09-flowchart-agentx-performance-v2.png)
@@ -34,6 +36,7 @@ AgentX 使用脱敏 trace 重建请求长度、前缀复用、会话轮次、子
 | 前 50 条 Trace 完整回放，可能耗时较长 | [agentx-replay.yaml](../../../playbook/agentx/agentx-replay.yaml) |
 | 两条 Trace，并采集 vLLM 与 NPU 4 指标 | [agentx-npu-replay.yaml](../../../playbook/agentx/agentx-npu-replay.yaml)，需先准备两个指标端点 |
 | local 标准测评，裸机自动采集指定 NPU | [agentx-npu-local.yaml](../../../playbook/agentx/agentx-npu-local.yaml)，管理容器或直接裸机运行均可，多卡逐项填写 |
+| 一次运行采集正式性能、引擎指标和 Ascend 算子 | [agentx-service-profiling.yaml](../../../playbook/agentx/agentx-service-profiling.yaml) |
 
 ### 本地部署与在线 API 的模型变量
 
@@ -90,13 +93,13 @@ seed 仍固定为 42，保留 0.25–0.75 起点窗口、官方预热及原始 T
 
 `durationSeconds` 只控制测量窗口，不包含准备、预热和收尾，因此设置 60 秒不代表整个命令在 60 秒内结束。默认任务总预算 `run.timeoutSeconds` 为 10800 秒，无需为 60 秒测量修改。总预算须至少为 `durationSeconds + 3900` 秒；延长测量导致默认预算不足时，需同时增大 `run.timeoutSeconds`，运行前会拒绝不足的预算。
 
-`replay` 用于完整执行文件前 N 个 trace，必须显式设置 `traceCount`。例如上面的 replay Playbook 选择前 50 个会话，使用 8 个会话树并发，从每个会话的第 0 条请求开始，主 Agent 和子 Agent 的所有请求都完成后结束。仍沿用官方重建、依赖和等待处理；关闭额外的单 token 预热，完整请求均进入 profiling。这个场景包含冷启动和会话排空，始终不可比正式一小时结果。`durationSeconds` 默认为 86400，是安全上限；默认任务预算 172800 秒。若上限先到、请求缺失、重复或被取消，测量点失败并保留部分产物，续跑会整点重跑。并发不能大于选定会话数。
+`replay` 用于完整执行文件前 N 个 trace，必须显式设置 `traceCount`。例如上面的 replay Playbook 选择前 50 个会话，使用 8 个会话树并发，从每个会话的第 0 条请求开始，主 Agent 和子 Agent 的所有请求都完成后结束。仍沿用官方重建、依赖和等待处理；关闭额外的单 token 预热，完整请求均进入 profiling。这个场景包含冷启动和会话排空，始终不可比正式一小时结果。`durationSeconds` 默认为 86400，是安全上限；默认任务预算 172800 秒。若上限先到、请求缺失、重复或被取消，测量点失败并保留部分产物，可新建运行重新测量。并发不能大于选定会话数。
 
 replay 的时间参数是安全上限，完成有限请求后允许提前结束，因此使用源请求坐标覆盖率替代官方固定测量窗口的时长覆盖要求。实际测量窗口和指标仍由 Harness 导出，回放结果始终不可比正式场景；standard 保留官方时间窗口校验。
 
 Trace 数量少并不意味着回放很快：单条来源可包含数十个主请求、后台分支及数小时的原始等待。Harness 1.0.7 的全局空闲压缩仅在整个系统空闲时跳过部分等待，不等同于逐请求删除延迟。给两条 Trace 设置 600 秒安全上限，可能在请求均成功时仍因未派发全部来源请求而失败。排查时同时检查 `harness.log` 的 `timeout_triggered`、分支统计和 `replay-coverage.json`；先区分安全截止与请求/分支缺陷，保留原始负载后增加预算，不通过忽略延迟或删减分支制造完整回放。
 
-Solver 可设置 `tokenizerRevision`、`requestTimeoutSeconds`、`trustRemoteCode` 和下述 `networkLatency`。tokenizer 首次解析为具体 commit 和内容摘要，续跑复用该 commit 并校验内容。`trustRemoteCode` 缺省为 false。输出长度由 trace 控制，不设置 `services.maxTokens`。支持范围限定为 `agentx-replay`、本地调度、local/Docker 环境和一次自动 attempt，不支持 Ray、普通 Agent Solver 或正确性 Verifier。
+Solver 可设置 `tokenizerRevision`、`requestTimeoutSeconds`、`trustRemoteCode` 和下述 `networkLatency`。tokenizer 首次解析为具体 commit 和内容摘要，测评记录该版本。`trustRemoteCode` 缺省为 false。输出长度由 trace 控制，不设置 `services.maxTokens`。支持范围限定为 `agentx-replay`、本地调度、local/Docker 环境和每档一次测量，不支持 Ray、普通 Agent Solver 或正确性 Verifier。
 
 ### 网络延时校准
 
@@ -124,37 +127,32 @@ networkLatency: # 放在 benchmark.solver.config 下
 
 `meanMs` 必须为非负有限数；手动模式不进行 TCP 探测，不能填写 `pingIntervalSeconds`。自动模式不能填写 `meanMs`。配置未知字段或混用两种模式的参数会在执行前报错。
 
-校准结果保存在 `result.json` 的 `solve.observations.networkLatency`、`agent/agentx-summary.json` 及对应 `metrics.json` 中。报告逐测量点显示校准模式、用于扣除的平均 RTT、探测总数/成功数/失败数，以及 TTFT、TTFO 和请求延迟的原始值与修正值（均值、P50、P95、P99）。修正分布直接读取官方 `network_adjusted_*` 导出，不在 Evaluator 中重算。ITL、吞吐和报告原有性能对比表继续使用原始指标。
+常规压测的校准结果保存在 `metrics/service/requests.json` 和该档的 `performance/agentx-summary.json` 中。报告逐测量点显示校准模式、用于扣除的平均 RTT、探测总数/成功数/失败数，以及 TTFT、TTFO 和请求延迟的原始值与修正值（均值、P50、P95、P99）。修正分布直接读取官方 `network_adjusted_*` 导出，不在 Evaluator 中重算。ITL、吞吐和报告原有性能对比表继续使用原始指标。
 
 `complete` 表示有可用 RTT 和对应修正指标；部分探测失败、探测记录缺失或部分修正指标缺失时记为 `partial`，保留已有数据和告警；没有可用 RTT 或修正指标时记为 `unavailable`。缺失值显示 `—`，不补成 0，也不让网络校准缺失替代请求测评的成功/失败判断。固定版本 Harness 对手动 `meanMs: 0` 可能不导出校准指标，此时明确显示不可用，原始指标仍保留。
 
-自动模式的逐次探测保存在 Harness 产物 `profile_export_network_latency.jsonl`，随 `artifacts/artifacts.tar` 收集；手动模式没有探测文件。旧结果没有网络校准字段时仍能生成报告。离线 `report` 仅读取保存结果，不重新探测或访问模型。
+自动模式的逐次探测保存在 `performance/outputs/profile_export_network_latency.jsonl`。手动模式使用配置的 RTT。离线报告从保存的测量结果读取校准数据。
 
 平均 TCP RTT 校准只估算客户端到端点的网络往返，不能去掉所有代理、传输或客户端开销，也不会改变网络对实际吞吐和会话推进速度的影响。参数和指标定义见[官方网络延时校准说明](https://github.com/SemiAnalysisAI/agentx-harness/blob/master/docs/metrics-reference.md#network-latency-calibration-metrics)。
 
-## 结果、续跑与离线报告
+## 查看与重建结果
 
-每个并发点对应独立 attempt，保存：
+在 `<run_id>/report.md` 对比各档并发。脚本从 `metrics/index.json` 读取相对该索引的分类文件路径，以及每档的采集状态。每个分类文件包含所有档位，证据路径相对运行根目录。已配置但没有样本的指标保留缺失原因；未启用项只有索引条目。
 
-- `agent/agentx-summary.json`：版本化摘要；同一摘要也保存在结果的 `solve.observations`。
-- `agent/trajectory.jsonl`、`session.jsonl` 和脱敏桥接日志。
-- `artifacts/artifacts.tar`：Harness 原始导出和日志，包含内部 `agentx-artifacts` 目录；失败时保留可收集的部分产物。
-- replay 另存 `agent/replay-coverage.json`，按 trace id、原始外层/内层索引核对请求覆盖率；同一证据也收入原始产物包。报告展示完成的 trace、采集请求、失败、取消、缺失和重复数量。
+| 指标目录 | 分类文件 |
+| --- | --- |
+| `metrics/service/` | `requests.json`，正式轮的请求延迟分位数、吞吐、请求数和预热统计 |
+| `metrics/engine/` | `engine.json`，KV Cache、运行与排队请求 |
+| `metrics/resource/` | `host.json`、`npu.json`，服务节点与设备资源 |
+| `metrics/execution/` | `operators.json`、`runtime.json`，算子、Shape、Runtime 下发和 Memcpy |
+| `metrics/hardware/` | `hbm.json`、`pmu.json`、`cache.json`，带宽、流水线和缓存 |
+| `metrics/parallelism/` | `communication.json`、`timeline.json`，卡间通信及其与计算的重叠 |
 
-报告分别展示 profiling 与 warmup；TTFT、ITL、请求延迟和 Interactivity 的分布来自官方导出，吞吐使用 Harness 的测量时间，各点的分位数不合并。缺失值显示未知，token usage 只统计预热和测量均有数据的字段，不代表服务商账单。
+在 `c1/`、`c8/` 等测量点目录中，`measurement.json` 保存轮次结果、状态和错误，`files.json` 保存原始文件清单、校验值与缺失项。各轮的 Harness 日志、逐请求导出和回放覆盖在 `performance/outputs/` 或 `profiling/outputs/`，诊断预热记录在 `profiling/outputs/warmup/`。各轮的会话与轨迹位于本轮的 `agent/`。
 
-配置多个并发点时，根 `report.md` 只列出测量点状态和独立报告链接。例如 `[1, 4, 8]` 分别生成 `points/c1/report.md`、`points/c4/report.md`、`points/c8/report.md`，同目录各有一份 `metrics.json`。每份报告只包含本档的请求性能、预热、vLLM、逐设备/芯片 NPU 指标、耗时、token usage 和 attempt 记录；不混入其他档位的统计。失败或尚未运行的档位也有独立状态页。只有一个并发点时，详细报告仍为根 `report.md`。
+预热和正式测量分别统计。每档的分位数按该档请求计算，吞吐使用 Harness 的测量时长；token 用量汇总两个窗口中均有统计的字段。
 
-根 `metrics.json` 保留整批机器数据和子报告目录，便于程序读取；各点指标从各自记录重新计算。各点报告中的原始结果链接仍指向本 run 下对应的 attempt，不复制轨迹和原始产物。整批继续共用一个 run ID、来源锁定和续跑状态，三档按顺序执行。
-
-`upstreamSubmissionValid` 保留 Harness 的判断，`comparable` 另行检查场景、来源和测量完整性。比较结果时应保持语料 commit、场景、tokenizer、并发及部署条件一致。完成一次回放不代表满足排行榜提交条件。
-
-```bash
-arsi-evaluator run playbook/agentx/agentx-standard.yaml --resume
-arsi-evaluator report results/agentx-standard/RUN_ID
-```
-
-完成点跳过，失败、取消和超时点使用新 attempt 整点重跑，不续接某条请求。性能超时不产生零分。`report` 同时重建目录页和各点报告，可修复缺失或损坏的子报告；仅使用保存结果和内置报告插件，不需要 Python、模型认证或原数据缓存。显式 `--resume` 将续跑报告及各点子报告另存到 `reports/resume-N/`，保留旧报告；`retry` 和离线 `report` 更新当前报告，保存方式见[续跑与重建报告](../usage.zh-CN.md#续跑与重建报告)。
+重新测量时再次执行同一 YAML，生成独立运行。离线执行 `arsi-evaluator report <run_dir>` 可从已保存的证据重建报告和全部分类文件；旧运行使用原有格式。
 
 ## vLLM 与 Ascend NPU 指标
 
@@ -240,37 +238,65 @@ ssh -N -L 18094:127.0.0.1:18094 -L 18095:127.0.0.1:18095 user@server
 
 SSH 认证属于部署操作，不写入实验 YAML。模型必须支持所选 Trace 的完整上下文和输出长度；262144 上下文的小模型仍需在单卡上实际验证。服务启动、模型安装及预检不计入请求指标。
 
-`agentx-summary.json` 保存各来源的状态、标签序列、缺失指标、profiling/warmup 窗口及样本数；样本数统计上游 JSONL 中窗口内的不同快照，不等于 HTTP 抓取次数。上游聚合窗口可能延伸至最终采样，报告显示实际边界。原始 `server_metrics_export.json` / `.jsonl` 随 attempt 保存。临时抓取失败后沿用 Harness 的下一周期采集，不中止请求测评，也不丢弃已获得的监控统计；数据完全不可用或所需指标缺失时仍明确标记。离线 `report` 不访问设备或指标端点。
+`agentx-summary.json` 保存各来源的状态、标签序列、缺失指标、profiling/warmup 窗口及样本数；样本数统计上游 JSONL 中窗口内的不同快照，不等于 HTTP 抓取次数。上游聚合窗口可能延伸至最终采样，报告显示实际边界。原始 `server_metrics_export.json` / `.jsonl` 随该轮保存。临时抓取失败后沿用 Harness 的下一周期采集，不中止请求测评，也不丢弃已获得的监控统计；数据完全不可用或所需指标缺失时仍明确标记。离线 `report` 不访问设备或指标端点。
 
 新结果保存 telemetry v2，支持多个设备/芯片和发现失败时的空端点；历史 v1 单卡结果在读取入口转成 v2 后离线重建，后续计算和报告只处理 v2，原始文件不回写。本机采样另在 Harness 产物中保存 `local-telemetry.json`，包含设备、芯片、动态端点和采样错误。来源状态表示所需统计的数据可用性：`complete` 表示所需指标有可用统计，不保证每次抓取成功；`partial` 表示部分数据或指标缺失；`unavailable` 表示无法获得可用统计。已有统计时，采样过程诊断保存在来源的可选 `warnings` 中，并在报告中展示。请求性能与监控状态分别判断，监控告警不改变 Harness 的 `submission_valid` 或请求性能可比性。
 
 适配会把上游累计采集错误数写入原始导出的 `evaluator_collection_error_count`，并在摘要的可选 `telemetry.collectionErrors` 中保存。该计数是全部端点合计，只在报告中展示一次，不分配给每个来源，也不据此自动把所有来源改成 `partial`。历史摘要缺少该字段时显示“未记录”，不假定错误数为零。
 
-### msprof 服务级 Profiling（可选）
+## 用一份 YAML 切换性能测量和服务端诊断
 
-`telemetry.msprof` 在 vLLM/Ascend 遥测之外叠加 sample-based CANN 占空比采集。要求 `hardware: npu`，宿主或 toolbox 内可用 `msprof` 二进制（PATH 或已知 CANN 路径）；二进制缺失时该来源标记失败，不阻塞请求遥测。
+在 [AgentX 优化模板](../../../playbook/agentx/agentx-service-profiling.yaml) 中设置 `benchmark.config.measurementMode`。配置好服务、tokenizer 和共享目录后，每次切换模式只需改这一项。
 
-```yaml
-telemetry:
-  vllm:
-    endpoint: http://127.0.0.1:18080/metrics
-  msprof:
-    devices:
-      - deviceId: 0
-      - deviceId: 1
-    freqHz: 10
-    metrics: ArithmeticUtilization
-    includeHbm: false
+| 模式 | 每个并发档执行的工作 | 报告内容 |
+| --- | --- | --- |
+| `performance` | 关闭采集的服务上运行正式负载 | 请求吞吐、token 吞吐、TTFT、TPOT、ITL、请求时延，以及 KV Cache 和队列 |
+| `profiling` | 一棵树预热，再采集一次有界回放 | 所选诊断类型的证据及原始文件位置 |
+| `all` | 每档并发先执行正式轮，再执行诊断轮 | 一份报告按并发对齐两轮结果，诊断失败时仍保留正式成绩 |
+
+```bash
+arsi-evaluator run playbook/agentx/agentx-service-profiling.yaml
 ```
 
-`freqHz` 为 1-100 整数（默认 10）；`metrics` 选择 AICore 指标集；`includeHbm` 额外采样 HBM 计数器（单位未核实，不参与判定）。设备 ID 与 Ascend 遥测一致，使用 `npu-smi` 物理 NPU 编号；`msprof` 接收对应的 `Chip Logic ID`，映射关系写入证据。
+示例在正式和诊断两轮都使用相同的前 8 棵会话树，分别按并发 1 和 8 回放。省略 `profiling.traceCount` 时，每个诊断档的树数等于会话并发数。一棵树可以发送多次请求。`scenario: standard` 保留 Harness 的预热和正式窗口，诊断始终使用有界回放。请求级 TPOT 为一次成功请求的（总时延 − 首 token 时延）除以（输出 token 数 − 1），仅纳入至少两个输出 token 的请求。
 
-设备绑定必须提供，支持结构化 `devices` 列表或紧凑的 `deviceIds` 字符串：`deviceIds: "4,5,6,7"` 采样物理卡 4、5、6、7；`deviceIds: "all"` 在采集时通过 `npu-smi info -m` 解析宿主全部计算芯片。仅在宿主全部设备都授权采样时使用 "all"，否则显式传入授权列表。
+正式轮从服务的 `/metrics` 每秒采样，并保留正式时间窗口内的原始 JSONL。默认读取 vLLM 的 KV Cache 使用率、运行和等待请求数。用 `engineMetrics` 可指定其他 Prometheus 名称。Gauge 显示每组标签的均值、峰值和样本数，Counter 显示增量；重置或缺失会标为 `partial`。省略 `measurementMode` 时仍按原配置选择采集内容和采样方式。
 
-结构化 `devices` 数组与逗号分隔的 `deviceIds` 字符串互斥，且都表示 `npu-smi` 物理卡号；`deviceIds` 供调用方通过环境变量替换驱动设备绑定，evaluator 代码不出现具体卡号。绑定正确性由调用方负责：所选设备必须与当次授权窗口的卡资源一致。未解析的占位符（例如未设置的 `"${MSPROF_DEVICES}"`）会在校验时报错并保留原始字符串。
+| `profiling.preset` | 服务准备及采集内容 |
+| --- | --- |
+| `full`（显式 measurementMode 的默认值） | 在同一次诊断回放中开启服务 profiler，收集所有可用指标类型。在推理节点使用回环服务地址并指定物理卡号（例如 `devices: [0, 1]`），同时启动系统资源采样及 msprof 的 HBM、L2 计数器采集。 |
+| `timeline` | 为 vLLM Ascend 启用 torch profiler，并将服务启动参数 `--profiler-config` 中的 `torch_profiler_dir` 和 YAML 的 `traceDirectory` 指向同一共享目录。协调端通过 `/start_profile` 和 `/stop_profile` 控制服务，只读取本轮新增的 rank。SGLang 用户设 `provider: sglang`，服务会收到本档的独立输出目录。 |
+| `compute` | 在服务主机使用本机回环地址和已配置 CANN 的 `msprof`、`npu-smi`，指定 `devices: [1]` 等物理卡号。按 PipeUtilization 采集 Cube、Vector、MTE 等已导出字段。 |
+| `bandwidth` / `cache` | 使用相同的本机设置。分别采集片上内存读写带宽或 L2Cache 命中指标，实际字段取决于硬件和 CANN 导出。每次诊断只选一种。若 CANN 只导出命中及缺失后重分配次数，报告保留原始计数，并列出“命中 /（命中 + 缺失后重分配）”的口径。 |
 
-配置或推断出 metrics endpoint 且未填 `waitForTraffic` 时，默认等待服务端点出现持续 token 流量（等待上限有界；无流量时以 `traffic_wait_timeout` 及时结束，不采集空窗设备）；若 Harness 在流量开始前已结束，helper 返回 `harness_requested_before_collection`，不启动采集。显式 `waitForTraffic: false` 保持立即采集。Harness 结束后先通知 helper 收窗，再导出证据；主动收窗会导出已产生的部分证据。Solver 写入 `msprof-telemetry.json` 证据与 `msprof/{window.json,summary.json,SHA256SUMS}`；完成时摘要含请求物理卡号、解析芯片号、映射关系、逐卡 `mac_fp16_ratio` 和 `profiling-summary v1` 契约及字段可用性标注。失败记录在 attempt 中，不阻塞测评主线。
+综合诊断的服务配置与 timeline 相同。要查看 Shape 和框架显存分配，在 vLLM Ascend 启动参数 `--profiler-config` 中设置 `torch_profiler_record_shapes: true` 和 `torch_profiler_with_memory: true`。多卡服务运行实际跨卡负载后可查看 HCCL 数据。各类型在报告中标明来源、覆盖数和缺失原因，`metrics/index.json` 提供分类数据入口。
 
-`mac_fp16_ratio` 是 msprof sample-based 采集的 AICore FP16 MAC 占空比真值，与 `npu-smi` AICore% 无对应关系；`MetricSummary.sqlite` 的 `aic_mac_ratio_extra` 保留 source-specific-uncalibrated 标注。采集与 `acl_task_time`、torch profiler 同窗互斥，不得同开。
+| 优化问题 | 证据 |
+| --- | --- |
+| Host 有没有供给瓶颈 | 服务节点 CPU 忙碌率及 I/O 等待、总/可用内存、按块设备的读写次数、读写字节、I/O 时间，以及各网口收发字节。主机视图取决于采样进程所在命名空间，块设备与分区分别列出。 |
+| NPU 和显存如何使用 | 指定物理芯片的利用率、HBM 容量与占用率。框架 allocated / reserved / active 内存另按 rank、组件报告。 |
+| 时间花在哪、计算单元忙不忙 | 原生算子和 Shape、Runtime、Memcpy、设备时间线、逐 kernel 的 Cube / Vector / MTE 数值。PMU 列的统计按导出行计算，保留各列原始单位。 |
+| 显存或缓存是否受限 | 优先读取 rank 数据库 HBM 表的通道读写时序（Byte/s 转十进制 MB/s）；服务版本也可能将其写到 msprof CSV。L2 从实际导出读取，保留命中及缺失重分配的口径。 |
+| 多卡通信拖慢了多少 | 每个 rank 的 HCCL 调用耗时、等待、计算重叠，以及通信矩阵中各链路的传输类型、大小、耗时和带宽。不同 rank 的时间独立统计。 |
+
+每个并发档的 `profiling/trace/` 保留新增的 API 进程 trace 和 rank 文件，包括原生分析目录、profiler 数据库、元信息和可重分析的原始数据。每个 rank 的 `evaluator-artifacts.json` 按相对路径列出文件和大小。分析多卡通信时，可从 `ASCEND_PROFILER_OUTPUT/communication.json` 查看逐次调用，从同目录下的 `communication_matrix.json` 查看链路。磁盘需求随 rank 数和采集窗口增长。专项计数器覆盖 profiler 开启到停止的窗口，包含回放客户端的准备和收尾。
+
+模板中的 `devices: [0, 1]` 指向同机推理服务使用的两张物理卡，请按部署调整。如果压测端通过网络访问推理服务，移除本机卡号，使用共享 trace 目录和服务节点的 `nodeMetrics`。磁盘、网络的计数器同时提供窗口增量和按实际采样时长计算的每秒速率。
+
+时间线报告列出每个 rank 的热点算子、输入 Shape、Runtime 调用和 Memcpy，以及 HCCL 的执行时间和与计算重叠的时间。重叠按同一设备时钟上的区间求交；缺少相应事件时显示为缺失。多 rank 时报告标出未被计算覆盖的通信时间最长的 rank。能导出 Shape 的服务端 profiler 和 CANN 版本才能提供 Shape。只有主机事件时状态为 `host-only`。协调端需要 Python 3.11–3.13，原始 rank 需要离线解析时可用 `profiling.analysisPython` 指向安装了匹配 torch_npu 的解释器。
+
+在同机使用回环地址时，设置 `profiling.devices: [1]` 也会在诊断期间读取服务主机的 CPU 忙碌率、可用内存、各网口收发字节，以及所选物理 NPU 的利用率和 HBM 占用。记录保留采集所在主机或容器可见的网络接口。服务在容器里时可用 `profiling.samplerPython` 指定在该容器中执行 Python 的程序，该程序需转发标准输入，且能以相同路径访问 evaluator 的 AgentX 脚本和结果目录。
+
+诊断轮还可指定服务节点的 Prometheus exporter。以下名称适用于 node_exporter；NPU 显存、利用率等需按设备 exporter 实际暴露的名称配置。同名序列按标签分开，保留 endpoint 及时间戳。
+
+```yaml
+    profiling:
+      traceDirectory: /data/shared/agentx-traces
+      nodeMetrics:
+        endpoint: http://inference-node:9100/metrics
+        names: [node_cpu_seconds_total, node_memory_MemAvailable_bytes, node_network_receive_bytes_total]
+```
+
+`concurrency: [1, 8]` 和 `measurementMode: all` 会依次运行并发 1 的正式轮、诊断轮，再运行并发 8 的两轮。正式轮结果写入 `c1/performance/`、`c8/performance/`，诊断的原生 rank 导出在 `c1/profiling/trace/`、`c8/profiling/trace/`。若诊断失败，已验证的正式轮仍用于比较。单轮模式仅创建所选轮次。每档的 `run.timeoutSeconds` 须覆盖压测和 trace 导出。服务共享目录保留源 trace；可用 `profiling.service` 指定同模型诊断实例。
 
 [返回用户手册](../README.zh-CN.md) · [快速上手](../quick-start.zh-CN.md)

@@ -16,7 +16,7 @@ import {
   type Phase,
   type AttemptStepResult,
 } from "../contracts/result.js";
-import { archiveStep, clearStepOutputs, combineStepTrajectories, sumStepSolves } from "../artifacts/step-evidence.js";
+import { archiveStep, clearStepOutputs, fileMeasurementEvidence, pruneEmptyDirectories, combineStepTrajectories, sumStepSolves } from "../artifacts/step-evidence.js";
 import { buildFileManifest } from "../artifacts/artifacts.js";
 import { readTrajectoryPrefix } from "../artifacts/trajectory-recovery.js";
 import { redactDiagnostic } from "../errors/diagnostics.js";
@@ -56,9 +56,10 @@ async function trajectoryState(
   files: FileManifest,
   key: AttemptRecord["key"],
   started: boolean,
+  directory = "",
 ): Promise<Collection["trajectory"]> {
-  if (!files.files.some(file => file.path === TRAJECTORY_EVIDENCE_PATH)) return started ? "missing" : "not-produced";
-  if (!files.files.some(file => file.path === "agent/session.jsonl")) return "partial";
+  if (!files.files.some(file => file.path === directory + TRAJECTORY_EVIDENCE_PATH)) return started ? "missing" : "not-produced";
+  if (!files.files.some(file => file.path === directory + "agent/session.jsonl")) return "partial";
   const prefix = await readTrajectoryPrefix(root, key);
   return prefix.state === "complete" ? "complete" : "partial";
 }
@@ -124,6 +125,7 @@ export async function runTask(
   let stepErrorStart = 0;
   let stepArchived = false;
   let solveStarted = false;
+  const artifactDirectories: NonNullable<PreparedTask["artifactDirectory"]>[] = [];
   const failure: RecordAttemptFailure = (at, error, fallback, context = "", cancellation) => {
     let item: Failure;
     if (at === "prepare" && preparation.state === "failed") {
@@ -139,7 +141,7 @@ export async function runTask(
       });
     }
     if (context) item.message = (redactDiagnostic(context, options.sensitiveValues) + item.message).slice(0, 2048);
-    if (item.code === "NETWORK_FAILURE") (item.details ??= {}).logPath = "result.json";
+    if (item.code === "NETWORK_FAILURE") (item.details ??= {}).logPath = paths.measurementPoint ? "measurement.json" : "result.json";
     record.errors.push(item);
   };
   const resources = new AttemptResources(components, record, paths, dependenciesReady, cleanupTimeoutMs, failure, options.sensitiveValues);
@@ -202,6 +204,7 @@ export async function runTask(
       ? components.benchmark.prepare(job.ref, source, active, activity)
       : Promise.resolve(preparation.task));
     if (prepared.input.id !== job.taskId) throw new TypeError("Prepared task identity differs from locked selection");
+    await components.benchmark.validatePrerequisites?.(job.ref, () => components.store.snapshot());
     assertLockedAttachments(prepared, source);
     if (!dependenciesReady && components.benchmark.verificationRuntime)
       prepared = await prepareEnvironment("verify", prepared, preparationSignal =>
@@ -213,6 +216,10 @@ export async function runTask(
       const names = prepared.steps.map(step => step.name);
       if (!names.length || new Set(names).size !== names.length || names.some(name => !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/u.test(name)) ||
         prepared.steps.some(step => step.task.steps || step.task.input.id !== job.taskId)) throw new TypeError("Invalid prepared steps");
+      const directories = prepared.steps.flatMap(({ task }) => task.artifactDirectory ? [task.artifactDirectory.name] : []);
+      if (new Set(directories).size !== directories.length) throw new TypeError("Steps must own distinct artifact directories");
+      if (paths.measurementPoint && prepared.steps.some(s => s.name !== s.task.artifactDirectory?.name))
+        throw new TypeError("Measurement phases must own their named evidence directories");
       multiTask = prepared;
       record.steps = [];
     }
@@ -248,7 +255,7 @@ export async function runTask(
         stepErrorStart = record.errors.length;
         stepArchived = false;
         activeStep = { name: descriptor.name, solve: null, verdict: null, errors: [], startedAt: new Date().toISOString(),
-          finishedAt: new Date().toISOString(), evidencePath: `steps/${descriptor.name}` };
+          finishedAt: new Date().toISOString(), evidencePath: paths.measurementPoint ? descriptor.name : `steps/${descriptor.name}` };
         record.solve = null;
         record.verdict = null;
         progress("prepare", `Starting step ${index + 1}/${multiTask.steps!.length}: ${descriptor.name}`);
@@ -274,6 +281,7 @@ export async function runTask(
           });
         }
       }
+      if (step.task.artifactDirectory) artifactDirectories.push(step.task.artifactDirectory);
       try { await runAttemptStep(step, stepContext, multiTask !== undefined); }
       finally { solveStarted ||= step.solveStarted; }
       if (multiTask && activeStep) {
@@ -285,9 +293,9 @@ export async function runTask(
         await stage("cleanup", active => resources.finishStep(active));
         await stage("collect", () => archiveStep(paths.root, record, activeStep!));
         stepArchived = true;
-        const decision = components.benchmark.evaluateSteps!(multiTask, record.steps!);
-        record.verdict = decision.verdict;
         activeStep = undefined;
+        const decision = await stage("verify", async () => components.benchmark.evaluateSteps!(multiTask!, record.steps!));
+        record.verdict = decision.verdict;
         if (!decision.continue) break;
       }
     }
@@ -321,20 +329,35 @@ export async function runTask(
     }
     if (record.steps.length) {
       record.solve = sumStepSolves(record.steps);
-      await combineStepTrajectories(paths.root, record).catch(error => failure("collect", error, "ARTIFACT_COLLECTION_INCOMPLETE"));
+      if (!paths.measurementPoint) await combineStepTrajectories(paths.root, record).catch(error => failure("collect", error, "ARTIFACT_COLLECTION_INCOMPLETE"));
     } else delete record.steps;
   }
   // Hash after processes stop writing; store verifies the same inventory before
   // publishing result.json. Store allocation/publication errors remain global.
-  const required = solveStarted ? [TRAJECTORY_EVIDENCE_PATH, "agent/session.jsonl"] : [];
+  const phases = paths.measurementPoint ? artifactDirectories.map(spec => spec.name) : [];
+  // SSH solvers write their files directly instead of exporting an environment directory.
+  if (paths.measurementPoint && !multiTask && !phases.length && solveStarted) phases.push("performance");
+  if (paths.measurementPoint && !multiTask && phases[0]) {
+    await fileMeasurementEvidence(paths.root, phases[0]).catch(error => failure("collect", error, "ARTIFACT_COLLECTION_INCOMPLETE"));
+  }
+  if (paths.measurementPoint) await pruneEmptyDirectories(paths.root)
+    .catch(error => failure("collect", error, "ARTIFACT_COLLECTION_INCOMPLETE"));
+  const prefixes = paths.measurementPoint ? phases.map(name => name + "/") : [""];
+  const required = solveStarted ? prefixes.flatMap(prefix => [prefix + TRAJECTORY_EVIDENCE_PATH, prefix + "agent/session.jsonl"]) : [];
   const artifactName = step ? expectedStepArtifact(step) : null;
   if (resources.hasSolveEnvironment && artifactName !== null) required.push(`artifacts/${artifactName}`);
+  for (const spec of artifactDirectories)
+    required.push(...spec.requiredFiles.map(file => [spec.name, "outputs", file].join("/")));
   const collectionStart = performance.now();
   progress("collect", "Collecting trajectory and artifacts");
-  const files = await buildFileManifest(paths.root, required);
-  record.collection.trajectory = await trajectoryState(paths.root, files, key, solveStarted);
-  const artifactFiles = files.files.filter(file => file.path.startsWith("artifacts/") || file.path.startsWith("logs/artifacts/"));
-  const missingArtifacts = files.missing.some(file => file.path.startsWith("artifacts/"));
+  const files = await buildFileManifest(paths.root, required, undefined, paths.measurementPoint);
+  const states = await Promise.all(prefixes.map(prefix => trajectoryState(join(paths.root, prefix), files, key, solveStarted, prefix)));
+  record.collection.trajectory = states.every(s => s === "not-produced") ? "not-produced" :
+    states.every(s => s === "complete") ? "complete" : states.every(s => s === "missing") ? "missing" : "partial";
+  const isDirectoryArtifact = (path: string) => artifactDirectories.some(spec => path.startsWith(spec.name + "/outputs/")) ||
+    (paths.measurementPoint && (path.startsWith("performance/outputs/") || path.startsWith("performance/artifacts/") || path.startsWith("profiling/")));
+  const artifactFiles = files.files.filter(file => file.path.startsWith("artifacts/") || file.path.startsWith("logs/artifacts/") || isDirectoryArtifact(file.path));
+  const missingArtifacts = files.missing.some(file => file.path.startsWith("artifacts/") || isDirectoryArtifact(file.path));
   record.collection.artifacts = missingArtifacts
     ? artifactFiles.length
       ? "partial"
@@ -364,7 +387,17 @@ export async function runTask(
   }
   record.finishedAt = new Date().toISOString();
   record.durationMs = performance.now() - started;
-  await collectAttemptAccounting(paths.root, record);
+  if (paths.measurementPoint && record.steps?.length) {
+    const parts = record.steps.flatMap(s => s.accounting ? [s.accounting] : []);
+    const costs = parts.flatMap(p => p.cost === null ? [] : [p.cost]);
+    const usage: import("../contracts/result.js").Usage = { inputTokens: null, outputTokens: null, totalTokens: null };
+    for (const key of ["inputTokens", "outputTokens", "totalTokens"] as const) {
+      const counts = parts.flatMap(p => p.usage[key] === null ? [] : [p.usage[key]]);
+      if (counts.length) usage[key] = counts.reduce((sum, n) => sum + n, 0);
+    }
+    record.accounting = { usage, cost: costs.length ? costs.reduce((sum, n) => sum + n, 0) : null,
+      currency: costs.length ? "USD" : null, complete: parts.length === record.steps.length && parts.every(p => p.complete) };
+  } else await collectAttemptAccounting(join(paths.root, phases[0] ?? ""), record);
   finalizeAttemptOutcome(record);
   progress("store", "Saving attempt result");
   await components.store.commit(record, files).catch(cause => {

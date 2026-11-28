@@ -104,7 +104,7 @@ def multimodal_inputs(config, run):
                 tokenizer_path=config["tokenizerPath"],
                 gsm8k_path=generation.get("corpusPath", Path(__file__).parent / "upstream/GSM8K.jsonl"),
                 mmmu_parquet_dir=generation["mmmuParquetDir"], output_dir=directory,
-                scenarios=generation["imageScenario"], request_count=max(native["dataCount"]),
+                scenarios=generation["imageScenario"], request_count=config.get("generationCount", max(native["dataCount"])),
                 text_tokens=generation["textTokens"], output_tokens=generation.get("outputTokens", native["maxOutputTokens"]),
                 trust_remote_code=native.get("options", {}).get("trust-remote-code") is True,
             )
@@ -161,6 +161,12 @@ def configured_manager(args, config, generated_datasets=None):
     class YamlConfigManager(ConfigManager):
         def load_config(self, workflow):
             cfg = super().load_config(workflow)
+            expected = config["native"].get("concurrency")
+            if config["native"].get("measurementMode") and expected:
+                for combo in cfg.get("model_dataset_combinations") or [cfg]:
+                    for model in combo["models"]:
+                        if model.get("batch_size") not in expected:
+                            raise ValueError("native model batch_size does not match benchmark.concurrency")
             output = Path(cfg.work_dir)
             # A single concurrency setting has no upstream combos manifest, even when
             # several model/dataset pairs will be attempted. Keep their expected IDs.
@@ -176,6 +182,8 @@ def configured_manager(args, config, generated_datasets=None):
             for model in models:
                 if model.get("attr", "service") != "service" or model.get("url") != config["endpoint"]:
                     raise ValueError("backend must support the bound evaluator service URL")
+                if config["native"].get("measurementMode") and model.get("model") != config["model"]:
+                    raise ValueError("native model name does not match the bound service")
                 if config.get("apiKey") and model.get("api_key") != config["apiKey"]:
                     raise ValueError("backend does not accept the bound service credentials")
             return models
@@ -183,7 +191,7 @@ def configured_manager(args, config, generated_datasets=None):
         def _load_datasets_config(self):
             if generated_datasets is not None:
                 return generated_datasets
-            items = config["native"]["datasets"]
+            items = config["native"].get("datasets", [])
             if not any("config" in item or "abbr" in item for item in items):
                 return super()._load_datasets_config()
             datasets = []
@@ -205,9 +213,11 @@ def configured_manager(args, config, generated_datasets=None):
 def build_args(config, run, parser, generated_name=None, work_dir=None):
     native = config["native"]
     args = []
-    if "backend" in native:
-        datasets = [generated_name] if generated_name else [d["name"] for d in native["datasets"]]
-        args += ["--models", *native["backend"], "--datasets", *datasets,
+    direct = "nativeArgs" in native and not native.get("configFile") and not native.get("remoteConfigFile")
+    if "backend" in native or direct:
+        datasets = [generated_name] if generated_name else [d["name"] for d in native.get("datasets", [])]
+        if not direct:
+            args += ["--models", *native["backend"], "--datasets", *datasets,
                  "--summarizer", native.get("summarizer", "default_perf")]
         endpoint = urlsplit(config["endpoint"])
         args += ["--model-name=" + config["model"], "--url=" + config["endpoint"], "--host-ip=" + endpoint.hostname,
@@ -219,6 +229,7 @@ def build_args(config, run, parser, generated_name=None, work_dir=None):
         if not path.is_file():
             raise ValueError(f"Cannot read AISBench configuration {path}")
         args.append(str(path))
+    args += native.get("nativeArgs", [])
     args += ["--mode", "perf", "--work-dir", str(work_dir or run / "outputs")]
     if config.get("tokenizerPath"):
         args += ["--path", config["tokenizerPath"]]
@@ -228,6 +239,11 @@ def build_args(config, run, parser, generated_name=None, work_dir=None):
     for field, key in fields.items():
         if field in native:
             value = native[field]
+            # AISBench 3.1 selects streaming through the model template instead of a CLI flag.
+            if field == "stream" and "--stream" not in parser._option_string_actions:
+                templates = native.get("backend", [])
+                if templates and all(("stream" in model) == value for model in templates):
+                    continue
             if field in ("concurrency", "dataCount") and len(value) == 1:
                 value = value[0]
             args += option_args(parser, key, value)
@@ -273,9 +289,27 @@ def main(root):
     from ais_bench.benchmark.cli.argument_parser import ArgumentParser
     from ais_bench.benchmark.cli.task_manager import TaskManager
     parser = ArgumentParser().parser
+    def execute(args, service, selected):
+        sys.argv = ["ais_bench", *args]
+        manager = TaskManager()
+        manager.config_manager = configured_manager(manager.args, service, selected)
+        return manager.run()
+
+    def public_args(args):
+        return ["ais_bench", *["--api-key=[REDACTED]" if a.startswith("--api-key=") else a for a in args]]
+
+    if native.get("engineMetrics"):
+        from service_collections import run_engine_metrics
+        plan["commands"] = []
+        def run_window(service, name, selected, work_dir):
+            args = build_args(service, run, parser, name, work_dir)
+            plan["commands"].append(public_args(args))
+            (run / "native-plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            return execute(args, service, selected)
+        run_engine_metrics(config, run, selections, run_window)
+        return 0
     commands = [(build_args(config, run, parser, name, work_dir), selected) for name, selected, work_dir in selections]
-    public_commands = [["ais_bench", *["--api-key=[REDACTED]" if a.startswith("--api-key=") else a for a in args]]
-                       for args, _ in commands]
+    public_commands = [public_args(args) for args, _ in commands]
     if len(commands) == 1:
         plan["argv"] = public_commands[0]
     else:
@@ -290,10 +324,7 @@ def main(root):
     (run / "native-plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     # The secret is passed to the installed CLI inside this process, outside OS argv.
     for args, selected in commands:
-        sys.argv = ["ais_bench", *args]
-        manager = TaskManager()
-        manager.config_manager = configured_manager(manager.args, config, selected)
-        code = manager.run()
+        code = execute(args, config, selected)
         if code:
             return code
     return 0

@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { stringify } from "yaml";
@@ -9,7 +9,7 @@ import { loadConfig } from "../../src/application/config.js";
 import { bootstrap } from "../../src/application/plugins/bootstrap.js";
 import { runEngine } from "../../src/application/run-engine.js";
 import { rebuildReport, saveReport } from "../../src/application/report/index.js";
-import { safeTaskKey } from "../../src/core/artifacts/artifacts.js";
+import { resultDirectory } from "../../src/core/artifacts/artifacts.js";
 import { planResume } from "../../src/core/recovery/resume.js";
 import { normalizeTelemetry, parseTelemetryConfig } from "../../src/plugins/benchmarks/inference-engine/agentx/evidence/telemetry.js";
 import { parseNetworkLatencyConfig } from "../../src/plugins/benchmarks/inference-engine/agentx/evidence/network-latency.js";
@@ -129,12 +129,15 @@ test.skipIf(!python).each([false, true])("real AgentX loads the locked corpus an
   }
 }, 130000);
 
-test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Harness and collects its raw artifacts", async () => {
+test.skipIf(!python).each(["standard", "service-collections", "profile-failure", "profile-only"])("Evaluator runs the %s YAML through the real Harness and rebuilds its report", async scenario => {
+  const dual = scenario !== "standard";
+  const only = scenario === "profile-only";
+  const rejected = scenario === "profile-failure";
   await mkdir(".scratch", { recursive: true });
   const root = await mkdtemp(resolve(".scratch/agentx-e2e-"));
   const helper = await startLocalProcess({ executable: python ?? "python", args: [resolve("tests/fixtures/agentx/check-bridge.py"),
-    root, resolve("src/runtimes/agentx/assets/runner.py"), "--serve", "--standard-duration"], cwd: resolve("."),
-    env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" }, input: null }, AbortSignal.timeout(120000));
+    root, resolve("src/runtimes/agentx/assets/runner.py"), "--serve", ...(dual ? ["--service-collections", ...(rejected ? ["--reject-profile"] : [])] : ["--standard-duration", "--service-engine"])], cwd: resolve("."),
+    env: { PYTHONDONTWRITEBYTECODE: "1", PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" }, input: null }, AbortSignal.timeout(dual ? 360000 : 120000));
   const diagnostics = (async () => { for await (const _chunk of helper.stderr) { /* Drain tokenizer diagnostics. */ } })();
   let components: Awaited<ReturnType<typeof bootstrap>> | undefined;
   let passed = false;
@@ -153,9 +156,11 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
     vi.stubEnv("HF_ENDPOINT", ready.url);
     const configPath = join(root, "experiment.yaml");
     await writeFile(configPath, stringify({ services: { default: { model: "fixture-model", base_url: ready.url, api_key: "${AGENTX_FIXTURE_KEY}" } },
-      benchmark: { name: "agentx", scenario: "standard", config: { cacheDir: join(root, "cache"), durationSeconds: 60 },
-        solver: { config: { tokenizer: ready.tokenizer, pythonExecutable: python, cacheDir: join(root, "cache"), requestTimeoutSeconds: 10,
-          networkLatency: { mode: "automatic", pingIntervalSeconds: 0.2 } } } },
+      benchmark: { name: "agentx", scenario: dual ? "replay" : "standard", config: { cacheDir: join(root, "cache"), ...(dual
+        ? { measurementMode: only ? "profiling" : "all", traceCount: 8, concurrency: rejected || only ? [1] : [1, 8], engineMetrics: ["fixture_requests_total"], profiling: { provider: "vllm", preset: "timeline", traceDirectory: join(root, "traces"), exportTimeoutSeconds: 5 } }
+        : { durationSeconds: 60, engineMetrics: ["fixture_requests_total"] }) },
+        solver: { config: { tokenizer: ready.tokenizer, pythonExecutable: python, cacheDir: join(root, "cache"), requestTimeoutSeconds: dual ? 30 : 10,
+          ...(dual ? {} : { networkLatency: { mode: "automatic", pingIntervalSeconds: 0.2 } }) } } },
       environment: "local", output: { directory: join(root, "runs") } }));
     const config = await loadConfig(configPath, {}, { ...process.env, AGENTX_FIXTURE_KEY: ready.key });
     components = await bootstrap(config, root);
@@ -165,14 +170,100 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
     await cp(resolve("src/runtimes/agentx/assets"), join(runtime, "bridge"), { recursive: true });
     await symlink(dirname(dirname(resolve(python ?? "python"))), join(runtime, "venv"), process.platform === "win32" ? "junction" : "dir");
     components.solver.runtimeInstallation = async () => ({ id: "agentx-controlled-runtime", files: [], commands: [], probes: [], localRoot: runtime });
-    const snapshot = await runEngine({ components, config, signal: AbortSignal.timeout(90000) });
-    expect(snapshot.run.status, JSON.stringify(snapshot.records[0]?.errors)).toBe("completed");
+    const snapshot = await runEngine({ components, config, signal: AbortSignal.timeout(dual ? 315000 : 90000) });
+    if (!rejected) expect(snapshot.run.status, JSON.stringify(snapshot.records.flatMap(record => record.errors))).toBe("completed");
+    if (only) {
+      const directory = join(config.experiment.output.directory, snapshot.run.runId);
+      expect(await readdir(join(directory, "c1"))).toEqual(expect.arrayContaining(["measurement.json", "files.json", "profiling"]));
+      expect(await readdir(join(directory, "c1"))).not.toContain("performance");
+      await saveReport(components.store, components.metrics, components.reporter);
+      const index = JSON.parse(await readFile(join(directory, "metrics/index.json"), "utf8"));
+      expect(index.files["service/requests"]).toEqual({ path: null, status: { c1: "disabled" } });
+      expect(index.files["execution/operators"].status.c1).toBe("measured");
+      expect(await readdir(join(directory, "metrics"))).not.toContain("service");
+      passed = true;
+      return;
+    }
+    if (dual) {
+      const concurrencies = rejected ? [1] : [1, 8];
+      expect(snapshot.run.taskIds).toEqual(concurrencies.map(c => "agentx-256k-replay-c" + c));
+      expect(snapshot.records).toHaveLength(concurrencies.length);
+      for (const record of snapshot.records) {
+        const directory = join(config.experiment.output.directory, snapshot.run.runId, resultDirectory(snapshot.run, record.key));
+        const manifest: { files: { path: string }[] } = JSON.parse(await readFile(join(directory, "files.json"), "utf8"));
+        const paths = manifest.files.map(entry => entry.path);
+        expect(paths.filter(path => path.endsWith(".tar"))).toEqual([]);
+        for (const name of ["harness.log", "profile_export.jsonl", "profile_export_aiperf.json"]) {
+          expect(paths.filter(path => path.endsWith("/" + name)).sort()).toEqual(
+            (rejected ? ["performance"] : ["performance", "profiling"]).map(phase => phase + "/outputs/" + name));
+        }
+        expect(paths.filter(path => path.endsWith("replay-coverage.json")).sort()).toEqual([
+          "performance/outputs/replay-coverage.json", ...(rejected ? [] : ["profiling/outputs/replay-coverage.json"]),
+          "profiling/outputs/warmup/replay-coverage.json",
+        ]);
+        expect(record.steps?.map(step => step.name)).toEqual(["performance", "profiling"]);
+        const [performance, profiling] = record.steps ?? [];
+        const formal = parseAgentXSummary(performance?.solve?.observations);
+        expect(formal.replayCoverage?.successfulRequests).toBe(56);
+        expect(formal.profiling.requests?.mean).toBe(56);
+        expect(formal.engine).toBeDefined();
+        expect(record.solve?.usage).toEqual(performance?.solve?.usage);
+        expect((await stat(join(directory, "performance", "outputs", "replay-coverage.json"))).size).toBeGreaterThan(0);
+        const meta = await readFile(join(directory, "profiling", "collections.json"), "utf8");
+        expect(meta).not.toContain(ready.key);
+        if (rejected) {
+          expect(record.executionStatus).toBe("failed");
+          expect(profiling?.errors[0]?.message).toContain("HTTP 409");
+          expect(meta).toContain("failed");
+        } else {
+          expect(record.errors).toEqual([]);
+          expect(record.collection).toMatchObject({ artifacts: "complete", trajectory: "complete" });
+          const diagnostic = parseAgentXSummary(profiling?.solve?.observations);
+          expect(profiling?.solve?.usage.totalTokens).toBeNull();
+          expect(diagnostic.replayCoverage?.successfulRequests).toBe(7 * formal.workload.concurrency);
+          expect(diagnostic.deviceProfile?.status).toBe("measured");
+          expect(await readFile(join(directory, "profiling", "trace", formal.workload.concurrency === 1 ? "capture-63" : "capture-133", "rank0", "ASCEND_PROFILER_OUTPUT", "op_statistic.csv"), "utf8")).toContain("MatMul");
+          expect((await stat(join(directory, "profiling", "outputs", "replay-coverage.json"))).size).toBeGreaterThan(0);
+        }
+      }
+      const events: unknown = await (await fetch(ready.url + "/events")).json();
+      if (!Array.isArray(events)) throw new Error("Missing service events");
+      expect(events.filter(event => Array.isArray(event) && event[0] !== "metrics")).toEqual(rejected ? [["/start_profile", 63]] : [
+        ["/start_profile", 63], ["/stop_profile", 70], ["/start_profile", 133], ["/stop_profile", 189]]);
+      await saveReport(components.store, components.metrics, components.reporter);
+      const runDirectory = join(config.experiment.output.directory, snapshot.run.runId);
+      const report = await readFile(join(runDirectory, "report.md"), "utf8");
+      expect(report).toContain("fixture\\_requests\\_total");
+      expect(report).toContain("正式压测 · measured");
+      if (rejected) expect(report).toContain("HTTP 409");
+      else expect(report.match(/Ascend profiling · measured/gu)).toHaveLength(2);
+      expect(await readdir(runDirectory)).not.toContain("tasks");
+      expect(await readdir(runDirectory)).not.toContain("metrics.json");
+      const metricsPath = join(runDirectory, "metrics/index.json");
+      const metrics = await readFile(metricsPath, "utf8");
+      const index = JSON.parse(metrics);
+      expect(index.files["service/requests"].status.c1).toBe("measured");
+      expect(index.files["execution/operators"].status.c1).toBe(rejected ? "unavailable" : "measured");
+      const requestsPath = join(runDirectory, "metrics/service/requests.json");
+      const requests = await readFile(requestsPath, "utf8");
+      expect(JSON.parse(requests).points.map((p: { concurrency: number }) => p.concurrency)).toEqual(concurrencies);
+      await components.store.close();
+      await helper.stop(500);
+      await Promise.all([rm(join(runDirectory, "report.md")), rm(join(runDirectory, "metrics"), { recursive: true })]);
+      await rebuildReport(runDirectory);
+      expect(await readFile(join(runDirectory, "report.md"), "utf8")).toBe(report);
+      expect(await readFile(metricsPath, "utf8")).toBe(metrics);
+      expect(await readFile(requestsPath, "utf8")).toBe(requests);
+      passed = true;
+      return;
+    }
     const record = snapshot.records[0]; if (!record) throw new Error("No measurement saved");
     expect(record).toMatchObject({ executionStatus: "completed", evaluationKind: "performance", scoreStatus: "not-applicable",
       verdict: { passed: null }, collection: { artifacts: "complete", trajectory: "complete" } });
     expect(record.verdict).not.toHaveProperty("score");
     const summary = parseAgentXSummary(record.solve?.observations);
     expect(summary.workload).toMatchObject({ mode: "standard", durationSeconds: 60 });
+    expect(summary.engine).toMatchObject({ status: "measured", series: [{ series: "fixture_requests_total", delta: expect.any(Number) }] });
     expect(summary.warmup.requests?.mean).toBe(11);
     expect(summary.profiling.duration?.mean).toBeGreaterThanOrEqual(55);
     expect(summary.profiling.duration?.mean).toBeLessThan(75);
@@ -180,9 +271,8 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
     expect(summary.incomparableReasons).toContain("custom_duration");
     expect(summary.networkLatency?.status).toBe("complete");
     expect(summary.networkLatency?.probes?.successful).toBeGreaterThan(0);
-    const archive = join(config.experiment.output.directory, snapshot.run.runId, "tasks", safeTaskKey(record.key.taskId),
-      "attempts", record.key.attemptId, "artifacts", "artifacts.tar");
-    expect((await stat(archive)).size).toBeGreaterThan(0);
+    const raw = join(config.experiment.output.directory, snapshot.run.runId, resultDirectory(snapshot.run, record.key), "performance", "outputs", "profile_export_aiperf.json");
+    expect((await stat(raw)).size).toBeGreaterThan(0);
     await saveReport(components.store, components.metrics, components.reporter);
     const runDirectory = join(config.experiment.output.directory, snapshot.run.runId);
     const report = await readFile(join(runDirectory, "report.md"), "utf8");
@@ -199,8 +289,7 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
       if (!components) throw new Error("Missing fixture components");
       const attempts = await components.store.listAttempts();
       const attempt = attempts[0]; if (!attempt) throw new Error("Waiting for attempt allocation");
-      const trajectory = join(config.experiment.output.directory, attempt.key.runId, "tasks", safeTaskKey(attempt.key.taskId),
-        "attempts", attempt.key.attemptId, "agent", "trajectory.jsonl");
+      const trajectory = join(config.experiment.output.directory, attempt.key.runId, "c1", "agent", "trajectory.jsonl");
       const events = (await readFile(trajectory, "utf8")).trim().split("\n").map(line => JSON.parse(line));
       childPid = events.find(event => event.type === "harness")?.data.pid;
       expect(childPid).toBeTypeOf("number");
@@ -209,7 +298,7 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
     const cancelled = await running;
     expect(cancelled.run.status).toBe("cancelled");
     expect(cancelled.records[0]).toMatchObject({ executionStatus: "cancelled", scoreStatus: "not-applicable", verdict: null });
-    expect(planResume(cancelled.run, await components.store.listAttempts(), cancelled.run.configFingerprint).restartTaskIds).toEqual(cancelled.run.taskIds);
+    expect(() => planResume(cancelled.run, [], cancelled.run.configFingerprint)).toThrow(/start a new run/);
     if (childPid === undefined) throw new Error("Missing Harness PID");
     const stoppedPid = childPid;
     expect(() => process.kill(stoppedPid, 0)).toThrow();
@@ -221,4 +310,4 @@ test.skipIf(!python)("Evaluator runs a 60-second YAML window through the real Ha
     vi.unstubAllEnvs();
     if (passed) await rm(root, { recursive: true, force: true });
   }
-}, 130000);
+}, 360000);

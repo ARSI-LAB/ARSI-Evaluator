@@ -1,0 +1,11 @@
+target: blue-vllm-tp2
+benchmark:
+  name: aisbench
+  workload:
+    type: synthetic-multimodal
+    images: single_1080p
+    textTokens: 256
+    outputTokens: 32
+    requests: 100
+  concurrency: [1, 8]
+  collect: all

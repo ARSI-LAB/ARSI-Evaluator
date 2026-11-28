@@ -58,6 +58,12 @@ CLI `run` 和 SDK `Evaluator.run()` 使用 [application/run.ts](../../src/applic
 
 `runTask()` 准备任务、推进步骤、归档证据并保存结果。[run-attempt-step.ts](../../src/core/execution/run-attempt-step.ts) 执行单步求解、收集、传输和验证，失败后在求解环境关闭前补收集产物。[attempt-resources.ts](../../src/core/execution/attempt-resources.ts) 创建并释放环境会话、Solver 句柄和私有验证器，负责求解与验证之间的环境切换。多步任务在归档本步证据前关闭本步的私有验证器和独立验证环境，再把求解环境交给下一步。
 
+任务声明 `artifactDirectory` 时，执行器在求解环境静止后将同名工作目录发布到 attempt 的 `<name>/outputs/`。文件清单逐项校验原始文件；多步任务共用这份目录，失败或取消仍走相同的补收集流程。
+
+Benchmark 的 YAML Profile 通过 `defaults.benchmark.evaluationScenario` 设置产物布局。AgentX 和 AISBench 压测使用 `inference-engine`。AISBench 的 native Profile 按 `benchmark.config.multimodalAction` 将只制数和校验归为 `task`。加载器在用户配置合并和变量展开后确定类别，运行配置保存最终值。GSM8K、算子测评和数据准备操作使用逐任务布局。
+
+推理引擎 Benchmark 在每个 TaskRef 中给出 `measurementConcurrency`。框架将测量点随 source 锁入 manifest，每档并发写入一个 `cN/`。并发交由原生配置决定时，传入 null，使用 `configured/`。指标插件通过 `measurementFiles()` 提供分类结果。离线重建读取该次运行的 manifest。
+
 `createRunComponents` 和 `createBenchmark` 必须接收已有注册表，不负责打开或关闭注册表。前者返回不含 `dispose()` 的 `RunComponents`，后者直接返回 Benchmark；工厂创建的资源一直由该注册表管理，装配失败也由注册表所有者的 `finally` 清理。
 
 公开 [bootstrap](../../src/application/plugins/bootstrap.ts) 自行打开注册表，失败时关闭，成功时返回 `BootstrappedComponents`（组件字段加 `dispose()`）。其签名为 `bootstrap(config, directory, patchPath?, onWarning?, imageConfigFingerprint?)`，调用方在 `finally` 中调用返回值的 `dispose()`。重复释放由注册表处理。
@@ -65,6 +71,8 @@ CLI `run` 和 SDK `Evaluator.run()` 使用 [application/run.ts](../../src/applic
 `executeExperiment` 负责关闭它使用的注册表，包括通过内部 `execution` 参数转交的注册表；`executeWarmup` 自建的注册表由它关闭，通过 `execution` 借用的注册表由 Jobs 入口关闭。预览、诊断和 Ray worker 入口在退出时关闭各自注册表。Worker 执行函数必须接收注册表，结果上传前不执行无效的组件释放调用。直接调用公开 `runEngine` 时，它只关闭自己创建的补测控制，不创建注册表、不替换组件，也不关闭调用方资源。
 
 Benchmark 准备公开输入和私有验证材料；Solver 只接收公开任务与执行环境；Benchmark.verify 或私有验证运行时使用验证材料评分；Store 保存结果和产物。`Benchmark.prepare()` 在环境创建前执行，现有接口不支持任意新增“环境就绪后”的生命周期阶段，具体限制见 [Benchmark 开发指南](benchmarks.md#未来记忆评测的接口边界)。
+
+可选的 `Benchmark.validatePrerequisites()` 在公开任务准备完成后、分配本次执行环境前读取 Store 快照。AgentX 用它确认正式测量已落盘，再允许依赖这些结果的诊断轮执行。
 
 离线报告通过 [application/report/](../../src/application/report) 单独加载 Metrics 和 Reporter 的注册入口，读取已保存结果并调用所选组件，不加载内置组件总入口，也不重新运行 Solver。第三方报告组件通过同一个 loadPluginModule 加载，并继续检查保存的插件版本。修改证据格式时需同时检查结果读取、续跑、Metrics 和 Reporter。
 
@@ -98,6 +106,8 @@ Docker 读取构建目录中的文件和权限来计算镜像缓存键。缓存�
 Benchmark 分为 `agent-harness/`、`inference-engine/`、`operator/`，各自保存所属 Profile 并在本类 `index.ts` 注册。分类不增加 YAML 类别字段，也不在核心执行流程中按类别分支。具体新增位置见 [Benchmark 开发指南](benchmarks.md#新需求的修改入口)。
 
 [plugins/index.ts](../../src/plugins/index.ts) 组合注册入口。Benchmark、Solver、Environment、Verifier、Store、Scheduler 使用各自入口；Metrics 和 Reporter 分别由 [metrics/index.ts](../../src/plugins/metrics/index.ts) 和 [reporters/index.ts](../../src/plugins/reporters/index.ts) 注册。外部插件通过显式 `--patch` 加载，省略参数不扫描默认目录，配置方法见[插件开发与加载](plugins.md)。
+
+AgentX 和 AISBench 共用 `runtimes/agentx/service-profile.ts`。两个 Solver 分别提供发压回调，服务 profiler 负责启停采集、在推理节点采样以及导出 trace。两个 Metrics 插件离线重建报告时，均通过 `plugins/benchmarks/inference-engine/shared/service-collections.ts` 读取诊断证据。
 
 同一功能可以跨角色目录。例如 AgentX 的输入和证据在 `plugins/benchmarks/inference-engine/agentx/`，负载调用在 `plugins/solvers/agentx-replay.ts`，安装和桥接在 `runtimes/agentx/`，指标与报告分别在 metrics 和 reporters。`evidence/` 直接解析保存的结果，不通过注册入口加载安装器或采样进程；共享版本信息来自无 I/O 的 `runtimes/agentx/versions.ts`。
 
