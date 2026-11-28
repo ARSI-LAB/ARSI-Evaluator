@@ -1,0 +1,10 @@
+target: blue-vllm-tp2
+benchmark:
+  name: aisbench
+  workload:
+    type: synthetic-text
+    inputTokens: 1024
+    outputTokens: 128
+    requests: 100
+  concurrency: [1, 8]
+  collect: all

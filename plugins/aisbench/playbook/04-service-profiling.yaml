@@ -1,0 +1,29 @@
+services:
+  default:
+    model: ${MODEL_NAME}
+    base_url: ${MODEL_ENDPOINT}
+    api_key: ${MODEL_API_KEY}
+benchmark:
+  name: aisbench
+  workload: { type: dataset, dataset: textvqa_gen_base64, requests: 16 }
+  concurrency: [1, 8]
+  collect: all
+  config:
+    engineMetrics: ["sglang:prompt_tokens_total", "sglang:generation_tokens_total"]
+    profiling:
+      provider: sglang
+      serviceNode: inference-server
+      traceDirectory: /data/shared/aisbench-traces
+      devices: [0, 1]
+  solver:
+    name: aisbench-ssh
+    config:
+      tokenizerPath: /data/tokenizers/vl
+      remote:
+        ssh: { host: benchmark-server, user: benchmark }
+        pythonExecutable: /opt/conda/envs/aisbench/bin/python
+        aisbenchVersion: ${AISBENCH_VERSION}
+        workingDirectory: /opt/benchmark
+        workRoot: /data/evaluator/aisbench
+output:
+  directory: ../../../results/aisbench-service-profiling
