@@ -117,6 +117,7 @@ def prepare(root, config):
     args += ["--test_type", workload.get("testType", "stream")]
     for key, flag in [("inputLength", "input_len"), ("outputLength", "output_len"), ("dataCount", "data_num"), ("concurrency", "concurrency"), ("requestRate", "request_rate")]:
         args += ["--" + flag, str(workload[key])]
+    args += ["--warmups", str(workload.get("warmups", 0))]
     cache = workload.get("prefixCache", {})
     if cache.get("enabled"):
         args += ["--dataset_type", "prefix_cache", "--prefix_num", str(cache["prefixCount"]), "--repeat_rate", str(cache["prefixRatio"]), "--dp", str(cache["dp"]), "--seed", str(cache["seed"])]

@@ -49,6 +49,8 @@ arsi-evaluator run plugins/aisbench/playbook/01-ssh.yaml
 | `concurrency` | 请求最大并发 |
 | `requestRate` | 请求速率，0 使用上游不限速行为 |
 | `testType` | `stream` 或 `text` |
+| `dataset` | `synthetic` 使用固定长度合成执行器；`gsm8k` 显式选择内置 GSM8K 性能负载；省略时仍走原有 GSM8K 性能路径 |
+| `warmups` | AISBench 正式测量前的预热请求数；省略时为 0 |
 | `prefixCache.enabled` | 生成公共前缀数据 |
 | `prefixCache.prefixCount` | 公共前缀种类数 |
 | `prefixCache.prefixRatio` | 公共前缀占输入长度的比例 |
@@ -56,7 +58,9 @@ arsi-evaluator run plugins/aisbench/playbook/01-ssh.yaml
 | `prefixCache.dp` | 预热使用的数据并行域数量 |
 | `prefixCache.seed` | 数据生成随机种子 |
 
-这些参数控制负载，不会打开服务端缓存，也不保证实际命中率。测量命中率时填写 `benchmark.solver.config.podInfo`，其值为远端可访问的 vLLM 指标节点 `host:port`，与模型 API 地址分开。缺少指标不会伪造结果。不启用公共前缀时将 `enabled`、`warmup` 设为 false，并删除 `prefixRatio` 或设为 0。目前支持生成负载的性能模式，不支持任意数据集或精度评测。
+这些参数控制负载，不会打开服务端缓存，也不保证实际命中率。`dataset`、`warmups`、`testType` 和 `prefixCache` 是独立配置字段；场景配置负责选择推荐组合。SyntheticDataset 执行器目前只支持流式请求且不生成共享前缀，遇到其他组合时会在远端准备阶段明确报错；原有 GSM8K 性能路径继续支持 `text`/`stream` 和共享前缀。`dataset: gsm8k` 只显式选择性能负载，不执行 GSM8K 正确率评分。
+
+测量命中率时填写 `benchmark.solver.config.podInfo`，其值为远端可访问的 vLLM 指标节点 `host:port`，与模型 API 地址分开。缺少指标不会伪造结果。不启用公共前缀时将 `enabled`、`warmup` 设为 false，并删除 `prefixRatio` 或设为 0。插件仍不支持任意数据集或精度评测。
 
 ## 恢复、产物和离线报告
 

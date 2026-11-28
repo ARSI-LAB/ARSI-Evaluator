@@ -22,6 +22,13 @@ WORKLOAD = dict(inputLength=4096, outputLength=2048, dataCount=1320, concurrency
 
 
 class E1Tests(unittest.TestCase):
+    def test_workload_capabilities_are_checked_by_the_executor(self):
+        e1.validate_workload(WORKLOAD)
+        with self.assertRaisesRegex(ValueError, 'streaming'):
+            e1.validate_workload({**WORKLOAD, 'testType': 'text'})
+        with self.assertRaisesRegex(ValueError, 'shared prefixes'):
+            e1.validate_workload({**WORKLOAD, 'prefixCache': {'enabled': True}})
+
     def test_config_preserves_historical_protocol(self):
         config = e1.render_config(dict(endpoint='http://127.0.0.1:18080/v1', tokenizerPath='/models/fixed', model='served', apiKey="quote'\\", workload=WORKLOAD))
         compile(config, '<config>', 'exec')

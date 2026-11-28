@@ -13,14 +13,15 @@ import time
 runner = Path(sys.argv[1]).resolve()
 # Exercise the vendored command/config patches without importing its heavy dependencies.
 upstream = runner.parent / "upstream/aisbench_test.py"
-tree = ast.parse(upstream.read_text())
+tree = ast.parse(upstream.read_text(encoding="utf-8"))
 functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {"generate_aisbench_command", "run_aisbench", "modify_aisbench_api"}]
 namespace = {"subprocess": subprocess, "OUTPUT_DIR": "/tmp/path with spaces", "os": os,
              "request_rate": "0", "api_test_type": "VLLMCustomAPIChatStream", "api_test_abbr": "fixture",
              "MODEL_PATH": "/tmp/tokenizer", "MODEL_NAME": "quoted'\\model", "API_KEY": "secret'\\key",
              "HOST_IP": "localhost", "HOST_PORT": "8000", "URL": "http://localhost:8000/v1"}
 exec(compile(ast.Module(body=functions, type_ignores=[]), str(upstream), "exec"), namespace)
-assert isinstance(namespace["generate_aisbench_command"]("default_perf"), list)
+command = namespace["generate_aisbench_command"]("default_perf", 4)
+assert command[-2:] == ["--num-warmups", "4"]
 with tempfile.TemporaryDirectory(prefix="aisbench-remote-") as temp:
     root = Path(temp)
     old_cwd = os.getcwd()

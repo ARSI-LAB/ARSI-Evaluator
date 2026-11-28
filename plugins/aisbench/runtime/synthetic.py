@@ -104,7 +104,15 @@ summarizer = dict(attr='performance', type=DefaultPerfSummarizer,
 '''
 
 
+def validate_workload(workload):
+    if workload.get("testType", "stream") != "stream":
+        raise ValueError("SyntheticDataset workload only supports streaming requests")
+    if workload.get("prefixCache", {}).get("enabled"):
+        raise ValueError("SyntheticDataset workload does not support generated shared prefixes")
+
+
 def prepare_run(root, config):
+    validate_workload(config["workload"])
     if importlib.metadata.version("ais-bench-benchmark") != config["aisbenchVersion"]:
         raise ValueError("AISBench version changed")
     run = root / "run"
@@ -161,7 +169,7 @@ def main(directory):
     configuration.write_text(render_config(config))
     os.chmod(configuration, 0o600)
     with (directory / "aisbench_client.log").open("w") as log:
-        code = run_aisbench([cli, "--mode", "perf", "--num-warmups", str(config["workload"]["warmups"]), "--work-dir", str(directory / "outputs"), str(configuration)], log)
+        code = run_aisbench([cli, "--mode", "perf", "--num-warmups", str(config["workload"].get("warmups", 0)), "--work-dir", str(directory / "outputs"), str(configuration)], log)
     if code:
         raise RuntimeError(f"AISBench exited {code}; see aisbench_client.log")
     summary = parse_results(directory, config["workload"])

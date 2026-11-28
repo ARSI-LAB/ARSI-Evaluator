@@ -49,6 +49,7 @@ export type * from "./core/contracts/activity.js";
 export type * from "./core/contracts/components.js";
 // Reusable authoring helpers used by independently packaged protocol plugins.
 export { buildFileManifest } from "./core/artifacts/artifacts.js";
+export { TrajectoryWriter } from "./core/artifacts/trajectory.js";
 export { fingerprintConfig } from "./core/results/run-manifest.js";
 export { assertSourceLock } from "./core/results/source-lock.js";
 export { checkedPath, evidencePath } from "./core/artifacts/artifacts.js";

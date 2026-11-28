@@ -19,8 +19,22 @@ test("synthetic workload identifies its source and requires full measured token 
   for (const change of [{ failed_req: "1" }, { total_output_tokens: "100" }, { "TPOT SLO_P90": "NaN" }])
     expect(() => parseAisbenchSummary({ ...summary, rows: [{ ...row, ...change }] })).toThrow();
   expect(() => parseWorkload({ dataset: "synthetic", warmups: -1 })).toThrow();
-  expect(() => parseWorkload({ dataset: "synthetic", prefixCache: { enabled: true } })).toThrow();
-  expect(() => parseWorkload({ warmups: 8 })).toThrow();
+});
+
+test("dataset and load controls are independent configuration fields", () => {
+  expect(parseWorkload({ dataset: "synthetic" })).not.toHaveProperty("warmups");
+  expect(parseWorkload({ warmups: 8 })).toMatchObject({ warmups: 8 });
+  expect(parseWorkload({
+    dataset: "gsm8k",
+    warmups: 8,
+    testType: "text",
+    prefixCache: { enabled: true, prefixRatio: 0.5 },
+  })).toMatchObject({
+    dataset: "gsm8k",
+    warmups: 8,
+    testType: "text",
+    prefixCache: { enabled: true, prefixRatio: 0.5 },
+  });
 });
 
 test.skipIf(configuredPython === undefined && !pythonAvailable)("native synthetic configuration and CSV parsing without AISBench or a model", () => {
